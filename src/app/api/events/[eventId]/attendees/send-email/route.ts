@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { resend } from "@/lib/resend";
+import { sendEmail } from "@/lib/email";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
 
 export async function POST(
@@ -79,8 +79,7 @@ export async function POST(
     const subject = renderSubject(template.subject, variables);
 
     try {
-      const result = await resend.emails.send({
-        from: "Registration System <onboarding@resend.dev>",
+      const result = await sendEmail({
         to: contact.email,
         subject,
         html,
@@ -94,7 +93,7 @@ export async function POST(
           subject,
           status: "SENT",
           sentAt: new Date(),
-          resendId: result.data?.id,
+          resendId: result.id,
         },
       });
 

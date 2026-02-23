@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { resend } from "@/lib/resend";
+import { sendEmail } from "@/lib/email";
 
 export async function POST(
   _req: Request,
@@ -28,8 +28,7 @@ export async function POST(
     const badgeUrl = `${appUrl}/badge/${reg.confirmationCode}`;
 
     try {
-      await resend.emails.send({
-        from: "Registration System <onboarding@resend.dev>",
+      await sendEmail({
         to: reg.contact.email,
         subject: `Your E-Badge for ${event.name}`,
         html: `
