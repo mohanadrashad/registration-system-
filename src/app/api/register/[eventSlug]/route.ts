@@ -51,6 +51,19 @@ export async function POST(
       },
       include: { registration: true },
     });
+  } else {
+    // Update existing contact with registration form data
+    contact = await prisma.contact.update({
+      where: { id: contact.id },
+      data: {
+        firstName,
+        lastName,
+        phone: phone || contact.phone,
+        organization: organization || contact.organization,
+        designation: designation || contact.designation,
+      },
+      include: { registration: true },
+    });
   }
 
   const registration = await prisma.registration.create({
