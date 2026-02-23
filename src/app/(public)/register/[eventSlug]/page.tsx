@@ -13,7 +13,7 @@ export default function RegisterPage() {
   const eventSlug = params.eventSlug as string;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState<{ confirmationCode: string } | null>(null);
+  const [success, setSuccess] = useState(false);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -39,7 +39,7 @@ export default function RegisterPage() {
     const result = await res.json();
 
     if (res.ok) {
-      setSuccess({ confirmationCode: result.confirmationCode });
+      setSuccess(true);
     } else {
       setError(result.error || "Registration failed");
     }
@@ -53,14 +53,8 @@ export default function RegisterPage() {
           <CardContent className="pt-6">
             <CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-500" />
             <h2 className="mb-2 text-2xl font-bold">Registration Successful!</h2>
-            <p className="mb-4 text-muted-foreground">
-              Your confirmation code is:
-            </p>
-            <p className="mb-6 rounded-md bg-muted p-3 font-mono text-lg">
-              {success.confirmationCode}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Please save this confirmation code. You will receive a confirmation email shortly.
+            <p className="text-muted-foreground">
+              Thank you for registering. We look forward to seeing you there!
             </p>
           </CardContent>
         </Card>
