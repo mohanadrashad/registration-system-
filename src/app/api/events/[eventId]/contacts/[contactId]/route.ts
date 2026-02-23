@@ -34,7 +34,17 @@ export async function DELETE(
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { contactId } = await params;
-  await prisma.contact.delete({ where: { id: contactId } });
 
-  return NextResponse.json({ success: true });
+  try {
+    // Delete related records first, then the contact
+    await prisma.$transaction([
+      prisma.emailLog.deleteMany({ where: { contactId } }),
+      prisma.registration.deleteMany({ where: { contactId } }),
+      prisma.contact.delete({ where: { id: contactId } }),
+    ]);
+
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ error: "Failed to delete attendee" }, { status: 500 });
+  }
 }
