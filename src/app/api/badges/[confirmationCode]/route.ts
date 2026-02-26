@@ -20,7 +20,7 @@ export async function GET(
     return NextResponse.json({ error: "Badge not found" }, { status: 404 });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   const qrCodeDataUrl = await generateQRCode(
     `${appUrl}/badge/${confirmationCode}`
   );

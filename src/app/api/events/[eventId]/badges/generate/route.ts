@@ -44,7 +44,7 @@ export async function POST(
     include: { contact: true },
   });
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   let generated = 0;
 
   for (const reg of registrations) {

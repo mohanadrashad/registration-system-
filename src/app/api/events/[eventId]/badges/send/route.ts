@@ -20,7 +20,7 @@ export async function POST(
     include: { contact: true },
   });
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   let sent = 0;
   let failed = 0;
 
