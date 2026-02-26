@@ -105,6 +105,8 @@ export default function AttendeesPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Dialogs
   const [addOpen, setAddOpen] = useState(false);
@@ -114,6 +116,9 @@ export default function AttendeesPage() {
   const [editContact, setEditContact] = useState<Contact | null>(null);
   const [editCategoryValue, setEditCategoryValue] = useState<string>("");
   const [editStatusValue, setEditStatusValue] = useState<string>("");
+
+  // Reset page when filters change
+  useEffect(() => { setPage(1); }, [statusFilter, categoryFilter, debouncedSearch]);
 
   // Debounce search
   useEffect(() => {
@@ -154,15 +159,25 @@ export default function AttendeesPage() {
     setSelectedIds(next);
   }
 
-  function toggleAllVisible() {
-    const allContacts = groups.flatMap((g) => g.contacts);
-    const allIds = allContacts.map((c) => c.id);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id));
-    if (allSelected) {
-      setSelectedIds(new Set());
+  function togglePageSelection() {
+    const pageIds = paginatedContacts.map((c) => c.id);
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+    if (allPageSelected) {
+      const next = new Set(selectedIds);
+      pageIds.forEach((id) => next.delete(id));
+      setSelectedIds(next);
     } else {
-      setSelectedIds(new Set(allIds));
+      setSelectedIds(new Set([...selectedIds, ...pageIds]));
     }
+  }
+
+  function selectAllAttendees() {
+    const allIds = groups.flatMap((g) => g.contacts).map((c) => c.id);
+    setSelectedIds(new Set(allIds));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
   }
 
   async function openEmailDialog() {
@@ -342,6 +357,15 @@ export default function AttendeesPage() {
   const isSingleCategory = categoryFilter !== "ALL";
   const allContacts = groups.flatMap((g) => g.contacts);
   const visibleCount = groups.reduce((sum, g) => sum + g.count, 0);
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(allContacts.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIdx = (safePage - 1) * pageSize;
+  const paginatedContacts = allContacts.slice(startIdx, startIdx + pageSize);
+  const pageContactIds = paginatedContacts.map((c) => c.id);
+  const allPageSelected = pageContactIds.length > 0 && pageContactIds.every((id) => selectedIds.has(id));
+  const allSelected = allContacts.length > 0 && allContacts.every((c) => selectedIds.has(c.id));
 
   return (
     <div className="space-y-6">
@@ -688,8 +712,9 @@ export default function AttendeesPage() {
               <tr className="border-b bg-muted/30">
                 <th className="w-10 px-4 py-2">
                   <Checkbox
-                    checked={allContacts.length > 0 && allContacts.every((c) => selectedIds.has(c.id))}
-                    onCheckedChange={toggleAllVisible}
+                    checked={allPageSelected}
+                    onCheckedChange={togglePageSelection}
+                    title="Select this page"
                   />
                 </th>
                 <th className="text-left px-4 py-2 font-medium">Name</th>
@@ -702,7 +727,7 @@ export default function AttendeesPage() {
               </tr>
             </thead>
             <tbody>
-              {allContacts.map((contact) => (
+              {paginatedContacts.map((contact) => (
                 <tr key={contact.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-2">
                     <Checkbox
@@ -738,8 +763,62 @@ export default function AttendeesPage() {
               ))}
             </tbody>
           </table>
-          <div className="px-4 py-2 border-t bg-muted/20 text-sm text-muted-foreground">
-            {visibleCount} attendee{visibleCount !== 1 ? "s" : ""}
+          {/* Select all banner */}
+          {allPageSelected && !allSelected && allContacts.length > pageSize && (
+            <div className="px-4 py-2 border-t bg-blue-50 dark:bg-blue-950/30 text-sm text-center">
+              All {paginatedContacts.length} attendees on this page are selected.{" "}
+              <button onClick={selectAllAttendees} className="text-blue-600 dark:text-blue-400 font-medium hover:underline">
+                Select all {allContacts.length} attendees
+              </button>
+            </div>
+          )}
+          {allSelected && allContacts.length > pageSize && (
+            <div className="px-4 py-2 border-t bg-blue-50 dark:bg-blue-950/30 text-sm text-center">
+              All {allContacts.length} attendees are selected.{" "}
+              <button onClick={clearSelection} className="text-blue-600 dark:text-blue-400 font-medium hover:underline">
+                Clear selection
+              </button>
+            </div>
+          )}
+
+          {/* Pagination footer */}
+          <div className="px-4 py-3 border-t bg-muted/20 flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <span>{visibleCount} attendee{visibleCount !== 1 ? "s" : ""}</span>
+              <span className="text-muted-foreground/50">|</span>
+              <span>Rows per page:</span>
+              <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                <SelectTrigger className="h-8 w-[70px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">
+                {startIdx + 1}–{Math.min(startIdx + pageSize, allContacts.length)} of {allContacts.length}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage <= 1}
+                onClick={() => setPage(safePage - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage(safePage + 1)}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         </Card>
       )}
