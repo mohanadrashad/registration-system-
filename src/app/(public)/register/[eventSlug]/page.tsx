@@ -103,28 +103,28 @@ export default function RegisterPage() {
             )}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="firstName">First Name</Label>
+                <Label htmlFor="firstName">First Name <span className="text-destructive">*</span></Label>
                 <Input id="firstName" name="firstName" defaultValue={prefilled?.firstName || ""} required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="lastName">Last Name</Label>
+                <Label htmlFor="lastName">Last Name <span className="text-destructive">*</span></Label>
                 <Input id="lastName" name="lastName" defaultValue={prefilled?.lastName || ""} required />
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">Email <span className="text-destructive">*</span></Label>
               <Input id="email" name="email" type="email" defaultValue={prefilled?.email || ""} required />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="phone">Phone</Label>
+              <Label htmlFor="phone">Phone <span className="text-destructive">*</span></Label>
               <Input id="phone" name="phone" defaultValue={prefilled?.phone || ""} required />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="organization">Organization</Label>
+              <Label htmlFor="organization">Organization <span className="text-destructive">*</span></Label>
               <Input id="organization" name="organization" defaultValue={prefilled?.organization || ""} required />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="designation">Designation / Title</Label>
+              <Label htmlFor="designation">Designation / Title <span className="text-destructive">*</span></Label>
               <Input id="designation" name="designation" defaultValue={prefilled?.designation || ""} required />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
