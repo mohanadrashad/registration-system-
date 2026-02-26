@@ -111,9 +111,11 @@ export default function AttendeeDetailPage() {
   }, [fetchContact]);
 
   const appUrl = typeof window !== "undefined" ? window.location.origin : "";
-  const registrationLink = contact?.inviteToken
-    ? `${appUrl}/register/${contact.event.slug}?token=${contact.inviteToken}`
-    : `${appUrl}/register/${contact.event.slug}`;
+  const registrationLink = contact
+    ? contact.inviteToken
+      ? `${appUrl}/register/${contact.event.slug}?token=${contact.inviteToken}`
+      : `${appUrl}/register/${contact.event.slug}`
+    : "";
 
   async function copyLink() {
     try {
