@@ -73,11 +73,16 @@ export async function POST(
     });
   }
 
-  if (contact?.registration) {
+  if (contact?.status === "REGISTERED" && contact.registration) {
     return NextResponse.json(
       { error: "You are already registered for this event", confirmationCode: contact.registration.confirmationCode },
       { status: 409 }
     );
+  }
+
+  // If contact has an old registration but status was reset by admin, delete the old registration
+  if (contact?.registration && contact.status !== "REGISTERED") {
+    await prisma.registration.delete({ where: { id: contact.registration.id } });
   }
 
   if (!contact) {
