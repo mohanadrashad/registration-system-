@@ -43,7 +43,10 @@ export async function GET(
       }),
       prisma.contact.findMany({
         where,
-        include: { registration: { select: { status: true, registeredAt: true, confirmationCode: true } } },
+        include: {
+          registration: { select: { status: true, registeredAt: true, confirmationCode: true } },
+          emailLogs: { select: { id: true, status: true, sentAt: true }, orderBy: { sentAt: "desc" }, take: 1 },
+        },
         orderBy: [{ category: "asc" }, { createdAt: "desc" }],
       }),
       prisma.emailTemplate.findMany({

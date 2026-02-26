@@ -131,42 +131,18 @@ export default function StatisticsPage() {
         </div>
       )}
 
-      {/* Row 1: Totals */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-muted p-2"><Users className="h-5 w-5 text-muted-foreground" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total Attendees</p>
-                <p className="text-2xl font-bold">{displayTotal}</p>
-              </div>
+      {/* Row 1: Total Attendees - Full Width */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-4">
+            <div className="rounded-lg bg-muted p-3"><Users className="h-6 w-6 text-muted-foreground" /></div>
+            <div>
+              <p className="text-sm text-muted-foreground">Total Attendees</p>
+              <p className="text-3xl font-bold">{displayTotal}</p>
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-muted p-2"><Mail className="h-5 w-5 text-blue-500" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">Emails Sent</p>
-                <p className="text-2xl font-bold">{summary.emailsSent}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-muted p-2"><MailX className="h-5 w-5 text-red-500" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">Emails Failed</p>
-                <p className="text-2xl font-bold">{summary.emailsFailed}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Row 2: Status Breakdown Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -222,6 +198,32 @@ export default function StatisticsPage() {
                 <p className="text-xs text-muted-foreground">
                   {displayTotal > 0 ? Math.round((displayStatus.CANCELLED / displayTotal) * 100) : 0}% of total
                 </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Row 3: Email Stats */}
+      <div className="grid grid-cols-2 gap-4">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-blue-50 p-2"><Mail className="h-5 w-5 text-blue-500" /></div>
+              <div>
+                <p className="text-sm text-muted-foreground">Emails Sent</p>
+                <p className="text-2xl font-bold">{summary.emailsSent}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-red-50 p-2"><MailX className="h-5 w-5 text-red-500" /></div>
+              <div>
+                <p className="text-sm text-muted-foreground">Emails Failed</p>
+                <p className="text-2xl font-bold">{summary.emailsFailed}</p>
               </div>
             </div>
           </CardContent>

@@ -52,6 +52,7 @@ interface Contact {
   category: string | null;
   status: ContactStatus;
   registration: { status: string; registeredAt: string; confirmationCode: string } | null;
+  emailLogs: { id: string; status: string; sentAt: string | null }[];
 }
 
 interface CategoryGroup {
@@ -723,6 +724,7 @@ export default function AttendeesPage() {
                 <th className="text-left px-4 py-2 font-medium">Designation</th>
                 {!isSingleCategory && <th className="text-left px-4 py-2 font-medium">Category</th>}
                 <th className="text-left px-4 py-2 font-medium">Status</th>
+                <th className="text-left px-4 py-2 font-medium">Emailed</th>
                 <th className="w-10 px-4 py-2"></th>
               </tr>
             </thead>
@@ -748,6 +750,16 @@ export default function AttendeesPage() {
                     <Badge variant={statusConfig[contact.status]?.variant || "secondary"}>
                       {statusConfig[contact.status]?.label || contact.status}
                     </Badge>
+                  </td>
+                  <td className="px-4 py-2">
+                    {contact.emailLogs && contact.emailLogs.length > 0 ? (
+                      <span className="inline-flex items-center gap-1 text-green-600" title={`Sent ${contact.emailLogs[0].sentAt ? new Date(contact.emailLogs[0].sentAt).toLocaleDateString() : ""}`}>
+                        <Mail className="h-3.5 w-3.5" />
+                        <span className="text-xs">Yes</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">No</span>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-1">
