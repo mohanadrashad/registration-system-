@@ -737,7 +737,11 @@ export default function AttendeesPage() {
                       onCheckedChange={() => toggleContact(contact.id)}
                     />
                   </td>
-                  <td className="px-4 py-2 font-medium">{contact.firstName} {contact.lastName}</td>
+                  <td className="px-4 py-2 font-medium">
+                    <Link href={`/dashboard/events/${eventId}/attendees/${contact.id}`} className="hover:underline text-primary">
+                      {contact.firstName} {contact.lastName}
+                    </Link>
+                  </td>
                   <td className="px-4 py-2 text-muted-foreground">{contact.email}</td>
                   <td className="px-4 py-2">{contact.organization || "-"}</td>
                   <td className="px-4 py-2">{contact.designation || "-"}</td>

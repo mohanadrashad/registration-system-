@@ -3,6 +3,31 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { updateContactSchema } from "@/lib/validations/contact";
 
+export async function GET(
+  _req: Request,
+  { params }: { params: Promise<{ eventId: string; contactId: string }> }
+) {
+  const session = await auth();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { eventId, contactId } = await params;
+
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    include: {
+      registration: { select: { status: true, registeredAt: true, confirmationCode: true } },
+      emailLogs: { select: { id: true, status: true, sentAt: true, subject: true }, orderBy: { sentAt: "desc" } },
+      event: { select: { slug: true, name: true, categories: true } },
+    },
+  });
+
+  if (!contact || contact.eventId !== eventId) {
+    return NextResponse.json({ error: "Contact not found" }, { status: 404 });
+  }
+
+  return NextResponse.json(contact);
+}
+
 export async function PUT(
   req: Request,
   { params }: { params: Promise<{ eventId: string; contactId: string }> }
