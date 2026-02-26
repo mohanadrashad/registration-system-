@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { nanoid } from "nanoid";
+import { randomBytes } from "crypto";
 
 export async function POST(
   req: Request,
@@ -69,6 +70,7 @@ export async function POST(
           organization: organization?.trim() || null,
           designation: designation?.trim() || null,
           category: category?.trim() || null,
+          inviteToken: randomBytes(16).toString("hex"),
           importBatch,
           metadata: row,
         },

@@ -1,19 +1,40 @@
 "use client";
 
-import { useState } from "react";
-import { useParams } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CheckCircle } from "lucide-react";
 
+interface PrefilledContact {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string | null;
+  organization: string | null;
+  designation: string | null;
+}
+
 export default function RegisterPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const eventSlug = params.eventSlug as string;
+  const token = searchParams.get("token");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [prefilled, setPrefilled] = useState<PrefilledContact | null>(null);
+
+  // If token is present, fetch the invited contact's data to pre-fill the form
+  useEffect(() => {
+    if (!token) return;
+    fetch(`/api/register/${eventSlug}?token=${token}`)
+      .then((r) => { if (r.ok) return r.json(); return null; })
+      .then((data) => { if (data?.contact) setPrefilled(data.contact); })
+      .catch(() => {});
+  }, [eventSlug, token]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -30,7 +51,11 @@ export default function RegisterPage() {
       designation: formData.get("designation"),
     };
 
-    const res = await fetch(`/api/register/${eventSlug}`, {
+    const url = token
+      ? `/api/register/${eventSlug}?token=${token}`
+      : `/api/register/${eventSlug}`;
+
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
@@ -79,28 +104,28 @@ export default function RegisterPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="firstName">First Name</Label>
-                <Input id="firstName" name="firstName" required />
+                <Input id="firstName" name="firstName" defaultValue={prefilled?.firstName || ""} required />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="lastName">Last Name</Label>
-                <Input id="lastName" name="lastName" required />
+                <Input id="lastName" name="lastName" defaultValue={prefilled?.lastName || ""} required />
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" name="email" type="email" required />
+              <Input id="email" name="email" type="email" defaultValue={prefilled?.email || ""} required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="phone">Phone</Label>
-              <Input id="phone" name="phone" />
+              <Input id="phone" name="phone" defaultValue={prefilled?.phone || ""} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="organization">Organization</Label>
-              <Input id="organization" name="organization" />
+              <Input id="organization" name="organization" defaultValue={prefilled?.organization || ""} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="designation">Designation / Title</Label>
-              <Input id="designation" name="designation" />
+              <Input id="designation" name="designation" defaultValue={prefilled?.designation || ""} />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Registering..." : "Register"}

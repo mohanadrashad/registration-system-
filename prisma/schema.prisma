@@ -105,6 +105,7 @@ model Contact {
   designation  String?
   category     String?
   status       ContactStatus @default(IMPORTED)
+  inviteToken  String?       @unique
   metadata     Json?
   importBatch  String?
   createdAt    DateTime      @default(now())

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { createContactSchema } from "@/lib/validations/contact";
+import { randomBytes } from "crypto";
 
 export async function GET(
   req: NextRequest,
@@ -119,6 +120,7 @@ export async function POST(
     data: {
       ...result.data,
       eventId,
+      inviteToken: randomBytes(16).toString("hex"),
     },
   });
 

@@ -1,12 +1,43 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { publicRegistrationSchema } from "@/lib/validations/registration";
+import { randomBytes } from "crypto";
 
-export async function POST(
-  req: Request,
+// GET: Look up contact by invite token to pre-fill the registration form
+export async function GET(
+  req: NextRequest,
   { params }: { params: Promise<{ eventSlug: string }> }
 ) {
   const { eventSlug } = await params;
+  const token = req.nextUrl.searchParams.get("token");
+
+  if (!token) {
+    return NextResponse.json({ error: "No token provided" }, { status: 400 });
+  }
+
+  const event = await prisma.event.findUnique({ where: { slug: eventSlug } });
+  if (!event || !event.isActive) {
+    return NextResponse.json({ error: "Event not found or not active" }, { status: 404 });
+  }
+
+  const contact = await prisma.contact.findUnique({
+    where: { inviteToken: token },
+    select: { firstName: true, lastName: true, email: true, phone: true, organization: true, designation: true },
+  });
+
+  if (!contact) {
+    return NextResponse.json({ error: "Invalid token" }, { status: 404 });
+  }
+
+  return NextResponse.json({ contact, eventName: event.name });
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ eventSlug: string }> }
+) {
+  const { eventSlug } = await params;
+  const token = req.nextUrl.searchParams.get("token");
 
   const event = await prisma.event.findUnique({
     where: { slug: eventSlug },
@@ -25,11 +56,22 @@ export async function POST(
 
   const { firstName, lastName, email, phone, organization, designation } = result.data;
 
-  // Find or create the contact
-  let contact = await prisma.contact.findUnique({
-    where: { eventId_email: { eventId: event.id, email: email.toLowerCase() } },
-    include: { registration: true },
-  });
+  // If a token is provided, look up the invited contact first
+  let contact = null;
+  if (token) {
+    contact = await prisma.contact.findUnique({
+      where: { inviteToken: token },
+      include: { registration: true },
+    });
+  }
+
+  // Fall back to email lookup if no token match
+  if (!contact) {
+    contact = await prisma.contact.findUnique({
+      where: { eventId_email: { eventId: event.id, email: email.toLowerCase() } },
+      include: { registration: true },
+    });
+  }
 
   if (contact?.registration) {
     return NextResponse.json(
@@ -39,6 +81,7 @@ export async function POST(
   }
 
   if (!contact) {
+    // New contact (walk-in / direct link without invite)
     contact = await prisma.contact.create({
       data: {
         eventId: event.id,
@@ -48,16 +91,18 @@ export async function POST(
         phone: phone || null,
         organization: organization || null,
         designation: designation || null,
+        inviteToken: randomBytes(16).toString("hex"),
       },
       include: { registration: true },
     });
   } else {
-    // Update existing contact with registration form data
+    // Update existing invited contact — they may use a different email
     contact = await prisma.contact.update({
       where: { id: contact.id },
       data: {
         firstName,
         lastName,
+        email: email.toLowerCase(),
         phone: phone || contact.phone,
         organization: organization || contact.organization,
         designation: designation || contact.designation,

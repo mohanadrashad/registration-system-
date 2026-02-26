@@ -66,7 +66,9 @@ export async function POST(
       eventName: event.name,
       eventDate: event.startDate.toLocaleDateString(),
       eventVenue: event.venue || "",
-      registrationLink: `${appUrl}/register/${event.slug}`,
+      registrationLink: contact.inviteToken
+        ? `${appUrl}/register/${event.slug}?token=${contact.inviteToken}`
+        : `${appUrl}/register/${event.slug}`,
       confirmationCode: contact.registration?.confirmationCode || "",
     };
 
