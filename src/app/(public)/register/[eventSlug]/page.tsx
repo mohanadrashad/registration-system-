@@ -117,15 +117,15 @@ export default function RegisterPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="phone">Phone</Label>
-              <Input id="phone" name="phone" defaultValue={prefilled?.phone || ""} />
+              <Input id="phone" name="phone" defaultValue={prefilled?.phone || ""} required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="organization">Organization</Label>
-              <Input id="organization" name="organization" defaultValue={prefilled?.organization || ""} />
+              <Input id="organization" name="organization" defaultValue={prefilled?.organization || ""} required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="designation">Designation / Title</Label>
-              <Input id="designation" name="designation" defaultValue={prefilled?.designation || ""} />
+              <Input id="designation" name="designation" defaultValue={prefilled?.designation || ""} required />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Registering..." : "Register"}
