@@ -37,6 +37,7 @@ import {
   Pencil,
   Trash2,
   BarChart3,
+  ArrowUpDown,
 } from "lucide-react";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
@@ -108,6 +109,7 @@ export default function AttendeesPage() {
   const [sending, setSending] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [emailedSort, setEmailedSort] = useState<"none" | "yes" | "no">("none");
 
   // Dialogs
   const [addOpen, setAddOpen] = useState(false);
@@ -356,7 +358,15 @@ export default function AttendeesPage() {
 
   // When a specific category is selected, flatten all contacts into one list
   const isSingleCategory = categoryFilter !== "ALL";
-  const allContacts = groups.flatMap((g) => g.contacts);
+  const rawContacts = groups.flatMap((g) => g.contacts);
+
+  // Sort by emailed status if requested
+  const allContacts = emailedSort === "none" ? rawContacts : [...rawContacts].sort((a, b) => {
+    const aEmailed = a.emailLogs && a.emailLogs.length > 0 ? 1 : 0;
+    const bEmailed = b.emailLogs && b.emailLogs.length > 0 ? 1 : 0;
+    return emailedSort === "yes" ? bEmailed - aEmailed : aEmailed - bEmailed;
+  });
+
   const visibleCount = groups.reduce((sum, g) => sum + g.count, 0);
 
   // Pagination
@@ -724,7 +734,18 @@ export default function AttendeesPage() {
                 <th className="text-left px-4 py-2 font-medium">Designation</th>
                 {!isSingleCategory && <th className="text-left px-4 py-2 font-medium">Category</th>}
                 <th className="text-left px-4 py-2 font-medium">Status</th>
-                <th className="text-left px-4 py-2 font-medium">Emailed</th>
+                <th className="text-left px-4 py-2 font-medium">
+                  <button
+                    onClick={() => setEmailedSort(emailedSort === "none" ? "yes" : emailedSort === "yes" ? "no" : "none")}
+                    className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+                    title={emailedSort === "none" ? "Sort by emailed" : emailedSort === "yes" ? "Emailed first → Not emailed first" : "Clear sort"}
+                  >
+                    Emailed
+                    <ArrowUpDown className={`h-3.5 w-3.5 ${emailedSort !== "none" ? "text-primary" : "text-muted-foreground"}`} />
+                  </button>
+                </th>
+                <th className="text-left px-4 py-2 font-medium">Invited</th>
+                <th className="text-left px-4 py-2 font-medium">Registered</th>
                 <th className="w-10 px-4 py-2"></th>
               </tr>
             </thead>
@@ -757,13 +778,23 @@ export default function AttendeesPage() {
                   </td>
                   <td className="px-4 py-2">
                     {contact.emailLogs && contact.emailLogs.length > 0 ? (
-                      <span className="inline-flex items-center gap-1 text-green-600" title={`Sent ${contact.emailLogs[0].sentAt ? new Date(contact.emailLogs[0].sentAt).toLocaleDateString() : ""}`}>
+                      <span className="inline-flex items-center gap-1 text-green-600">
                         <Mail className="h-3.5 w-3.5" />
                         <span className="text-xs">Yes</span>
                       </span>
                     ) : (
                       <span className="text-xs text-muted-foreground">No</span>
                     )}
+                  </td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">
+                    {contact.emailLogs && contact.emailLogs.length > 0 && contact.emailLogs[0].sentAt
+                      ? new Date(contact.emailLogs[0].sentAt).toLocaleDateString()
+                      : "-"}
+                  </td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">
+                    {contact.registration?.registeredAt
+                      ? new Date(contact.registration.registeredAt).toLocaleDateString()
+                      : "-"}
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-1">
