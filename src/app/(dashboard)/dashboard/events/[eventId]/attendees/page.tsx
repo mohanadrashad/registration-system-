@@ -497,9 +497,7 @@ export default function AttendeesPage() {
         <div className="flex items-center gap-6 text-sm flex-wrap">
           <span className="flex items-center gap-1.5"><Users className="h-4 w-4 text-muted-foreground" /> <strong>{total}</strong> Total Invitees</span>
           <span className="text-muted-foreground/30">|</span>
-          <span className="flex items-center gap-1.5"><Clock className="h-4 w-4 text-blue-500" /> <strong>{statusCounts.IMPORTED}</strong> Imported</span>
-          <span className="flex items-center gap-1.5"><Send className="h-4 w-4 text-orange-500" /> <strong>{statusCounts.INVITED}</strong> Invited</span>
-          <span className="flex items-center gap-1.5 text-yellow-600"><strong>{statusCounts.IMPORTED + statusCounts.INVITED}</strong> Pending</span>
+          <span className="flex items-center gap-1.5 text-yellow-600"><Clock className="h-4 w-4" /> <strong>{statusCounts.IMPORTED + statusCounts.INVITED}</strong> Pending</span>
           <span className="flex items-center gap-1.5"><UserCheck className="h-4 w-4 text-green-500" /> <strong>{statusCounts.REGISTERED}</strong> Registered</span>
         </div>
         <Link href={`/dashboard/events/${eventId}/statistics`} className="ml-auto shrink-0">

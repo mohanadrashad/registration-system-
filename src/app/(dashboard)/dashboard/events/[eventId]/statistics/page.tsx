@@ -9,8 +9,6 @@ import { Button } from "@/components/ui/button";
 import {
   Users,
   UserCheck,
-  Send,
-  Clock,
   Mail,
   MailX,
   ArrowLeft,
@@ -146,35 +144,7 @@ export default function StatisticsPage() {
       </Card>
 
       {/* Row 2: Status Breakdown Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-blue-50 p-2"><Clock className="h-5 w-5 text-blue-500" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">Imported</p>
-                <p className="text-2xl font-bold">{displayStatus.IMPORTED}</p>
-                <p className="text-xs text-muted-foreground">
-                  {displayTotal > 0 ? Math.round((displayStatus.IMPORTED / displayTotal) * 100) : 0}% of total
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-orange-50 p-2"><Send className="h-5 w-5 text-orange-500" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">Invited</p>
-                <p className="text-2xl font-bold">{displayStatus.INVITED}</p>
-                <p className="text-xs text-muted-foreground">
-                  {displayTotal > 0 ? Math.round((displayStatus.INVITED / displayTotal) * 100) : 0}% of total
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
@@ -183,7 +153,7 @@ export default function StatisticsPage() {
                 <p className="text-sm text-muted-foreground">Pending</p>
                 <p className="text-2xl font-bold">{displayStatus.IMPORTED + displayStatus.INVITED}</p>
                 <p className="text-xs text-muted-foreground">
-                  Invited but not registered
+                  Not yet registered
                 </p>
               </div>
             </div>
@@ -257,18 +227,12 @@ export default function StatisticsPage() {
                       <h4 className="font-semibold text-base">{cat.category}</h4>
                       <span className="text-2xl font-bold">{cat.total}</span>
                     </div>
-                    <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                    <div className="grid grid-cols-3 gap-2 text-center text-xs">
                       <div>
-                        <div className="rounded-md bg-blue-50 py-2 mb-1">
-                          <p className="text-lg font-bold text-blue-600">{cat.IMPORTED}</p>
+                        <div className="rounded-md bg-yellow-50 py-2 mb-1">
+                          <p className="text-lg font-bold text-yellow-600">{cat.IMPORTED + cat.INVITED}</p>
                         </div>
-                        <p className="text-muted-foreground">Imported</p>
-                      </div>
-                      <div>
-                        <div className="rounded-md bg-orange-50 py-2 mb-1">
-                          <p className="text-lg font-bold text-orange-600">{cat.INVITED}</p>
-                        </div>
-                        <p className="text-muted-foreground">Invited</p>
+                        <p className="text-muted-foreground">Pending</p>
                       </div>
                       <div>
                         <div className="rounded-md bg-green-50 py-2 mb-1">
