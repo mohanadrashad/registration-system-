@@ -85,7 +85,7 @@ interface EmailTemplate {
 
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; }> = {
   IMPORTED: { label: "Imported", variant: "secondary" },
-  INVITED: { label: "Invited", variant: "outline" },
+  INVITED: { label: "Pending", variant: "outline" },
   REGISTERED: { label: "Registered", variant: "default" },
   CANCELLED: { label: "Cancelled", variant: "destructive" },
 };
@@ -97,6 +97,8 @@ export default function AttendeesPage() {
   const [groups, setGroups] = useState<CategoryGroup[]>([]);
   const [statusCounts, setStatusCounts] = useState<StatusCounts>({ IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
   const [total, setTotal] = useState(0);
+  const [overallCounts, setOverallCounts] = useState<StatusCounts>({ IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
+  const [overallTotal, setOverallTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [event, setEvent] = useState<Event | null>(null);
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
@@ -142,6 +144,8 @@ export default function AttendeesPage() {
       setGroups(data.groups || []);
       setStatusCounts(data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
       setTotal(data.total || 0);
+      setOverallCounts(data.overallCounts || data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
+      setOverallTotal(data.overallTotal || data.total || 0);
       setEvent(data.event || null);
       setTemplates(data.templates || []);
     } catch {
@@ -381,7 +385,7 @@ export default function AttendeesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader title="Attendees" description={`${total} total invitees`}>
+      <PageHeader title="Attendees" description={`${overallTotal} total invitees`}>
         <Button variant="outline" onClick={handleExport}>
           <Download className="mr-2 h-4 w-4" />
           Export
@@ -495,10 +499,10 @@ export default function AttendeesPage() {
       {/* Quick Stats Bar */}
       <div className="flex items-center gap-4 rounded-lg border bg-card px-4 py-3">
         <div className="flex items-center gap-6 text-sm flex-wrap">
-          <span className="flex items-center gap-1.5"><Users className="h-4 w-4 text-muted-foreground" /> <strong>{total}</strong> Total Invitees</span>
+          <span className="flex items-center gap-1.5"><Users className="h-4 w-4 text-muted-foreground" /> <strong>{overallTotal}</strong> Total Invitees</span>
           <span className="text-muted-foreground/30">|</span>
-          <span className="flex items-center gap-1.5 text-yellow-600"><Clock className="h-4 w-4" /> <strong>{statusCounts.IMPORTED + statusCounts.INVITED}</strong> Pending</span>
-          <span className="flex items-center gap-1.5"><UserCheck className="h-4 w-4 text-green-500" /> <strong>{statusCounts.REGISTERED}</strong> Registered</span>
+          <span className="flex items-center gap-1.5 text-yellow-600"><Clock className="h-4 w-4" /> <strong>{overallCounts.IMPORTED + overallCounts.INVITED}</strong> Pending</span>
+          <span className="flex items-center gap-1.5"><UserCheck className="h-4 w-4 text-green-500" /> <strong>{overallCounts.REGISTERED}</strong> Registered</span>
         </div>
         <Link href={`/dashboard/events/${eventId}/statistics`} className="ml-auto shrink-0">
           <Button variant="outline" size="sm">
@@ -539,7 +543,7 @@ export default function AttendeesPage() {
           <SelectContent>
             <SelectItem value="ALL">All Statuses</SelectItem>
             <SelectItem value="IMPORTED">Imported</SelectItem>
-            <SelectItem value="INVITED">Invited</SelectItem>
+            <SelectItem value="INVITED">Pending</SelectItem>
             <SelectItem value="REGISTERED">Registered</SelectItem>
             <SelectItem value="CANCELLED">Cancelled</SelectItem>
           </SelectContent>
@@ -675,7 +679,7 @@ export default function AttendeesPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="IMPORTED">Imported</SelectItem>
-                      <SelectItem value="INVITED">Invited</SelectItem>
+                      <SelectItem value="INVITED">Pending</SelectItem>
                       <SelectItem value="REGISTERED">Registered</SelectItem>
                       <SelectItem value="CANCELLED">Cancelled</SelectItem>
                     </SelectContent>

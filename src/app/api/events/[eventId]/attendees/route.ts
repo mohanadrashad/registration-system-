@@ -36,7 +36,7 @@ export async function GET(
 
   try {
     // Batch all queries in a single transaction to minimize connection usage
-    const [event, contacts, templates] = await prisma.$transaction([
+    const [event, contacts, allContacts, templates] = await prisma.$transaction([
       prisma.event.findUnique({
         where: { id: eventId },
         select: { id: true, name: true, slug: true, categories: true },
@@ -48,6 +48,11 @@ export async function GET(
           emailLogs: { select: { id: true, status: true, sentAt: true }, orderBy: { sentAt: "desc" }, take: 1 },
         },
         orderBy: [{ category: "asc" }, { createdAt: "desc" }],
+      }),
+      // Unfiltered contacts for overall stats bar
+      prisma.contact.findMany({
+        where: { eventId },
+        select: { status: true },
       }),
       prisma.emailTemplate.findMany({
         where: { eventId },
@@ -68,10 +73,16 @@ export async function GET(
       groups[key].push(contact);
     }
 
-    // Count statuses
+    // Count statuses from filtered results
     const statusCounts = { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 };
     for (const contact of contacts) {
       statusCounts[contact.status]++;
+    }
+
+    // Overall counts (unfiltered) for the stats bar
+    const overallCounts = { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 };
+    for (const contact of allContacts) {
+      overallCounts[contact.status]++;
     }
 
     return NextResponse.json({
@@ -84,6 +95,8 @@ export async function GET(
       })),
       statusCounts,
       total: contacts.length,
+      overallCounts,
+      overallTotal: allContacts.length,
     });
   } catch (e) {
     console.error("Failed to fetch attendees data:", e);

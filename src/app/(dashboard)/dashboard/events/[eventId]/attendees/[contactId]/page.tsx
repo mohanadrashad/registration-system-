@@ -53,7 +53,7 @@ interface ContactDetail {
 
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; color: string }> = {
   IMPORTED: { label: "Imported", variant: "secondary", color: "text-blue-600" },
-  INVITED: { label: "Invited", variant: "outline", color: "text-orange-600" },
+  INVITED: { label: "Pending", variant: "outline", color: "text-orange-600" },
   REGISTERED: { label: "Registered", variant: "default", color: "text-green-600" },
   CANCELLED: { label: "Cancelled", variant: "destructive", color: "text-red-600" },
 };
@@ -278,7 +278,7 @@ export default function AttendeeDetailPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="IMPORTED">Imported</SelectItem>
-                        <SelectItem value="INVITED">Invited</SelectItem>
+                        <SelectItem value="INVITED">Pending</SelectItem>
                         <SelectItem value="REGISTERED">Registered</SelectItem>
                         <SelectItem value="CANCELLED">Cancelled</SelectItem>
                       </SelectContent>
