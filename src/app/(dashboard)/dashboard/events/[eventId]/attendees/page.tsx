@@ -381,7 +381,7 @@ export default function AttendeesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader title="Attendees" description={`${total} total attendees`}>
+      <PageHeader title="Attendees" description={`${total} total invitees`}>
         <Button variant="outline" onClick={handleExport}>
           <Download className="mr-2 h-4 w-4" />
           Export
@@ -494,16 +494,18 @@ export default function AttendeesPage() {
 
       {/* Quick Stats Bar */}
       <div className="flex items-center gap-4 rounded-lg border bg-card px-4 py-3">
-        <div className="flex items-center gap-6 text-sm">
-          <span className="flex items-center gap-1.5"><Users className="h-4 w-4 text-muted-foreground" /> <strong>{total}</strong> Total</span>
+        <div className="flex items-center gap-6 text-sm flex-wrap">
+          <span className="flex items-center gap-1.5"><Users className="h-4 w-4 text-muted-foreground" /> <strong>{total}</strong> Total Invitees</span>
+          <span className="text-muted-foreground/30">|</span>
           <span className="flex items-center gap-1.5"><Clock className="h-4 w-4 text-blue-500" /> <strong>{statusCounts.IMPORTED}</strong> Imported</span>
           <span className="flex items-center gap-1.5"><Send className="h-4 w-4 text-orange-500" /> <strong>{statusCounts.INVITED}</strong> Invited</span>
+          <span className="flex items-center gap-1.5 text-yellow-600"><strong>{statusCounts.IMPORTED + statusCounts.INVITED}</strong> Pending</span>
           <span className="flex items-center gap-1.5"><UserCheck className="h-4 w-4 text-green-500" /> <strong>{statusCounts.REGISTERED}</strong> Registered</span>
         </div>
-        <Link href={`/dashboard/events/${eventId}/statistics`} className="ml-auto">
+        <Link href={`/dashboard/events/${eventId}/statistics`} className="ml-auto shrink-0">
           <Button variant="outline" size="sm">
             <BarChart3 className="mr-2 h-4 w-4" />
-            View Statistics
+            Statistics
           </Button>
         </Link>
       </div>
@@ -717,99 +719,103 @@ export default function AttendeesPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/30">
-                <th className="w-10 px-4 py-2">
-                  <Checkbox
-                    checked={allPageSelected}
-                    onCheckedChange={togglePageSelection}
-                    title="Select this page"
-                  />
-                </th>
-                <th className="text-left px-4 py-2 font-medium">Name</th>
-                <th className="text-left px-4 py-2 font-medium">Email</th>
-                <th className="text-left px-4 py-2 font-medium">Organization</th>
-                <th className="text-left px-4 py-2 font-medium">Designation</th>
-                {!isSingleCategory && <th className="text-left px-4 py-2 font-medium">Category</th>}
-                <th className="text-left px-4 py-2 font-medium">Status</th>
-                <th className="text-left px-4 py-2 font-medium">
-                  <button
-                    onClick={() => setEmailedSort(emailedSort === "none" ? "yes" : emailedSort === "yes" ? "no" : "none")}
-                    className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-                    title={emailedSort === "none" ? "Sort by emailed" : emailedSort === "yes" ? "Emailed first → Not emailed first" : "Clear sort"}
-                  >
-                    Emailed
-                    <ArrowUpDown className={`h-3.5 w-3.5 ${emailedSort !== "none" ? "text-primary" : "text-muted-foreground"}`} />
-                  </button>
-                </th>
-                <th className="text-left px-4 py-2 font-medium">Invited</th>
-                <th className="text-left px-4 py-2 font-medium">Registered</th>
-                <th className="w-10 px-4 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedContacts.map((contact) => (
-                <tr key={contact.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-2">
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/50">
+                  <th className="w-10 px-4 py-3">
                     <Checkbox
-                      checked={selectedIds.has(contact.id)}
-                      onCheckedChange={() => toggleContact(contact.id)}
+                      checked={allPageSelected}
+                      onCheckedChange={togglePageSelection}
+                      title="Select this page"
                     />
-                  </td>
-                  <td className="px-4 py-2 font-medium">
-                    <Link href={`/dashboard/events/${eventId}/attendees/${contact.id}`} className="hover:underline text-primary">
-                      {contact.firstName} {contact.lastName}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">{contact.email}</td>
-                  <td className="px-4 py-2">{contact.organization || "-"}</td>
-                  <td className="px-4 py-2">{contact.designation || "-"}</td>
-                  {!isSingleCategory && (
-                    <td className="px-4 py-2">
-                      <Badge variant="outline">{contact.category || "Uncategorized"}</Badge>
-                    </td>
-                  )}
-                  <td className="px-4 py-2">
-                    <Badge variant={statusConfig[contact.status]?.variant || "secondary"}>
-                      {statusConfig[contact.status]?.label || contact.status}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-2">
-                    {contact.emailLogs && contact.emailLogs.length > 0 ? (
-                      <span className="inline-flex items-center gap-1 text-green-600">
-                        <Mail className="h-3.5 w-3.5" />
-                        <span className="text-xs">Yes</span>
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">No</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {contact.emailLogs && contact.emailLogs.length > 0 && contact.emailLogs[0].sentAt
-                      ? new Date(contact.emailLogs[0].sentAt).toLocaleDateString()
-                      : "-"}
-                  </td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {contact.registration?.registeredAt
-                      ? new Date(contact.registration.registeredAt).toLocaleDateString()
-                      : "-"}
-                  </td>
-                  <td className="px-4 py-2">
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => openEditDialog(contact)} className="p-1 rounded hover:bg-muted transition-colors" title="Edit attendee">
-                        <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-                      </button>
-                      <button onClick={() => handleDeleteContact(contact.id)} className="p-1 rounded hover:bg-destructive/10 transition-colors" title="Delete attendee">
-                        <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
-                      </button>
-                    </div>
-                  </td>
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Name</th>
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Email</th>
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Organization</th>
+                  {!isSingleCategory && <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Category</th>}
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Status</th>
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                    <button
+                      onClick={() => setEmailedSort(emailedSort === "none" ? "yes" : emailedSort === "yes" ? "no" : "none")}
+                      className="inline-flex items-center gap-1 hover:text-foreground transition-colors uppercase tracking-wider"
+                      title={emailedSort === "none" ? "Sort by emailed" : emailedSort === "yes" ? "Emailed first → Not emailed first" : "Clear sort"}
+                    >
+                      Emailed
+                      <ArrowUpDown className={`h-3 w-3 ${emailedSort !== "none" ? "text-primary" : "text-muted-foreground/50"}`} />
+                    </button>
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Invited</th>
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Registered</th>
+                  <th className="w-20 px-4 py-3"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y">
+                {paginatedContacts.map((contact) => (
+                  <tr key={contact.id} className={`hover:bg-muted/40 transition-colors ${selectedIds.has(contact.id) ? "bg-primary/5" : ""}`}>
+                    <td className="px-4 py-3">
+                      <Checkbox
+                        checked={selectedIds.has(contact.id)}
+                        onCheckedChange={() => toggleContact(contact.id)}
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link href={`/dashboard/events/${eventId}/attendees/${contact.id}`} className="hover:underline text-primary font-medium">
+                        {contact.firstName} {contact.lastName}
+                      </Link>
+                      <p className="text-xs text-muted-foreground md:hidden">{contact.email}</p>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{contact.email}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{contact.organization || "-"}</td>
+                    {!isSingleCategory && (
+                      <td className="px-4 py-3">
+                        <Badge variant="outline" className="text-xs">{contact.category || "Uncategorized"}</Badge>
+                      </td>
+                    )}
+                    <td className="px-4 py-3">
+                      <Badge variant={statusConfig[contact.status]?.variant || "secondary"} className="text-xs">
+                        {statusConfig[contact.status]?.label || contact.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      {contact.emailLogs && contact.emailLogs.length > 0 ? (
+                        <span className="inline-flex items-center gap-1.5 text-green-600">
+                          <span className="h-2 w-2 rounded-full bg-green-500"></span>
+                          <span className="text-xs font-medium">Sent</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                          <span className="h-2 w-2 rounded-full bg-muted-foreground/30"></span>
+                          <span className="text-xs">No</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                      {contact.emailLogs && contact.emailLogs.length > 0 && contact.emailLogs[0].sentAt
+                        ? new Date(contact.emailLogs[0].sentAt).toLocaleDateString()
+                        : "-"}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                      {contact.registration?.registeredAt
+                        ? new Date(contact.registration.registeredAt).toLocaleDateString()
+                        : "-"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 hover:!opacity-100 [tr:hover_&]:opacity-100 transition-opacity">
+                        <button onClick={() => openEditDialog(contact)} className="p-1.5 rounded-md hover:bg-muted transition-colors" title="Edit attendee">
+                          <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                        </button>
+                        <button onClick={() => handleDeleteContact(contact.id)} className="p-1.5 rounded-md hover:bg-destructive/10 transition-colors" title="Delete attendee">
+                          <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {/* Select all banner */}
           {allPageSelected && !allSelected && allContacts.length > pageSize && (
             <div className="px-4 py-2 border-t bg-blue-50 dark:bg-blue-950/30 text-sm text-center">

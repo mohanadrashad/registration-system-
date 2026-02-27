@@ -15,6 +15,7 @@ import {
   MailX,
   ArrowLeft,
   XCircle,
+  Hourglass,
 } from "lucide-react";
 
 interface StatusCounts {
@@ -131,13 +132,13 @@ export default function StatisticsPage() {
         </div>
       )}
 
-      {/* Row 1: Total Attendees - Full Width */}
+      {/* Row 1: Total Invitees - Full Width */}
       <Card>
         <CardContent className="pt-6">
           <div className="flex items-center gap-4">
             <div className="rounded-lg bg-muted p-3"><Users className="h-6 w-6 text-muted-foreground" /></div>
             <div>
-              <p className="text-sm text-muted-foreground">Total Attendees</p>
+              <p className="text-sm text-muted-foreground">Total Invitees</p>
               <p className="text-3xl font-bold">{displayTotal}</p>
             </div>
           </div>
@@ -145,7 +146,7 @@ export default function StatisticsPage() {
       </Card>
 
       {/* Row 2: Status Breakdown Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
@@ -169,6 +170,20 @@ export default function StatisticsPage() {
                 <p className="text-2xl font-bold">{displayStatus.INVITED}</p>
                 <p className="text-xs text-muted-foreground">
                   {displayTotal > 0 ? Math.round((displayStatus.INVITED / displayTotal) * 100) : 0}% of total
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-yellow-50 p-2"><Hourglass className="h-5 w-5 text-yellow-500" /></div>
+              <div>
+                <p className="text-sm text-muted-foreground">Pending</p>
+                <p className="text-2xl font-bold">{displayStatus.IMPORTED + displayStatus.INVITED}</p>
+                <p className="text-xs text-muted-foreground">
+                  Invited but not registered
                 </p>
               </div>
             </div>
