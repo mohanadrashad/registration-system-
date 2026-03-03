@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { DashboardShell } from "@/components/layout/dashboard-shell";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -139,12 +140,17 @@ export default function UsersPage() {
   }
 
   if (status === "loading" || loading) {
-    return <div className="flex items-center justify-center py-12">Loading...</div>;
+    return (
+      <DashboardShell>
+        <div className="flex items-center justify-center py-12">Loading...</div>
+      </DashboardShell>
+    );
   }
 
   const currentUserId = (session?.user as { id?: string })?.id;
 
   return (
+    <DashboardShell>
     <div className="space-y-6">
       <PageHeader title="User Management" description={`${users.length} user${users.length !== 1 ? "s" : ""}`}>
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -300,5 +306,6 @@ export default function UsersPage() {
         </DialogContent>
       </Dialog>
     </div>
+    </DashboardShell>
   );
 }
