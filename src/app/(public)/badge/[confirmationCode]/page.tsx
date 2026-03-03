@@ -61,7 +61,7 @@ export default function BadgeViewPage() {
         <iframe
           srcDoc={badgeHtml}
           className="border-0"
-          style={{ width: "400px", height: "600px" }}
+          style={{ width: "360px", height: "560px" }}
           title="E-Badge"
         />
       </div>
