@@ -51,19 +51,17 @@ export function generateBadgeHtml(data: BadgeData): string {
     .badge {
       width: 360px;
       height: 560px;
-      background-color: #484848;
+      background-color: #3f3f3f;
       position: relative;
       overflow: hidden;
     }
 
-    /* ── Diagonal slash pattern (right side) ── */
+    /* ── Diagonal slash pattern — full badge width ── */
     .slash {
       position: absolute;
-      width: 55px;
-      background: rgba(255,255,255,0.055);
+      background: rgba(255,255,255,0.06);
       transform-origin: top left;
       transform: rotate(35deg);
-      border-radius: 1px;
       pointer-events: none;
     }
   </style>
@@ -71,19 +69,20 @@ export function generateBadgeHtml(data: BadgeData): string {
 <body>
 <div class="badge">
 
-  <!-- Diagonal slashes on right side -->
-  <div class="slash" style="left:200px; top:-60px; height:800px;"></div>
-  <div class="slash" style="left:240px; top:-60px; height:800px;"></div>
-  <div class="slash" style="left:280px; top:-60px; height:800px; width:65px;"></div>
-  <div class="slash" style="left:320px; top:-60px; height:800px; width:45px; opacity:0.7;"></div>
-  <div class="slash" style="left:160px; top:-60px; height:800px; opacity:0.5;"></div>
-  <div class="slash" style="left:120px; top:-60px; height:800px; opacity:0.3;"></div>
+  <!-- Diagonal slashes covering full badge (bottom-left to top-right) -->
+  <div class="slash" style="left:30px;  top:-80px; width:30px; height:900px; opacity:0.4;"></div>
+  <div class="slash" style="left:80px;  top:-80px; width:50px; height:900px; opacity:0.5;"></div>
+  <div class="slash" style="left:140px; top:-80px; width:30px; height:900px; opacity:0.6;"></div>
+  <div class="slash" style="left:185px; top:-80px; width:55px; height:900px;"></div>
+  <div class="slash" style="left:250px; top:-80px; width:35px; height:900px; opacity:0.7;"></div>
+  <div class="slash" style="left:295px; top:-80px; width:55px; height:900px;"></div>
+  <div class="slash" style="left:358px; top:-80px; width:35px; height:900px; opacity:0.8;"></div>
 
   <!-- ═══ LA GLOiRe LOGO (transparent white version) ═══ -->
   <img
     src="${appUrl}/logo-white.png"
     alt="LA GLOiRe"
-    style="position:absolute; top:18px; left:0; width:240px;"
+    style="position:absolute; top:47px; left:0; width:240px;"
   />
 
   <!-- ═══ ATTENDEE NAME ═══ -->
@@ -116,14 +115,14 @@ export function generateBadgeHtml(data: BadgeData): string {
   <!-- ═══ DESIGNATION ═══ -->
   <div style="
     position: absolute;
-    top: 378px;
+    top: 400px;
     left: 28px;
-    right: 90px;
+    right: 100px;
   ">
     <div style="
       font-family: 'Montserrat', Arial, sans-serif;
       font-weight: 300;
-      font-size: 14px;
+      font-size: 16px;
       color: #7dc242;
       line-height: 1.5;
     ">${data.designation || data.organization || ""}</div>
