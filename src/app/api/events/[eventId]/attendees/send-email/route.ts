@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { getRole, canEdit } from "@/lib/permissions";
 import { sendEmail } from "@/lib/email";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
 
@@ -10,6 +11,7 @@ export async function POST(
 ) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!canEdit(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { eventId } = await params;
   const body = await req.json();

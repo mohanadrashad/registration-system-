@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
+import { getRole, canEdit } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -63,6 +65,8 @@ export default function AttendeeDetailPage() {
   const router = useRouter();
   const eventId = params.eventId as string;
   const contactId = params.contactId as string;
+  const { data: session } = useSession();
+  const userCanEdit = canEdit(getRole(session as { user?: { role?: string } } | null));
 
   const [contact, setContact] = useState<ContactDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -186,10 +190,12 @@ export default function AttendeeDetailPage() {
             {statusConfig[contact.status]?.label || contact.status}
           </Badge>
         </div>
-        <Button variant={editing ? "ghost" : "outline"} onClick={() => setEditing(!editing)}>
-          <Pencil className="mr-2 h-4 w-4" />
-          {editing ? "Cancel Edit" : "Edit"}
-        </Button>
+        {userCanEdit && (
+          <Button variant={editing ? "ghost" : "outline"} onClick={() => setEditing(!editing)}>
+            <Pencil className="mr-2 h-4 w-4" />
+            {editing ? "Cancel Edit" : "Edit"}
+          </Button>
+        )}
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">

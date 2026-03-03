@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { createContactSchema } from "@/lib/validations/contact";
 import { randomBytes } from "crypto";
+import { getRole, canEdit } from "@/lib/permissions";
 
 export async function GET(
   req: NextRequest,
@@ -107,6 +108,7 @@ export async function POST(
 ) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!canEdit(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { eventId } = await params;
   const body = await req.json();

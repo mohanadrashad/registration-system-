@@ -16,7 +16,7 @@ model User {
   emailVerified DateTime?
   password      String
   image         String?
-  role          UserRole  @default(ADMIN)
+  role          UserRole  @default(VIEWER)
   accounts      Account[]
   sessions      Session[]
   createdAt     DateTime  @default(now())
@@ -58,7 +58,9 @@ model VerificationToken {
 }
 
 enum UserRole {
-  ADMIN
+  VIEWER
+  EDITOR
+  MANAGER
   SUPER_ADMIN
 }
 

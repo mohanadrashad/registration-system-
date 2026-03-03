@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -11,6 +12,7 @@ import {
   Award,
   Settings,
   BarChart3,
+  UserCog,
 } from "lucide-react";
 
 const mainNavItems = [
@@ -58,6 +60,10 @@ export function getEventNavItems(eventId: string) {
 
 export function Sidebar({ eventId }: { eventId?: string }) {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string })?.role;
+  const isSuperAdmin = role === "SUPER_ADMIN";
+
   const eventNavItems = eventId ? getEventNavItems(eventId) : [];
 
   return (
@@ -88,6 +94,21 @@ export function Sidebar({ eventId }: { eventId?: string }) {
               {item.title}
             </Link>
           ))}
+
+          {isSuperAdmin && (
+            <Link
+              href="/dashboard/users"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                pathname === "/dashboard/users" || pathname.startsWith("/dashboard/users/")
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground"
+              )}
+            >
+              <UserCog className="h-4 w-4" />
+              Users
+            </Link>
+          )}
 
           {eventId && (
             <>

@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
+import { getRole, canEdit, canDelete, type AppRole } from "@/lib/permissions";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -93,6 +95,10 @@ const statusConfig: Record<ContactStatus, { label: string; variant: "default" | 
 export default function AttendeesPage() {
   const params = useParams();
   const eventId = params.eventId as string;
+  const { data: session } = useSession();
+  const role: AppRole = getRole(session as { user?: { role?: string } } | null);
+  const userCanEdit = canEdit(role);
+  const userCanDelete = canDelete(role);
 
   const [groups, setGroups] = useState<CategoryGroup[]>([]);
   const [statusCounts, setStatusCounts] = useState<StatusCounts>({ IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
@@ -391,7 +397,7 @@ export default function AttendeesPage() {
           Export
         </Button>
 
-        <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        {userCanEdit && <Dialog open={importOpen} onOpenChange={setImportOpen}>
           <DialogTrigger asChild>
             <Button variant="outline">
               <Upload className="mr-2 h-4 w-4" />
@@ -433,9 +439,9 @@ export default function AttendeesPage() {
               <Button type="submit">Import</Button>
             </form>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
 
-        <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        {userCanEdit && <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" />
@@ -493,7 +499,7 @@ export default function AttendeesPage() {
               <Button type="submit">Add Attendee</Button>
             </form>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
       </PageHeader>
 
       {/* Quick Stats Bar */}
@@ -562,23 +568,27 @@ export default function AttendeesPage() {
               {selectedIds.size} selected
             </span>
           )}
-          <Button
-            variant="outline"
-            disabled={selectedIds.size === 0}
-            onClick={handleBulkDelete}
-            className="text-destructive hover:text-destructive"
-          >
-            <Trash2 className="mr-2 h-4 w-4" />
-            Delete
-          </Button>
-          <Button
-            variant="outline"
-            disabled={selectedIds.size === 0 || sending}
-            onClick={openEmailDialog}
-          >
-            <Mail className="mr-2 h-4 w-4" />
-            {sending ? "Sending..." : "Send Email"}
-          </Button>
+          {userCanDelete && (
+            <Button
+              variant="outline"
+              disabled={selectedIds.size === 0}
+              onClick={handleBulkDelete}
+              className="text-destructive hover:text-destructive"
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete
+            </Button>
+          )}
+          {userCanEdit && (
+            <Button
+              variant="outline"
+              disabled={selectedIds.size === 0 || sending}
+              onClick={openEmailDialog}
+            >
+              <Mail className="mr-2 h-4 w-4" />
+              {sending ? "Sending..." : "Send Email"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -804,13 +814,17 @@ export default function AttendeesPage() {
                         : "-"}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 hover:!opacity-100 [tr:hover_&]:opacity-100 transition-opacity">
-                        <button onClick={() => openEditDialog(contact)} className="p-1.5 rounded-md hover:bg-muted transition-colors" title="Edit attendee">
-                          <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-                        </button>
-                        <button onClick={() => handleDeleteContact(contact.id)} className="p-1.5 rounded-md hover:bg-destructive/10 transition-colors" title="Delete attendee">
-                          <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
-                        </button>
+                      <div className="flex items-center gap-1 opacity-0 [tr:hover_&]:opacity-100 transition-opacity">
+                        {userCanEdit && (
+                          <button onClick={() => openEditDialog(contact)} className="p-1.5 rounded-md hover:bg-muted transition-colors" title="Edit attendee">
+                            <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                          </button>
+                        )}
+                        {userCanDelete && (
+                          <button onClick={() => handleDeleteContact(contact.id)} className="p-1.5 rounded-md hover:bg-destructive/10 transition-colors" title="Delete attendee">
+                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

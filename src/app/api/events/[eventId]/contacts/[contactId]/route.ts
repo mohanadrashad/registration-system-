@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { updateContactSchema } from "@/lib/validations/contact";
+import { getRole, canEdit, canDelete } from "@/lib/permissions";
 
 export async function GET(
   _req: Request,
@@ -34,6 +35,7 @@ export async function PUT(
 ) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!canEdit(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { contactId } = await params;
   const body = await req.json();
@@ -57,11 +59,11 @@ export async function DELETE(
 ) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!canDelete(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { contactId } = await params;
 
   try {
-    // Delete related records first, then the contact
     await prisma.$transaction([
       prisma.emailLog.deleteMany({ where: { contactId } }),
       prisma.registration.deleteMany({ where: { contactId } }),
