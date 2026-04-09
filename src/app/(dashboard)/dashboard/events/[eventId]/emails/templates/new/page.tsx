@@ -26,7 +26,7 @@ const TEMPLATE_VARIABLES = [
 ];
 
 const DEFAULT_HEADER = `<div style="margin: 0; padding: 0;">
-  <img src="https://registration-system-gray.vercel.app/email-header.jpeg" alt="العشاء السنوي - Annual Gathering Dinner" style="width: 100%; display: block;" />
+  <img src="https://registration-system-gray.vercel.app/email-header.jpg" alt="العشاء السنوي - Annual Gathering Dinner" style="width: 100%; display: block;" />
 </div>`;
 
 const DEFAULT_FOOTER = `<div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
