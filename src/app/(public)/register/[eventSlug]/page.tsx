@@ -5,7 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle, Globe, User, Mail, Phone, Building2, Briefcase } from "lucide-react";
+import { CheckCircle, Globe, User, Mail, Phone, Building2, Briefcase, CalendarDays, MapPin, Clock } from "lucide-react";
 
 interface PrefilledContact {
   firstName: string;
@@ -31,7 +31,9 @@ const translations = {
     successTitle: "تم التسجيل بنجاح!",
     successMessage: "شكراً لتسجيلك. نتطلع لرؤيتك هناك!",
     switchLang: "English",
-    required: "مطلوب",
+    eventDate: "الثلاثاء ١٤ أبريل ٢٠٢٦",
+    eventTime: "من الساعة ٦ مساءً",
+    eventVenue: "منتجع ماسينا",
   },
   en: {
     title: "Event Registration",
@@ -47,7 +49,9 @@ const translations = {
     successTitle: "Registration Successful!",
     successMessage: "Thank you for registering. We look forward to seeing you there!",
     switchLang: "العربية",
-    required: "Required",
+    eventDate: "Tuesday 14 April 2026",
+    eventTime: "From 6 PM onwards",
+    eventVenue: "Maseena Resort",
   },
 };
 
@@ -112,12 +116,33 @@ export default function RegisterPage() {
     setLoading(false);
   }
 
+  // Success screen
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4" dir={isRtl ? "rtl" : "ltr"}
-        style={{ background: "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)" }}>
-        <div className="w-full max-w-md text-center">
-          <div className="rounded-2xl bg-white/95 backdrop-blur-sm shadow-2xl p-10">
+      <div className="min-h-screen lg:grid lg:grid-cols-2" dir={isRtl ? "rtl" : "ltr"}>
+        {/* Left branding panel - desktop only */}
+        <div className="hidden lg:flex flex-col items-center justify-center p-12"
+          style={{ background: "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)" }}>
+          <img src="/gathering-header.jpg" alt={eventName || "Event"} className="w-full max-w-md rounded-xl shadow-2xl" />
+          <div className="mt-8 text-center space-y-3">
+            <div className="flex items-center justify-center gap-2 text-gray-300">
+              <CalendarDays className="h-4 w-4" />
+              <span className="text-sm">{t.eventDate}</span>
+            </div>
+            <div className="flex items-center justify-center gap-2 text-gray-300">
+              <Clock className="h-4 w-4" />
+              <span className="text-sm">{t.eventTime}</span>
+            </div>
+            <div className="flex items-center justify-center gap-2 text-gray-300">
+              <MapPin className="h-4 w-4" />
+              <span className="text-sm">{t.eventVenue}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Right panel / mobile full */}
+        <div className="flex min-h-screen lg:min-h-0 items-center justify-center bg-white p-6 lg:p-12">
+          <div className="w-full max-w-md text-center">
             <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-green-100">
               <CheckCircle className="h-10 w-10 text-green-500" />
             </div>
@@ -129,25 +154,44 @@ export default function RegisterPage() {
     );
   }
 
+  // Form
   return (
-    <div className="flex min-h-screen items-center justify-center p-4" dir={isRtl ? "rtl" : "ltr"}
-      style={{ background: "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)" }}>
-      <div className="w-full max-w-lg">
-        {/* Header with event banner */}
-        <div className="rounded-t-2xl overflow-hidden shadow-2xl">
-          <img
-            src="/gathering-header.jpg"
-            alt={eventName || "Event"}
-            className="w-full h-auto block"
-          />
+    <div className="min-h-screen lg:grid lg:grid-cols-2" dir={isRtl ? "rtl" : "ltr"}>
+      {/* Left branding panel - desktop */}
+      <div className="hidden lg:flex flex-col items-center justify-center p-12 sticky top-0 h-screen"
+        style={{ background: "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)" }}>
+        <img src="/gathering-header.jpg" alt={eventName || "Event"} className="w-full max-w-lg rounded-xl shadow-2xl" />
+        <div className="mt-10 text-center space-y-4">
+          <div className="flex items-center justify-center gap-3 text-gray-300">
+            <CalendarDays className="h-5 w-5 text-[#6abf4b]" />
+            <span className="text-base">{t.eventDate}</span>
+          </div>
+          <div className="flex items-center justify-center gap-3 text-gray-300">
+            <Clock className="h-5 w-5 text-[#6abf4b]" />
+            <span className="text-base">{t.eventTime}</span>
+          </div>
+          <div className="flex items-center justify-center gap-3 text-gray-300">
+            <MapPin className="h-5 w-5 text-[#6abf4b]" />
+            <span className="text-base">{t.eventVenue}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Right form panel */}
+      <div className="flex flex-col bg-white">
+        {/* Mobile banner */}
+        <div className="lg:hidden">
+          <div style={{ background: "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)" }}>
+            <img src="/gathering-header.jpg" alt={eventName || "Event"} className="w-full h-auto block" />
+          </div>
         </div>
 
-        {/* Form card */}
-        <div className="rounded-b-2xl bg-white/95 backdrop-blur-sm shadow-2xl">
-          {/* Language toggle + title */}
-          <div className="px-8 pt-6 pb-2">
-            <div className="flex items-center justify-between mb-4">
-              <h1 className="text-xl font-bold text-gray-900">{t.title}</h1>
+        {/* Form content */}
+        <div className="flex flex-1 items-center justify-center p-6 lg:p-12">
+          <div className="w-full max-w-md">
+            {/* Language toggle + title */}
+            <div className="flex items-center justify-between mb-2">
+              <h1 className="text-2xl lg:text-3xl font-bold text-gray-900">{t.title}</h1>
               <button
                 type="button"
                 onClick={() => setLang(lang === "ar" ? "en" : "ar")}
@@ -157,14 +201,15 @@ export default function RegisterPage() {
                 {t.switchLang}
               </button>
             </div>
-            <p className="text-sm text-gray-400">{t.description}</p>
-          </div>
+            <p className="text-sm text-gray-400 mb-8">{t.description}</p>
 
-          {/* Divider */}
-          <div className="mx-8 border-t border-gray-100 my-2" />
+            {/* Mobile event details */}
+            <div className="lg:hidden flex flex-wrap gap-3 mb-6 text-xs text-gray-500">
+              <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5 text-[#6abf4b]" />{t.eventDate}</span>
+              <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-[#6abf4b]" />{t.eventTime}</span>
+              <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-[#6abf4b]" />{t.eventVenue}</span>
+            </div>
 
-          {/* Form */}
-          <div className="px-8 pb-8 pt-4">
             <form onSubmit={onSubmit} className="space-y-5">
               {error && (
                 <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-600">
@@ -266,7 +311,7 @@ export default function RegisterPage() {
               {/* Submit */}
               <Button
                 type="submit"
-                className="w-full h-12 rounded-lg text-base font-semibold shadow-sm"
+                className="w-full h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer"
                 style={{ backgroundColor: "#6abf4b", color: "#fff" }}
                 disabled={loading}
               >
