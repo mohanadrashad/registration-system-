@@ -136,7 +136,7 @@ export default function StatisticsPage() {
           <div className="flex items-center gap-4">
             <div className="rounded-lg bg-muted p-3"><Users className="h-6 w-6 text-muted-foreground" /></div>
             <div>
-              <p className="text-sm text-muted-foreground">Total Invitees</p>
+              <p className="text-sm text-muted-foreground">Total Contacts</p>
               <p className="text-3xl font-bold">{displayTotal}</p>
             </div>
           </div>
@@ -144,16 +144,30 @@ export default function StatisticsPage() {
       </Card>
 
       {/* Row 2: Status Breakdown Cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg bg-blue-50 p-2"><Users className="h-5 w-5 text-blue-500" /></div>
+              <div>
+                <p className="text-sm text-muted-foreground">Imported</p>
+                <p className="text-2xl font-bold">{displayStatus.IMPORTED}</p>
+                <p className="text-xs text-muted-foreground">
+                  Not yet invited
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
               <div className="rounded-lg bg-yellow-50 p-2"><Hourglass className="h-5 w-5 text-yellow-500" /></div>
               <div>
-                <p className="text-sm text-muted-foreground">Pending</p>
-                <p className="text-2xl font-bold">{displayStatus.IMPORTED + displayStatus.INVITED}</p>
+                <p className="text-sm text-muted-foreground">Invited</p>
+                <p className="text-2xl font-bold">{displayStatus.INVITED}</p>
                 <p className="text-xs text-muted-foreground">
-                  Not yet registered
+                  Awaiting registration
                 </p>
               </div>
             </div>
@@ -227,12 +241,18 @@ export default function StatisticsPage() {
                       <h4 className="font-semibold text-base">{cat.category}</h4>
                       <span className="text-2xl font-bold">{cat.total}</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                      <div>
+                        <div className="rounded-md bg-blue-50 py-2 mb-1">
+                          <p className="text-lg font-bold text-blue-600">{cat.IMPORTED}</p>
+                        </div>
+                        <p className="text-muted-foreground">Imported</p>
+                      </div>
                       <div>
                         <div className="rounded-md bg-yellow-50 py-2 mb-1">
-                          <p className="text-lg font-bold text-yellow-600">{cat.IMPORTED + cat.INVITED}</p>
+                          <p className="text-lg font-bold text-yellow-600">{cat.INVITED}</p>
                         </div>
-                        <p className="text-muted-foreground">Pending</p>
+                        <p className="text-muted-foreground">Invited</p>
                       </div>
                       <div>
                         <div className="rounded-md bg-green-50 py-2 mb-1">

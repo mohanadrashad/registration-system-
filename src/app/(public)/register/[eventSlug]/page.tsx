@@ -17,6 +17,39 @@ interface PrefilledContact {
   designation: string | null;
 }
 
+const translations = {
+  ar: {
+    title: "تسجيل الحضور",
+    description: "يرجى تعبئة بياناتك للتسجيل",
+    firstName: "الاسم الأول",
+    lastName: "اسم العائلة",
+    email: "البريد الإلكتروني",
+    phone: "رقم الهاتف",
+    organization: "جهة العمل",
+    designation: "المسمى الوظيفي",
+    register: "تسجيل",
+    registering: "جاري التسجيل...",
+    successTitle: "تم التسجيل بنجاح!",
+    successMessage: "شكراً لتسجيلك. نتطلع لرؤيتك هناك!",
+    switchLang: "English",
+  },
+  en: {
+    title: "Event Registration",
+    description: "Fill in your details to register",
+    firstName: "First Name",
+    lastName: "Last Name",
+    email: "Email",
+    phone: "Phone",
+    organization: "Organization",
+    designation: "Designation / Title",
+    register: "Register",
+    registering: "Registering...",
+    successTitle: "Registration Successful!",
+    successMessage: "Thank you for registering. We look forward to seeing you there!",
+    switchLang: "العربية",
+  },
+};
+
 export default function RegisterPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -26,6 +59,10 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [prefilled, setPrefilled] = useState<PrefilledContact | null>(null);
+  const [lang, setLang] = useState<"ar" | "en">("ar");
+
+  const t = translations[lang];
+  const isRtl = lang === "ar";
 
   // If token is present, fetch the invited contact's data to pre-fill the form
   useEffect(() => {
@@ -73,14 +110,12 @@ export default function RegisterPage() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+      <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4" dir={isRtl ? "rtl" : "ltr"}>
         <Card className="w-full max-w-md text-center">
           <CardContent className="pt-6">
             <CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-500" />
-            <h2 className="mb-2 text-2xl font-bold">Registration Successful!</h2>
-            <p className="text-muted-foreground">
-              Thank you for registering. We look forward to seeing you there!
-            </p>
+            <h2 className="mb-2 text-2xl font-bold">{t.successTitle}</h2>
+            <p className="text-muted-foreground">{t.successMessage}</p>
           </CardContent>
         </Card>
       </div>
@@ -88,11 +123,20 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4" dir={isRtl ? "rtl" : "ltr"}>
       <Card className="w-full max-w-lg">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Event Registration</CardTitle>
-          <CardDescription>Fill in your details to register</CardDescription>
+          <div className="flex justify-end mb-2">
+            <button
+              type="button"
+              onClick={() => setLang(lang === "ar" ? "en" : "ar")}
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors underline"
+            >
+              {t.switchLang}
+            </button>
+          </div>
+          <CardTitle className="text-2xl">{t.title}</CardTitle>
+          <CardDescription>{t.description}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">
@@ -103,32 +147,32 @@ export default function RegisterPage() {
             )}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="firstName">First Name <span className="text-destructive">*</span></Label>
+                <Label htmlFor="firstName">{t.firstName} <span className="text-destructive">*</span></Label>
                 <Input id="firstName" name="firstName" defaultValue={prefilled?.firstName || ""} required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="lastName">Last Name <span className="text-destructive">*</span></Label>
+                <Label htmlFor="lastName">{t.lastName} <span className="text-destructive">*</span></Label>
                 <Input id="lastName" name="lastName" defaultValue={prefilled?.lastName || ""} required />
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">Email <span className="text-destructive">*</span></Label>
+              <Label htmlFor="email">{t.email} <span className="text-destructive">*</span></Label>
               <Input id="email" name="email" type="email" defaultValue={prefilled?.email || ""} required />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="phone">Phone <span className="text-destructive">*</span></Label>
+              <Label htmlFor="phone">{t.phone} <span className="text-destructive">*</span></Label>
               <Input id="phone" name="phone" defaultValue={prefilled?.phone || ""} required />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="organization">Organization <span className="text-destructive">*</span></Label>
+              <Label htmlFor="organization">{t.organization} <span className="text-destructive">*</span></Label>
               <Input id="organization" name="organization" defaultValue={prefilled?.organization || ""} required />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="designation">Designation / Title <span className="text-destructive">*</span></Label>
+              <Label htmlFor="designation">{t.designation} <span className="text-destructive">*</span></Label>
               <Input id="designation" name="designation" defaultValue={prefilled?.designation || ""} required />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Registering..." : "Register"}
+              {loading ? t.registering : t.register}
             </Button>
           </form>
         </CardContent>
