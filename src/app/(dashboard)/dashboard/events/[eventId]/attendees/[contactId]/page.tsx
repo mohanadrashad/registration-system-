@@ -31,6 +31,7 @@ import {
   Tag,
   Clock,
   ExternalLink,
+  Award,
 } from "lucide-react";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
@@ -48,7 +49,7 @@ interface ContactDetail {
   inviteToken: string | null;
   createdAt: string;
   updatedAt: string;
-  registration: { status: string; registeredAt: string; confirmationCode: string } | null;
+  registration: { status: string; registeredAt: string; confirmationCode: string; badgeEmailSent: boolean } | null;
   emailLogs: { id: string; status: string; sentAt: string | null; subject: string }[];
   event: { slug: string; name: string; categories: string[] };
 }
@@ -361,6 +362,32 @@ export default function AttendeeDetailPage() {
                   <span className="text-muted-foreground">Registered At</span>
                   <span>{new Date(contact.registration.registeredAt).toLocaleString()}</span>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Badge */}
+          {contact.registration?.status === "CONFIRMED" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Award className="h-4 w-4" />
+                  E-Badge
+                  {contact.registration.badgeEmailSent && (
+                    <Badge variant="default" className="ml-auto text-xs">Email Sent</Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground">Badge is ready for this confirmed attendee.</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.open(`/badge/${contact.registration!.confirmationCode}`, "_blank")}
+                >
+                  <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                  View Badge
+                </Button>
               </CardContent>
             </Card>
           )}

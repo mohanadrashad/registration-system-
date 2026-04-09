@@ -16,7 +16,7 @@ export async function GET(
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
     include: {
-      registration: { select: { status: true, registeredAt: true, confirmationCode: true } },
+      registration: { select: { status: true, registeredAt: true, confirmationCode: true, badgeEmailSent: true } },
       emailLogs: { select: { id: true, status: true, sentAt: true, subject: true }, orderBy: { sentAt: "desc" } },
       event: { select: { slug: true, name: true, categories: true } },
     },

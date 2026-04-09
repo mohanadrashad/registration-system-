@@ -15,7 +15,7 @@ import { toast } from "sonner";
 
 const TEMPLATE_VARIABLES = [
   "firstName", "lastName", "email", "eventName",
-  "eventDate", "eventVenue", "registrationLink", "confirmationCode",
+  "eventDate", "eventVenue", "registrationLink", "confirmationCode", "badgeUrl",
 ];
 
 interface Template {
@@ -38,6 +38,7 @@ export default function EditTemplatePage() {
   const [headerHtml, setHeaderHtml] = useState("");
   const [footerHtml, setFooterHtml] = useState("");
   const [loading, setLoading] = useState(false);
+  const [eventPreview, setEventPreview] = useState({ name: "Your Event", date: "TBD", venue: "" });
 
   useEffect(() => {
     fetch(`/api/events/${eventId}/emails/templates/${templateId}`)
@@ -49,6 +50,19 @@ export default function EditTemplatePage() {
         setFooterHtml(data.footerHtml || "");
       });
   }, [eventId, templateId]);
+
+  useEffect(() => {
+    fetch(`/api/events/${eventId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((e) => {
+        if (e) setEventPreview({
+          name: e.name || "Your Event",
+          date: e.startDate ? new Date(e.startDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "TBD",
+          venue: e.venue || "",
+        });
+      })
+      .catch(() => {});
+  }, [eventId]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -82,21 +96,26 @@ export default function EditTemplatePage() {
 
   if (!template) return <div className="py-12 text-center">Loading...</div>;
 
+  function applyPreviewVars(html: string) {
+    return html
+      .replace(/{{firstName}}/g, "John")
+      .replace(/{{lastName}}/g, "Doe")
+      .replace(/{{email}}/g, "john@example.com")
+      .replace(/{{eventName}}/g, eventPreview.name)
+      .replace(/{{eventDate}}/g, eventPreview.date)
+      .replace(/{{eventVenue}}/g, eventPreview.venue || "Convention Center")
+      .replace(/{{registrationLink}}/g, "#")
+      .replace(/{{confirmationCode}}/g, "ABC123")
+      .replace(/{{badgeUrl}}/g, "#badge-preview");
+  }
+
   const previewHtml = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      ${headerHtml}
+      ${applyPreviewVars(headerHtml)}
       <div style="padding: 20px;">
-        ${bodyHtml
-          .replace(/{{firstName}}/g, "John")
-          .replace(/{{lastName}}/g, "Doe")
-          .replace(/{{email}}/g, "john@example.com")
-          .replace(/{{eventName}}/g, "Tech Conference 2026")
-          .replace(/{{eventDate}}/g, "June 15, 2026")
-          .replace(/{{eventVenue}}/g, "Convention Center")
-          .replace(/{{registrationLink}}/g, "#")
-          .replace(/{{confirmationCode}}/g, "ABC123")}
+        ${applyPreviewVars(bodyHtml)}
       </div>
-      ${footerHtml.replace(/{{eventName}}/g, "Tech Conference 2026")}
+      ${applyPreviewVars(footerHtml)}
     </div>
   `;
 

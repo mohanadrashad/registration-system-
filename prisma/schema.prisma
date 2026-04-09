@@ -134,6 +134,7 @@ model Registration {
   confirmationCode String             @unique @default(cuid())
   formData         Json?
   badgeGenerated   Boolean            @default(false)
+  badgeEmailSent   Boolean            @default(false)
   badgeUrl         String?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt

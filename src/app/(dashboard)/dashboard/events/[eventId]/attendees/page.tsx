@@ -40,6 +40,7 @@ import {
   Trash2,
   BarChart3,
   ArrowUpDown,
+  Award,
 } from "lucide-react";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
@@ -54,7 +55,7 @@ interface Contact {
   designation: string | null;
   category: string | null;
   status: ContactStatus;
-  registration: { status: string; registeredAt: string; confirmationCode: string } | null;
+  registration: { status: string; registeredAt: string; confirmationCode: string; badgeEmailSent: boolean } | null;
   emailLogs: { id: string; status: string; sentAt: string | null }[];
 }
 
@@ -123,6 +124,7 @@ export default function AttendeesPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
+
   const [editOpen, setEditOpen] = useState(false);
   const [editContact, setEditContact] = useState<Contact | null>(null);
   const [editCategoryValue, setEditCategoryValue] = useState<string>("");
@@ -206,6 +208,7 @@ export default function AttendeesPage() {
 
     setEmailOpen(true);
   }
+
 
   async function handleSendWithTemplate(templateId: string) {
     setSending(true);
@@ -760,6 +763,7 @@ export default function AttendeesPage() {
                   </th>
                   <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Invited</th>
                   <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Registered</th>
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Badge</th>
                   <th className="w-20 px-4 py-3"></th>
                 </tr>
               </thead>
@@ -812,6 +816,16 @@ export default function AttendeesPage() {
                       {contact.registration?.registeredAt
                         ? new Date(contact.registration.registeredAt).toLocaleDateString()
                         : "-"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {contact.registration?.badgeEmailSent ? (
+                        <span className="inline-flex items-center gap-1.5 text-green-600">
+                          <Award className="h-3.5 w-3.5" />
+                          <span className="text-xs font-medium">Sent</span>
+                        </span>
+                      ) : contact.registration ? (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 opacity-0 [tr:hover_&]:opacity-100 transition-opacity">

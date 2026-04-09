@@ -20,9 +20,16 @@ export async function generateQRCode(data: string): Promise<string> {
   });
 }
 
+function toTitleCase(str: string): string {
+  // Only capitalize first letter of each word — don't lowercase the rest
+  // so acronyms like CEO, CTO stay intact
+  return str.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export function generateBadgeHtml(data: BadgeData): string {
   const firstName = data.firstName.toUpperCase();
   const lastName = data.lastName.toUpperCase();
+  const designation = toTitleCase(data.designation || data.organization || "");
 
   // Base URL for fonts — works in both local and Vercel
   const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
@@ -44,39 +51,23 @@ export function generateBadgeHtml(data: BadgeData): string {
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 360px; height: 560px; overflow: hidden; background: #4a4a4a; }
+    html, body { width: 360px; height: 560px; overflow: hidden; }
     body { font-family: 'Montserrat', 'Arial', sans-serif; }
 
     /* ── Badge container ── */
     .badge {
       width: 360px;
       height: 560px;
-      background-color: #3f3f3f;
+      background-image: url('${appUrl}/badge-bg.jpg');
+      background-size: cover;
+      background-position: center;
       position: relative;
       overflow: hidden;
-    }
-
-    /* ── Diagonal slash pattern — full badge width ── */
-    .slash {
-      position: absolute;
-      background: rgba(255,255,255,0.06);
-      transform-origin: top left;
-      transform: rotate(35deg);
-      pointer-events: none;
     }
   </style>
 </head>
 <body>
 <div class="badge">
-
-  <!-- Diagonal slashes covering full badge (bottom-left to top-right) -->
-  <div class="slash" style="left:30px;  top:-80px; width:30px; height:900px; opacity:0.4;"></div>
-  <div class="slash" style="left:80px;  top:-80px; width:50px; height:900px; opacity:0.5;"></div>
-  <div class="slash" style="left:140px; top:-80px; width:30px; height:900px; opacity:0.6;"></div>
-  <div class="slash" style="left:185px; top:-80px; width:55px; height:900px;"></div>
-  <div class="slash" style="left:250px; top:-80px; width:35px; height:900px; opacity:0.7;"></div>
-  <div class="slash" style="left:295px; top:-80px; width:55px; height:900px;"></div>
-  <div class="slash" style="left:358px; top:-80px; width:35px; height:900px; opacity:0.8;"></div>
 
   <!-- ═══ LA GLOiRe LOGO (transparent white version) ═══ -->
   <img
@@ -91,11 +82,12 @@ export function generateBadgeHtml(data: BadgeData): string {
     top: 185px;
     left: 28px;
     right: 18px;
+    padding: 10px;
   ">
     <div style="
       font-family: 'Montserrat', Arial, sans-serif;
       font-weight: 600;
-      font-size: 46px;
+      font-size: 40px;
       color: white;
       line-height: 1.05;
       text-transform: uppercase;
@@ -104,7 +96,7 @@ export function generateBadgeHtml(data: BadgeData): string {
     <div style="
       font-family: 'Montserrat', Arial, sans-serif;
       font-weight: 600;
-      font-size: 46px;
+      font-size: 40px;
       color: white;
       line-height: 1.05;
       text-transform: uppercase;
@@ -113,19 +105,19 @@ export function generateBadgeHtml(data: BadgeData): string {
   </div>
 
   <!-- ═══ DESIGNATION ═══ -->
-  <div style="
-    position: absolute;
-    top: 400px;
-    left: 28px;
-    right: 100px;
-  ">
+  <div style="position: absolute; top: 472px; left: 28px; right: 20px; padding: 10px;">
     <div style="
+      position: relative;
+      top: -135px;
       font-family: 'Montserrat', Arial, sans-serif;
       font-weight: 300;
-      font-size: 16px;
+      font-size: 18px;
       color: #7dc242;
       line-height: 1.5;
-    ">${data.designation || data.organization || ""}</div>
+      word-spacing: normal;
+      letter-spacing: normal;
+      white-space: normal;
+    ">${designation}</div>
   </div>
 
   <!-- ═══ QR CODE ═══ -->
@@ -139,7 +131,6 @@ export function generateBadgeHtml(data: BadgeData): string {
     <div style="background:white; padding:5px; border-radius:5px; display:inline-block;">
       <img src="${data.qrCodeDataUrl}" alt="QR" style="display:block; width:76px; height:76px;" />
     </div>
-    <div style="margin-top:4px; font-size:7px; color:rgba(255,255,255,0.35); font-family:monospace; letter-spacing:1px;">${data.confirmationCode}</div>
   </div>` : ""}
 
 </div>

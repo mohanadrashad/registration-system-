@@ -44,7 +44,7 @@ export async function GET(
       prisma.contact.findMany({
         where,
         include: {
-          registration: { select: { status: true, registeredAt: true, confirmationCode: true } },
+          registration: { select: { status: true, registeredAt: true, confirmationCode: true, badgeEmailSent: true } },
           emailLogs: { select: { id: true, status: true, sentAt: true }, orderBy: { sentAt: "desc" }, take: 1 },
         },
         orderBy: [{ category: "asc" }, { createdAt: "desc" }],

@@ -72,6 +72,9 @@ export async function POST(
         ? `${appUrl}/register/${event.slug}?token=${contact.inviteToken}`
         : `${appUrl}/register/${event.slug}`,
       confirmationCode: contact.registration?.confirmationCode || "",
+      badgeUrl: contact.registration?.confirmationCode
+        ? `${appUrl}/badge/${contact.registration.confirmationCode}`
+        : "",
     };
 
     const html = renderEmailTemplate(
@@ -106,6 +109,14 @@ export async function POST(
         await prisma.contact.update({
           where: { id: contact.id },
           data: { status: "INVITED" },
+        });
+      }
+
+      // Mark badge email as sent for badge delivery templates
+      if (template.type === "BADGE_DELIVERY" && contact.registration?.id) {
+        await prisma.registration.update({
+          where: { id: contact.registration.id },
+          data: { badgeEmailSent: true },
         });
       }
 

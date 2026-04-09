@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,6 +11,8 @@ export default function BadgeViewPage() {
   const confirmationCode = params.confirmationCode as string;
   const [badgeHtml, setBadgeHtml] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     fetch(`/api/badges/${confirmationCode}`)
@@ -22,12 +24,22 @@ export default function BadgeViewPage() {
       .catch(() => setError(true));
   }, [confirmationCode]);
 
-  function handlePrint() {
-    const printWindow = window.open("", "_blank");
-    if (printWindow && badgeHtml) {
-      printWindow.document.write(badgeHtml);
-      printWindow.document.close();
-      printWindow.onload = () => printWindow.print();
+  async function handleDownload() {
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/badges/${confirmationCode}/image`);
+      if (!res.ok) throw new Error("Failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `badge-${confirmationCode}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -59,15 +71,16 @@ export default function BadgeViewPage() {
       <h1 className="text-2xl font-bold">Your E-Badge</h1>
       <div className="rounded-lg shadow-xl overflow-hidden">
         <iframe
+          ref={iframeRef}
           srcDoc={badgeHtml}
           className="border-0"
           style={{ width: "360px", height: "560px" }}
           title="E-Badge"
         />
       </div>
-      <Button onClick={handlePrint}>
+      <Button onClick={handleDownload} disabled={downloading}>
         <Download className="mr-2 h-4 w-4" />
-        Print / Save as PDF
+        {downloading ? "Preparing..." : "Save Badge as Image"}
       </Button>
     </div>
   );

@@ -33,6 +33,7 @@
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
+    "html2canvas": "^1.4.1",
     "lucide-react": "^0.574.0",
     "nanoid": "^5.1.6",
     "next": "16.1.6",

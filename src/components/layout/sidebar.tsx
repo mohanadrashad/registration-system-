@@ -46,11 +46,6 @@ export function getEventNavItems(eventId: string) {
       icon: Mail,
     },
     {
-      title: "Badges",
-      href: `/dashboard/events/${eventId}/badges`,
-      icon: Award,
-    },
-    {
       title: "Settings",
       href: `/dashboard/events/${eventId}`,
       icon: Settings,
