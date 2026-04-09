@@ -60,7 +60,25 @@ export async function POST(
   let failedCount = 0;
   const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
   for (const contact of contacts) {
+    // Skip contacts with invalid email addresses
+    if (!emailRegex.test(contact.email)) {
+      await prisma.emailLog.create({
+        data: {
+          campaignId: campaign.id,
+          contactId: contact.id,
+          toEmail: contact.email,
+          subject: template.subject,
+          status: "FAILED",
+          errorMessage: "Invalid email address",
+        },
+      });
+      failedCount++;
+      continue;
+    }
+
     const variables = {
       firstName: contact.firstName,
       lastName: contact.lastName,

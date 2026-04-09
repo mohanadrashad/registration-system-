@@ -56,7 +56,8 @@ export async function POST(
     const designation = row[mappings.designation || "designation"] || row["Designation"] || row["Title"] || "";
     const category = defaultCategory || row[mappings.category || "category"] || row["Category"] || row["Type"] || "";
 
-    if (!email || !firstName) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email || !firstName || !emailRegex.test(email.trim())) {
       skipped++;
       continue;
     }
