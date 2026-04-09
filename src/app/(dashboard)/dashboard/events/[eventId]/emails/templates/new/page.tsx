@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -22,10 +22,11 @@ const TEMPLATE_VARIABLES = [
   "eventVenue",
   "registrationLink",
   "confirmationCode",
+  "badgeUrl",
 ];
 
-const DEFAULT_HEADER = `<div style="background-color: #1a1a2e; padding: 30px; text-align: center;">
-  <h1 style="color: white; margin: 0; font-size: 24px;">{{eventName}}</h1>
+const DEFAULT_HEADER = `<div style="margin: 0; padding: 0;">
+  <img src="https://registration-system-gray.vercel.app/email-header.jpeg" alt="العشاء السنوي - Annual Gathering Dinner" style="width: 100%; display: block;" />
 </div>`;
 
 const DEFAULT_FOOTER = `<div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
@@ -39,10 +40,51 @@ export default function NewTemplatePage() {
   const eventId = params.eventId as string;
   const [loading, setLoading] = useState(false);
   const [bodyHtml, setBodyHtml] = useState(
-    `<h2>Hello {{firstName}},</h2>\n<p>We are excited to invite you to <strong>{{eventName}}</strong>!</p>\n<p>Event Details:</p>\n<ul>\n<li>Date: {{eventDate}}</li>\n<li>Venue: {{eventVenue}}</li>\n</ul>\n<p><a href="{{registrationLink}}" style="display: inline-block; background-color: #1a1a2e; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Register Now</a></p>\n<p>We look forward to seeing you there!</p>`
+    `<div style="font-family: 'Segoe UI', Arial, sans-serif; color: #333; line-height: 1.8;">
+  <p>Dear Team,</p>
+  <p>We are excited to invite you again to our <strong>Annual Company Gathering</strong>.</p>
+  <p>As you know, the event was postponed earlier due to the ongoing situation and we are happy that we can now come together and spend some fun time as one team out of the work environment.</p>
+  <p>Get ready for a fun and enjoyable evening filled with great company, exciting games, and prizes. To make the night even more special, we will wrap up the event with <strong>Jad and the band</strong>.</p>
+  <p style="margin-top: 20px;">
+    <strong>Tuesday 14 April 2026</strong><br/>
+    From 6 pm onwards<br/>
+    <strong>Maseena Resort</strong>
+  </p>
+  <p><a href="https://maps.app.goo.gl/QyP2Htgpd4SxF3UQ6?g_st=ic" style="color: #4a9e4a; text-decoration: underline;">View Location on Google Maps</a></p>
+  <p>We look forward to seeing you all there 🙏🏼</p>
+
+  <hr style="border: none; border-top: 1px solid #ccc; margin: 30px 0;" />
+
+  <div dir="rtl" style="text-align: right; font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.8;">
+    <p>الزملاء الأعزاء،</p>
+    <p>يسرّنا دعوتكم مجددًا لحضور <strong>اللقاء السنوي للشركة</strong>.</p>
+    <p>كما تعلمون، فقد تم تأجيل الفعالية سابقًا نظرًا للوضع القائم، ويسعدنا أننا أصبحنا الآن قادرين على الاجتماع معًا وقضاء وقت ممتع كفريق واحد خارج إطار العمل.</p>
+    <p>استعدوا لأمسية مليئة بالمرح والأجواء الجميلة، تتضمن ألعابًا ممتعة وجوائز. ولنجعل هذه الليلة أكثر تميزًا، سنختتم الفعالية مع <strong>جاد والفرقة الموسيقية</strong>.</p>
+    <p style="margin-top: 20px;">
+      <strong>الثلاثاء ١٤ أبريل</strong><br/>
+      من الساعة ٦ مساءً<br/>
+      <strong>منتجع ماسينا</strong>
+    </p>
+    <p>نتطلع إلى رؤيتكم جميعًا 🙏🏼</p>
+  </div>
+</div>`
   );
   const [headerHtml, setHeaderHtml] = useState(DEFAULT_HEADER);
   const [footerHtml, setFooterHtml] = useState(DEFAULT_FOOTER);
+  const [eventPreview, setEventPreview] = useState({ name: "Your Event", date: "TBD", venue: "" });
+
+  useEffect(() => {
+    fetch(`/api/events/${eventId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((e) => {
+        if (e) setEventPreview({
+          name: e.name || "Your Event",
+          date: e.startDate ? new Date(e.startDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "TBD",
+          venue: e.venue || "",
+        });
+      })
+      .catch(() => {});
+  }, [eventId]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -77,22 +119,26 @@ export default function NewTemplatePage() {
     setter((prev) => prev + `{{${variable}}}`);
   }
 
+  function applyPreviewVars(html: string) {
+    return html
+      .replace(/{{firstName}}/g, "John")
+      .replace(/{{lastName}}/g, "Doe")
+      .replace(/{{email}}/g, "john@example.com")
+      .replace(/{{eventName}}/g, eventPreview.name)
+      .replace(/{{eventDate}}/g, eventPreview.date)
+      .replace(/{{eventVenue}}/g, eventPreview.venue || "Convention Center")
+      .replace(/{{registrationLink}}/g, "#")
+      .replace(/{{confirmationCode}}/g, "ABC123")
+      .replace(/{{badgeUrl}}/g, "#badge-preview");
+  }
+
   const previewHtml = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-      ${headerHtml}
+      ${applyPreviewVars(headerHtml)}
       <div style="padding: 20px;">
-        ${bodyHtml
-          .replace(/{{firstName}}/g, "John")
-          .replace(/{{lastName}}/g, "Doe")
-          .replace(/{{email}}/g, "john@example.com")
-          .replace(/{{eventName}}/g, "Tech Conference 2026")
-          .replace(/{{eventDate}}/g, "June 15, 2026")
-          .replace(/{{eventVenue}}/g, "Convention Center")
-          .replace(/{{registrationLink}}/g, "#")
-          .replace(/{{confirmationCode}}/g, "ABC123")}
+        ${applyPreviewVars(bodyHtml)}
       </div>
-      ${footerHtml
-        .replace(/{{eventName}}/g, "Tech Conference 2026")}
+      ${applyPreviewVars(footerHtml)}
     </div>
   `;
 

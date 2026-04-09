@@ -50,7 +50,7 @@ export function renderEmailTemplate(
   <style>
     body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     .email-wrapper { max-width: 600px; margin: 0 auto; }
-    .email-header { padding: 20px; }
+    .email-header { padding: 0; }
     .email-body { padding: 20px; }
     .email-footer { padding: 20px; font-size: 12px; color: #666; border-top: 1px solid #eee; }
   </style>
