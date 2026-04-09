@@ -88,7 +88,7 @@ interface EmailTemplate {
 
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; }> = {
   IMPORTED: { label: "Imported", variant: "secondary" },
-  INVITED: { label: "Pending", variant: "outline" },
+  INVITED: { label: "Invited", variant: "outline" },
   REGISTERED: { label: "Registered", variant: "default" },
   CANCELLED: { label: "Cancelled", variant: "destructive" },
 };
@@ -508,10 +508,11 @@ export default function AttendeesPage() {
       {/* Quick Stats Bar */}
       <div className="flex items-center gap-4 rounded-lg border bg-card px-4 py-3">
         <div className="flex items-center gap-6 text-sm flex-wrap">
-          <span className="flex items-center gap-1.5"><Users className="h-4 w-4 text-muted-foreground" /> <strong>{overallTotal}</strong> Total Invitees</span>
+          <span className="flex items-center gap-1.5"><Users className="h-4 w-4 text-muted-foreground" /> <strong>{overallTotal}</strong> Total Contacts</span>
           <span className="text-muted-foreground/30">|</span>
-          <span className="flex items-center gap-1.5 text-yellow-600"><Clock className="h-4 w-4" /> <strong>{overallCounts.IMPORTED + overallCounts.INVITED}</strong> Pending</span>
-          <span className="flex items-center gap-1.5"><UserCheck className="h-4 w-4 text-green-500" /> <strong>{overallCounts.REGISTERED}</strong> Registered</span>
+          <span className="flex items-center gap-1.5 text-blue-600"><Upload className="h-4 w-4" /> <strong>{overallCounts.IMPORTED}</strong> Imported</span>
+          <span className="flex items-center gap-1.5 text-yellow-600"><Clock className="h-4 w-4" /> <strong>{overallCounts.INVITED}</strong> Invited</span>
+          <span className="flex items-center gap-1.5 text-green-600"><UserCheck className="h-4 w-4" /> <strong>{overallCounts.REGISTERED}</strong> Registered</span>
         </div>
         <Link href={`/dashboard/events/${eventId}/statistics`} className="ml-auto shrink-0">
           <Button variant="outline" size="sm">
@@ -552,7 +553,7 @@ export default function AttendeesPage() {
           <SelectContent>
             <SelectItem value="ALL">All Statuses</SelectItem>
             <SelectItem value="IMPORTED">Imported</SelectItem>
-            <SelectItem value="INVITED">Pending</SelectItem>
+            <SelectItem value="INVITED">Invited</SelectItem>
             <SelectItem value="REGISTERED">Registered</SelectItem>
             <SelectItem value="CANCELLED">Cancelled</SelectItem>
           </SelectContent>
@@ -692,7 +693,7 @@ export default function AttendeesPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="IMPORTED">Imported</SelectItem>
-                      <SelectItem value="INVITED">Pending</SelectItem>
+                      <SelectItem value="INVITED">Invited</SelectItem>
                       <SelectItem value="REGISTERED">Registered</SelectItem>
                       <SelectItem value="CANCELLED">Cancelled</SelectItem>
                     </SelectContent>
