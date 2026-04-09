@@ -287,7 +287,7 @@ export default function RegisterPage() {
                 <Input
                   id="organization"
                   name="organization"
-                  defaultValue={prefilled?.organization || ""}
+                  defaultValue={prefilled?.organization || "LA GLOIRE"}
                   required
                   className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
                 />
