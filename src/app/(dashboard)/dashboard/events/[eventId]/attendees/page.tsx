@@ -112,6 +112,7 @@ export default function AttendeesPage() {
 
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [badgeEmailFilter, setBadgeEmailFilter] = useState<string>("ALL");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -131,7 +132,7 @@ export default function AttendeesPage() {
   const [editStatusValue, setEditStatusValue] = useState<string>("");
 
   // Reset page when filters change
-  useEffect(() => { setPage(1); }, [statusFilter, categoryFilter, debouncedSearch]);
+  useEffect(() => { setPage(1); }, [statusFilter, categoryFilter, badgeEmailFilter, debouncedSearch]);
 
   // Debounce search
   useEffect(() => {
@@ -144,6 +145,7 @@ export default function AttendeesPage() {
       const p = new URLSearchParams();
       if (statusFilter !== "ALL") p.set("status", statusFilter);
       if (categoryFilter !== "ALL") p.set("category", categoryFilter);
+      if (badgeEmailFilter !== "ALL") p.set("badgeEmail", badgeEmailFilter);
       if (debouncedSearch) p.set("search", debouncedSearch);
 
       const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
@@ -161,7 +163,7 @@ export default function AttendeesPage() {
     } finally {
       setLoading(false);
     }
-  }, [eventId, statusFilter, categoryFilter, debouncedSearch]);
+  }, [eventId, statusFilter, categoryFilter, badgeEmailFilter, debouncedSearch]);
 
   useEffect(() => {
     fetchData();
@@ -556,6 +558,20 @@ export default function AttendeesPage() {
             <SelectItem value="INVITED">Invited</SelectItem>
             <SelectItem value="REGISTERED">Registered</SelectItem>
             <SelectItem value="CANCELLED">Cancelled</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={badgeEmailFilter}
+          onValueChange={(v) => { setBadgeEmailFilter(v); setSelectedIds(new Set()); }}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Badge email" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Badge Status</SelectItem>
+            <SelectItem value="sent">Badge Sent</SelectItem>
+            <SelectItem value="not_sent">Badge Not Sent</SelectItem>
           </SelectContent>
         </Select>
 

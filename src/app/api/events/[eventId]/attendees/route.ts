@@ -14,16 +14,20 @@ export async function GET(
   const search = searchParams.get("search") || "";
   const category = searchParams.get("category") || "";
   const status = searchParams.get("status") || "";
+  const badgeEmail = searchParams.get("badgeEmail") || "";
 
   const where: Record<string, unknown> = { eventId };
+  const andConditions: Record<string, unknown>[] = [];
 
   if (search) {
-    where.OR = [
-      { firstName: { contains: search, mode: "insensitive" } },
-      { lastName: { contains: search, mode: "insensitive" } },
-      { email: { contains: search, mode: "insensitive" } },
-      { organization: { contains: search, mode: "insensitive" } },
-    ];
+    andConditions.push({
+      OR: [
+        { firstName: { contains: search, mode: "insensitive" } },
+        { lastName: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { organization: { contains: search, mode: "insensitive" } },
+      ],
+    });
   }
 
   if (category) {
@@ -32,6 +36,21 @@ export async function GET(
 
   if (status) {
     where.status = status;
+  }
+
+  if (badgeEmail === "sent") {
+    where.registration = { badgeEmailSent: true };
+  } else if (badgeEmail === "not_sent") {
+    andConditions.push({
+      OR: [
+        { registration: null },
+        { registration: { badgeEmailSent: false } },
+      ],
+    });
+  }
+
+  if (andConditions.length > 0) {
+    where.AND = andConditions;
   }
 
   try {
