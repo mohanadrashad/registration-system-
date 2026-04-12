@@ -36,12 +36,21 @@ export async function POST(
             <h2>Hello ${reg.contact.firstName},</h2>
             <p>Your e-badge for <strong>${event.name}</strong> is ready!</p>
             <p>You can view and download your badge using the link below:</p>
-            <p style="text-align: center; margin: 30px 0;">
-              <a href="${badgeUrl}"
-                 style="background-color: #1a1a2e; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-                View My Badge
-              </a>
-            </p>
+            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 30px 0;">
+              <tr>
+                <td align="center">
+                  <table border="0" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td align="center" bgcolor="#1a1a2e" style="border-radius: 6px;">
+                        <a href="${badgeUrl}" target="_blank" style="display: block; padding: 12px 24px; font-family: sans-serif; font-size: 16px; color: #ffffff; text-decoration: none;">
+                          View My Badge
+                        </a>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
             <p>Your confirmation code: <strong>${reg.confirmationCode}</strong></p>
             <p style="color: #666; font-size: 14px;">
               Please bring this badge (printed or on your device) to the event for check-in.
