@@ -39,15 +39,15 @@ export async function POST(
             <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 30px 0;">
               <tr>
                 <td align="center">
-                  <table border="0" cellpadding="0" cellspacing="0">
-                    <tr>
-                      <td align="center" bgcolor="#1a1a2e" style="border-radius: 6px;">
-                        <a href="${badgeUrl}" target="_blank" style="display: block; padding: 12px 24px; font-family: sans-serif; font-size: 16px; color: #ffffff; text-decoration: none;">
-                          View My Badge
-                        </a>
-                      </td>
-                    </tr>
-                  </table>
+                  <!--[if mso]>
+                  <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${badgeUrl}" style="height:44px;v-text-anchor:middle;width:180px;" arcsize="14%" strokecolor="#1a1a2e" fillcolor="#1a1a2e">
+                    <w:anchorlock/>
+                    <center style="color:#ffffff;font-family:sans-serif;font-size:16px;">View My Badge</center>
+                  </v:roundrect>
+                  <![endif]-->
+                  <!--[if !mso]><!-->
+                  <a href="${badgeUrl}" target="_blank" style="background-color:#1a1a2e;border-radius:6px;color:#ffffff;display:inline-block;font-family:sans-serif;font-size:16px;line-height:44px;text-align:center;text-decoration:none;width:180px;-webkit-text-size-adjust:none;">View My Badge</a>
+                  <!--<![endif]-->
                 </td>
               </tr>
             </table>
