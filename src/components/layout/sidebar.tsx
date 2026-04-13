@@ -87,6 +87,12 @@ export function getEventNavItems(eventId: string): EventNavItem[] {
       icon: Blocks,
     },
     {
+      title: "Email Config",
+      href: `/dashboard/events/${eventId}/settings/email`,
+      icon: Mail,
+      module: "customEmail",
+    },
+    {
       title: "Settings",
       href: `/dashboard/events/${eventId}`,
       icon: Settings,

@@ -87,6 +87,7 @@ model Event {
   badgeTemplate  BadgeTemplate?
   modules        EventModules?
   formFields     FormField[]
+  emailSettings  EventEmailSettings?
 }
 
 // ─── Event Modules (Feature Toggles) ───
@@ -113,6 +114,45 @@ model EventModules {
   updatedAt           DateTime @updatedAt
 
   event               Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+// ─── Event Email Settings ───
+
+model EventEmailSettings {
+  id              String        @id @default(cuid())
+  eventId         String        @unique
+
+  provider        EmailProvider @default(SYSTEM)
+  fromName        String        // "AlUla Conference Team"
+  fromEmail       String        // "register@alula.sa"
+  replyTo         String?
+
+  // Custom SMTP
+  smtpHost        String?
+  smtpPort        Int?
+  smtpUser        String?
+  smtpPassword    String?       // Should be encrypted in production
+  smtpSecure      Boolean       @default(true)
+
+  // Provider API Keys (Resend, SendGrid, etc.)
+  apiKey          String?       // Should be encrypted in production
+
+  // Verification
+  isVerified      Boolean       @default(false)
+  verifiedAt      DateTime?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  event           Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+enum EmailProvider {
+  SYSTEM        // Use system default SMTP
+  CUSTOM_SMTP   // Custom SMTP server
+  RESEND        // Resend API
+  SENDGRID      // SendGrid API
+  MAILGUN       // Mailgun API
 }
 
 // ─── Contact ───
