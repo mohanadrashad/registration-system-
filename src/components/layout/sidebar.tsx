@@ -17,6 +17,7 @@ import {
   QrCode,
   MessageCircle,
   FormInput,
+  Palette,
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
@@ -85,6 +86,11 @@ export function getEventNavItems(eventId: string): EventNavItem[] {
       title: "Modules",
       href: `/dashboard/events/${eventId}/settings/modules`,
       icon: Blocks,
+    },
+    {
+      title: "Branding",
+      href: `/dashboard/events/${eventId}/settings/branding`,
+      icon: Palette,
     },
     {
       title: "Email Config",

@@ -4,6 +4,7 @@ import { publicRegistrationSchema } from "@/lib/validations/registration";
 import { randomBytes } from "crypto";
 
 // GET: Look up contact by invite token to pre-fill the registration form
+// Also returns event details and branding for the registration page
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ eventSlug: string }> }
@@ -11,25 +12,83 @@ export async function GET(
   const { eventSlug } = await params;
   const token = req.nextUrl.searchParams.get("token");
 
-  if (!token) {
-    return NextResponse.json({ error: "No token provided" }, { status: 400 });
-  }
+  const event = await prisma.event.findUnique({
+    where: { slug: eventSlug },
+    include: {
+      branding: true,
+    },
+  });
 
-  const event = await prisma.event.findUnique({ where: { slug: eventSlug } });
   if (!event || !event.isActive) {
     return NextResponse.json({ error: "Event not found or not active" }, { status: 404 });
   }
 
-  const contact = await prisma.contact.findUnique({
-    where: { inviteToken: token },
-    select: { firstName: true, lastName: true, email: true, phone: true, organization: true, designation: true },
-  });
+  // Build response with event info and branding
+  const response: {
+    eventName: string;
+    eventDescription: string | null;
+    venue: string | null;
+    startDate: Date;
+    endDate: Date;
+    branding: {
+      primaryColor: string;
+      secondaryColor: string | null;
+      backgroundColor: string | null;
+      textColor: string | null;
+      logoUrl: string | null;
+      headerImageUrl: string | null;
+      welcomeTitle: string | null;
+      welcomeTitleAr: string | null;
+      welcomeMessage: string | null;
+      welcomeMessageAr: string | null;
+      footerText: string | null;
+      footerTextAr: string | null;
+      customCss: string | null;
+    } | null;
+    contact?: {
+      firstName: string;
+      lastName: string;
+      email: string;
+      phone: string | null;
+      organization: string | null;
+      designation: string | null;
+    };
+  } = {
+    eventName: event.name,
+    eventDescription: event.description,
+    venue: event.venue,
+    startDate: event.startDate,
+    endDate: event.endDate,
+    branding: event.branding ? {
+      primaryColor: event.branding.primaryColor,
+      secondaryColor: event.branding.secondaryColor,
+      backgroundColor: event.branding.backgroundColor,
+      textColor: event.branding.textColor,
+      logoUrl: event.branding.logoUrl,
+      headerImageUrl: event.branding.headerImageUrl,
+      welcomeTitle: event.branding.welcomeTitle,
+      welcomeTitleAr: event.branding.welcomeTitleAr,
+      welcomeMessage: event.branding.welcomeMessage,
+      welcomeMessageAr: event.branding.welcomeMessageAr,
+      footerText: event.branding.footerText,
+      footerTextAr: event.branding.footerTextAr,
+      customCss: event.branding.customCss,
+    } : null,
+  };
 
-  if (!contact) {
-    return NextResponse.json({ error: "Invalid token" }, { status: 404 });
+  // If token provided, look up the contact
+  if (token) {
+    const contact = await prisma.contact.findUnique({
+      where: { inviteToken: token },
+      select: { firstName: true, lastName: true, email: true, phone: true, organization: true, designation: true },
+    });
+
+    if (contact) {
+      response.contact = contact;
+    }
   }
 
-  return NextResponse.json({ contact, eventName: event.name });
+  return NextResponse.json(response);
 }
 
 export async function POST(

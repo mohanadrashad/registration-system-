@@ -92,6 +92,8 @@ model Event {
   checkInPoints  CheckInPoint[]
   whatsAppSettings EventWhatsAppSettings?
   whatsAppLogs   WhatsAppLog[]
+  branding       EventBranding?
+  domain         EventDomain?
 }
 
 // ─── Event Modules (Feature Toggles) ───
@@ -228,6 +230,62 @@ enum WhatsAppStatus {
   DELIVERED
   READ
   FAILED
+}
+
+// ─── Event Branding ───
+
+model EventBranding {
+  id               String   @id @default(cuid())
+  eventId          String   @unique
+
+  // Colors
+  primaryColor     String   @default("#7dc242")
+  secondaryColor   String?
+  backgroundColor  String?
+  textColor        String?
+
+  // Logo & Images
+  logoUrl          String?
+  logoWhiteUrl     String?  // For dark backgrounds
+  faviconUrl       String?
+  headerImageUrl   String?
+
+  // Custom CSS
+  customCss        String?  @db.Text
+
+  // Registration Page
+  welcomeTitle     String?
+  welcomeTitleAr   String?
+  welcomeMessage   String?  @db.Text
+  welcomeMessageAr String?  @db.Text
+
+  // Footer
+  footerText       String?
+  footerTextAr     String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  event            Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+// ─── Event Domain ───
+
+model EventDomain {
+  id                 String    @id @default(cuid())
+  eventId            String    @unique
+
+  customDomain       String?   @unique  // "register.client-event.com"
+  isVerified         Boolean   @default(false)
+  verifiedAt         DateTime?
+
+  // DNS verification
+  verificationRecord String?   // TXT record value
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  event              Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
 // ─── Contact ───
