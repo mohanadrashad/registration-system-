@@ -88,6 +88,8 @@ model Event {
   modules        EventModules?
   formFields     FormField[]
   emailSettings  EventEmailSettings?
+  checkIns       CheckIn[]
+  checkInPoints  CheckInPoint[]
 }
 
 // ─── Event Modules (Feature Toggles) ───
@@ -207,9 +209,10 @@ model Registration {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  event   Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  badge   Badge?
+  contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  event    Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  badge    Badge?
+  checkIns CheckIn[]
 
   @@index([eventId])
   @@index([status])
@@ -220,6 +223,57 @@ enum RegistrationStatus {
   CONFIRMED
   CANCELLED
   WAITLISTED
+}
+
+// ─── Check-in Records ───
+
+model CheckIn {
+  id              String        @id @default(cuid())
+  registrationId  String
+  eventId         String
+
+  checkInTime     DateTime      @default(now())
+  checkOutTime    DateTime?
+
+  method          CheckInMethod
+  location        String?       // "Main Entrance", "VIP Gate"
+  checkInPointId  String?
+  deviceId        String?       // Device identifier
+  checkedInBy     String?       // User ID who performed check-in
+
+  notes           String?
+  metadata        Json?
+
+  registration    Registration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  event           Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([registrationId])
+  @@index([eventId, checkInTime])
+  @@index([eventId])
+}
+
+enum CheckInMethod {
+  QR_SCAN       // QR code scanned
+  MANUAL        // Manual lookup by staff
+  SELF_SERVICE  // Self check-in kiosk
+  BULK          // Bulk check-in
+}
+
+// ─── Check-in Points ───
+
+model CheckInPoint {
+  id        String   @id @default(cuid())
+  eventId   String
+  name      String   // "Main Entrance", "VIP Gate"
+  nameAr    String?
+  isActive  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
 }
 
 // ─── Email Template ───
