@@ -86,6 +86,7 @@ model Event {
   emailCampaigns EmailCampaign[]
   badgeTemplate  BadgeTemplate?
   modules        EventModules?
+  formFields     FormField[]
 }
 
 // ─── Event Modules (Feature Toggles) ───
@@ -308,4 +309,92 @@ model Badge {
 
   registration Registration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   template     BadgeTemplate @relation(fields: [templateId], references: [id])
+}
+
+// ─── Dynamic Form Fields ───
+
+model FormField {
+  id            String      @id @default(cuid())
+  eventId       String
+
+  // Field Identity
+  name          String      // Internal name: "firstName", "country", "dietary"
+  label         String      // Display label: "First Name"
+  labelAr       String?     // Arabic label: "الاسم الأول"
+
+  // Field Configuration
+  type          FieldType
+  placeholder   String?
+  placeholderAr String?
+  helpText      String?     // Helper text below field
+  helpTextAr    String?
+
+  // Validation
+  required      Boolean     @default(false)
+  validation    Json?       // {minLength, maxLength, pattern, min, max, customMessage}
+
+  // Options (for SELECT, MULTISELECT, RADIO, CHECKBOX)
+  options       Json?       // [{value: "sa", label: "Saudi Arabia", labelAr: "السعودية"}]
+
+  // Layout
+  order         Int         @default(0)
+  width         FieldWidth  @default(FULL)
+  section       String?     // Group fields: "Personal Info", "Work Details"
+
+  // Conditional Logic
+  conditional   Json?       // {showIf: {field: "attendeeType", operator: "equals", value: "VIP"}}
+
+  // State
+  isActive      Boolean     @default(true)
+  isSystem      Boolean     @default(false)  // System fields can't be deleted
+
+  // Metadata
+  defaultValue  String?
+  metadata      Json?       // Any additional config
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  event         Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, name])
+  @@index([eventId, order])
+  @@index([eventId, isActive])
+}
+
+enum FieldType {
+  // Text Inputs
+  TEXT
+  EMAIL
+  PHONE
+  TEXTAREA
+  NUMBER
+
+  // Selection
+  SELECT
+  MULTISELECT
+  RADIO
+  CHECKBOX
+
+  // Date/Time
+  DATE
+  TIME
+  DATETIME
+
+  // Special
+  COUNTRY       // Pre-populated country list
+  PHONE_COUNTRY // Phone with country code
+  FILE          // File upload
+  HIDDEN        // Hidden field
+
+  // Layout (non-input)
+  HEADING       // Section heading
+  DIVIDER       // Visual separator
+  PARAGRAPH     // Informational text
+}
+
+enum FieldWidth {
+  FULL          // 100% width
+  HALF          // 50% width (2 columns)
+  THIRD         // 33% width (3 columns)
 }

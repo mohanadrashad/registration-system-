@@ -16,6 +16,7 @@ import {
   Blocks,
   QrCode,
   MessageCircle,
+  FormInput,
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
@@ -45,6 +46,11 @@ export function getEventNavItems(eventId: string): EventNavItem[] {
       title: "Attendees",
       href: `/dashboard/events/${eventId}/attendees`,
       icon: Users,
+    },
+    {
+      title: "Form Builder",
+      href: `/dashboard/events/${eventId}/form-builder`,
+      icon: FormInput,
     },
     {
       title: "Statistics",
