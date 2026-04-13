@@ -90,6 +90,8 @@ model Event {
   emailSettings  EventEmailSettings?
   checkIns       CheckIn[]
   checkInPoints  CheckInPoint[]
+  whatsAppSettings EventWhatsAppSettings?
+  whatsAppLogs   WhatsAppLog[]
 }
 
 // ─── Event Modules (Feature Toggles) ───
@@ -157,6 +159,77 @@ enum EmailProvider {
   MAILGUN       // Mailgun API
 }
 
+// ─── WhatsApp Settings ───
+
+model EventWhatsAppSettings {
+  id                    String          @id @default(cuid())
+  eventId               String          @unique
+
+  provider              WhatsAppProvider @default(META)
+  isActive              Boolean         @default(false)
+
+  // Meta Business API
+  phoneNumberId         String?
+  businessAccountId     String?
+  accessToken           String?         // Should be encrypted
+  webhookVerifyToken    String?
+
+  // Templates (must be approved by Meta)
+  confirmationTemplate  String?         // Template name for confirmation
+  reminderTemplate      String?         // Template name for reminder
+  badgeTemplate         String?         // Template name for badge delivery
+
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  event                 Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+enum WhatsAppProvider {
+  META          // Official Meta Business API
+  TWILIO        // Twilio WhatsApp
+  WATI          // WATI.io
+}
+
+// ─── WhatsApp Logs ───
+
+model WhatsAppLog {
+  id            String         @id @default(cuid())
+  eventId       String
+  contactId     String
+
+  templateName  String
+  phoneNumber   String
+
+  status        WhatsAppStatus @default(PENDING)
+  messageId     String?        // From provider
+
+  variables     Json?          // Template variables sent
+
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  readAt        DateTime?
+  failedAt      DateTime?
+  errorMessage  String?
+
+  createdAt     DateTime       @default(now())
+
+  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  contact       Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@index([contactId])
+  @@index([status])
+}
+
+enum WhatsAppStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
 // ─── Contact ───
 
 enum ContactStatus {
@@ -186,6 +259,7 @@ model Contact {
   event        Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration Registration?
   emailLogs    EmailLog[]
+  whatsAppLogs WhatsAppLog[]
 
   @@unique([eventId, email])
   @@index([eventId])
