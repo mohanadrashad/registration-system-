@@ -9,11 +9,15 @@ import {
   Calendar,
   Users,
   Mail,
-  Award,
   Settings,
   BarChart3,
   UserCog,
+  CreditCard,
+  Blocks,
+  QrCode,
+  MessageCircle,
 } from "lucide-react";
+import { LucideIcon } from "lucide-react";
 
 const mainNavItems = [
   {
@@ -28,7 +32,14 @@ const mainNavItems = [
   },
 ];
 
-export function getEventNavItems(eventId: string) {
+interface EventNavItem {
+  title: string;
+  href: string;
+  icon: LucideIcon;
+  module?: string; // Optional: module key that must be enabled
+}
+
+export function getEventNavItems(eventId: string): EventNavItem[] {
   return [
     {
       title: "Attendees",
@@ -44,6 +55,30 @@ export function getEventNavItems(eventId: string) {
       title: "Email Templates",
       href: `/dashboard/events/${eventId}/emails/templates`,
       icon: Mail,
+    },
+    {
+      title: "Badges",
+      href: `/dashboard/events/${eventId}/badges`,
+      icon: CreditCard,
+    },
+    // Module-dependent items (will be filtered based on enabled modules)
+    {
+      title: "Check-in",
+      href: `/dashboard/events/${eventId}/checkin`,
+      icon: QrCode,
+      module: "checkIn",
+    },
+    {
+      title: "WhatsApp",
+      href: `/dashboard/events/${eventId}/whatsapp`,
+      icon: MessageCircle,
+      module: "whatsApp",
+    },
+    // Settings section
+    {
+      title: "Modules",
+      href: `/dashboard/events/${eventId}/settings/modules`,
+      icon: Blocks,
     },
     {
       title: "Settings",

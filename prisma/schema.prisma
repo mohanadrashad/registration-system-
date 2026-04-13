@@ -85,6 +85,33 @@ model Event {
   emailTemplates EmailTemplate[]
   emailCampaigns EmailCampaign[]
   badgeTemplate  BadgeTemplate?
+  modules        EventModules?
+}
+
+// ─── Event Modules (Feature Toggles) ───
+
+model EventModules {
+  id                  String   @id @default(cuid())
+  eventId             String   @unique
+
+  // Optional Modules (all default to false except formBuilder)
+  formBuilder         Boolean  @default(true)   // Dynamic form fields (core, but toggleable)
+  checkIn             Boolean  @default(false)  // QR check-in system
+  whatsApp            Boolean  @default(false)  // WhatsApp notifications
+  sessions            Boolean  @default(false)  // Agenda/session management
+  payments            Boolean  @default(false)  // Payment collection
+  selfServicePortal   Boolean  @default(false)  // Attendee self-service
+  approvalWorkflow    Boolean  @default(false)  // Manual registration approval
+  waitlist            Boolean  @default(false)  // Waitlist when capacity reached
+  multiLanguage       Boolean  @default(false)  // AR/EN form toggle
+  customDomain        Boolean  @default(false)  // Custom domain support
+  customEmail         Boolean  @default(false)  // Custom SMTP per event
+  webhooks            Boolean  @default(false)  // External integrations
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  event               Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
 // ─── Contact ───

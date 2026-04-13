@@ -42,6 +42,12 @@ export async function POST(req: Request) {
       venue,
       startDate: new Date(startDate),
       endDate: new Date(endDate),
+      modules: {
+        create: {}, // Creates with all defaults
+      },
+    },
+    include: {
+      modules: true,
     },
   });
 
