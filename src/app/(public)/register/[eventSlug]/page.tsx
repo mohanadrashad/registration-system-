@@ -23,6 +23,7 @@ import {
   Clock,
   Loader2,
 } from "lucide-react";
+import { COUNTRIES } from "@/lib/form-builder/countries";
 
 interface FormField {
   id: string;
@@ -298,8 +299,8 @@ export default function RegisterPage() {
           />
         )}
 
-        {/* SELECT, COUNTRY */}
-        {["SELECT", "COUNTRY"].includes(field.type) && (
+        {/* SELECT */}
+        {field.type === "SELECT" && (
           <Select
             value={value as string}
             onValueChange={(v) => handleFieldChange(field.name, v)}
@@ -312,6 +313,26 @@ export default function RegisterPage() {
               {(field.options || []).map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {getOptionLabel(option)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* COUNTRY */}
+        {field.type === "COUNTRY" && (
+          <Select
+            value={value as string}
+            onValueChange={(v) => handleFieldChange(field.name, v)}
+            required={field.required}
+          >
+            <SelectTrigger className="h-11 rounded-lg border-gray-200 bg-gray-50/50">
+              <SelectValue placeholder={placeholder || (isRtl ? "اختر الدولة..." : "Select country...")} />
+            </SelectTrigger>
+            <SelectContent>
+              {COUNTRIES.map((country) => (
+                <SelectItem key={country.code} value={country.code}>
+                  {isRtl ? country.nameAr : country.name}
                 </SelectItem>
               ))}
             </SelectContent>
