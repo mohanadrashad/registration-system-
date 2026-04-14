@@ -5,15 +5,44 @@ import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle, Globe, User, Mail, Phone, Building2, Briefcase, CalendarDays, MapPin, Clock, Loader2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  CheckCircle,
+  Globe,
+  CalendarDays,
+  MapPin,
+  Clock,
+  Loader2,
+} from "lucide-react";
 
-interface PrefilledContact {
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string | null;
-  organization: string | null;
-  designation: string | null;
+interface FormField {
+  id: string;
+  name: string;
+  label: string;
+  labelAr?: string;
+  type: string;
+  placeholder?: string;
+  placeholderAr?: string;
+  helpText?: string;
+  helpTextAr?: string;
+  required: boolean;
+  validation?: Record<string, unknown>;
+  options?: { value: string; label: string; labelAr?: string }[];
+  order: number;
+  width: string;
+  section?: string;
+  conditional?: Record<string, unknown>;
+  isSystem: boolean;
+  defaultValue?: string;
 }
 
 interface Branding {
@@ -39,19 +68,14 @@ interface EventData {
   startDate: string;
   endDate: string;
   branding?: Branding | null;
-  contact?: PrefilledContact;
+  formFields: FormField[];
+  contact?: Record<string, string | null>;
 }
 
 const translations = {
   ar: {
     title: "تسجيل الحضور",
     description: "يرجى تعبئة بياناتك للتسجيل",
-    firstName: "الاسم الأول",
-    lastName: "اسم العائلة",
-    email: "البريد الإلكتروني",
-    phone: "رقم الهاتف",
-    organization: "جهة العمل",
-    designation: "المسمى الوظيفي",
     register: "تأكيد التسجيل",
     registering: "جاري التسجيل...",
     successTitle: "تم التسجيل بنجاح!",
@@ -59,16 +83,11 @@ const translations = {
     switchLang: "English",
     loading: "جاري التحميل...",
     eventNotFound: "الفعالية غير موجودة",
+    required: "مطلوب",
   },
   en: {
     title: "Event Registration",
     description: "Fill in your details to register",
-    firstName: "First Name",
-    lastName: "Last Name",
-    email: "Email",
-    phone: "Phone",
-    organization: "Organization",
-    designation: "Designation / Title",
     register: "Confirm Registration",
     registering: "Registering...",
     successTitle: "Registration Successful!",
@@ -76,6 +95,7 @@ const translations = {
     switchLang: "العربية",
     loading: "Loading...",
     eventNotFound: "Event not found",
+    required: "Required",
   },
 };
 
@@ -91,12 +111,12 @@ export default function RegisterPage() {
   const [success, setSuccess] = useState(false);
   const [eventData, setEventData] = useState<EventData | null>(null);
   const [lang, setLang] = useState<"ar" | "en">("ar");
+  const [formValues, setFormValues] = useState<Record<string, string | boolean | string[]>>({});
 
   const t = translations[lang];
   const isRtl = lang === "ar";
   const branding = eventData?.branding;
 
-  // Default colors
   const primaryColor = branding?.primaryColor || "#6abf4b";
   const backgroundColor = branding?.backgroundColor || "#ffffff";
   const textColor = branding?.textColor || "#000000";
@@ -113,6 +133,23 @@ export default function RegisterPage() {
         if (res.ok) {
           const data = await res.json();
           setEventData(data);
+
+          // Initialize form values with defaults and contact data
+          const initialValues: Record<string, string | boolean | string[]> = {};
+          data.formFields?.forEach((field: FormField) => {
+            if (data.contact && data.contact[field.name]) {
+              initialValues[field.name] = data.contact[field.name];
+            } else if (field.defaultValue) {
+              initialValues[field.name] = field.defaultValue;
+            } else if (field.type === "CHECKBOX") {
+              initialValues[field.name] = false;
+            } else if (field.type === "MULTISELECT") {
+              initialValues[field.name] = [];
+            } else {
+              initialValues[field.name] = "";
+            }
+          });
+          setFormValues(initialValues);
         } else {
           setError(t.eventNotFound);
         }
@@ -126,20 +163,14 @@ export default function RegisterPage() {
     fetchEventData();
   }, [eventSlug, token]);
 
+  function handleFieldChange(name: string, value: string | boolean | string[]) {
+    setFormValues((prev) => ({ ...prev, [name]: value }));
+  }
+
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError("");
-
-    const formData = new FormData(e.currentTarget);
-    const data = {
-      firstName: formData.get("firstName"),
-      lastName: formData.get("lastName"),
-      email: formData.get("email"),
-      phone: formData.get("phone"),
-      organization: formData.get("organization"),
-      designation: formData.get("designation"),
-    };
 
     const url = token
       ? `/api/register/${eventSlug}?token=${token}`
@@ -148,7 +179,7 @@ export default function RegisterPage() {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
+      body: JSON.stringify(formValues),
     });
 
     const result = await res.json();
@@ -161,7 +192,6 @@ export default function RegisterPage() {
     setLoading(false);
   }
 
-  // Get welcome content based on language
   const welcomeTitle = isRtl
     ? (branding?.welcomeTitleAr || branding?.welcomeTitle || t.title)
     : (branding?.welcomeTitle || t.title);
@@ -174,16 +204,14 @@ export default function RegisterPage() {
     ? (branding?.footerTextAr || branding?.footerText)
     : (branding?.footerText || branding?.footerTextAr);
 
-  // Format date
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
-    const options: Intl.DateTimeFormatOptions = {
+    return date.toLocaleDateString(isRtl ? "ar-SA" : "en-US", {
       weekday: "long",
       year: "numeric",
       month: "long",
       day: "numeric",
-    };
-    return date.toLocaleDateString(isRtl ? "ar-SA" : "en-US", options);
+    });
   };
 
   const formatTime = (dateStr: string) => {
@@ -193,6 +221,176 @@ export default function RegisterPage() {
       minute: "2-digit",
     });
   };
+
+  function getFieldLabel(field: FormField) {
+    return isRtl && field.labelAr ? field.labelAr : field.label;
+  }
+
+  function getFieldPlaceholder(field: FormField) {
+    return isRtl && field.placeholderAr ? field.placeholderAr : field.placeholder;
+  }
+
+  function getOptionLabel(option: { value: string; label: string; labelAr?: string }) {
+    return isRtl && option.labelAr ? option.labelAr : option.label;
+  }
+
+  function renderField(field: FormField) {
+    const label = getFieldLabel(field);
+    const placeholder = getFieldPlaceholder(field);
+    const value = formValues[field.name] || "";
+    const widthClass = field.width === "HALF" ? "col-span-1" : field.width === "THIRD" ? "col-span-1" : "col-span-2";
+
+    // Skip layout fields for now
+    if (["HEADING", "DIVIDER", "PARAGRAPH"].includes(field.type)) {
+      if (field.type === "HEADING") {
+        return (
+          <div key={field.id} className="col-span-2 pt-4">
+            <h3 className="text-lg font-semibold" style={{ color: textColor }}>{label}</h3>
+          </div>
+        );
+      }
+      if (field.type === "DIVIDER") {
+        return <hr key={field.id} className="col-span-2 my-4 border-gray-200" />;
+      }
+      if (field.type === "PARAGRAPH") {
+        return (
+          <p key={field.id} className="col-span-2 text-sm text-gray-500">{label}</p>
+        );
+      }
+    }
+
+    // Hidden field
+    if (field.type === "HIDDEN") {
+      return <input key={field.id} type="hidden" name={field.name} value={value as string} />;
+    }
+
+    return (
+      <div key={field.id} className={`space-y-1.5 ${widthClass}`}>
+        <Label htmlFor={field.name} className="text-xs font-medium text-gray-500">
+          {label} {field.required && <span className="text-red-400">*</span>}
+        </Label>
+
+        {/* TEXT, EMAIL, PHONE, NUMBER */}
+        {["TEXT", "EMAIL", "PHONE", "NUMBER", "PHONE_COUNTRY"].includes(field.type) && (
+          <Input
+            id={field.name}
+            name={field.name}
+            type={field.type === "EMAIL" ? "email" : field.type === "NUMBER" ? "number" : "text"}
+            value={value as string}
+            onChange={(e) => handleFieldChange(field.name, e.target.value)}
+            placeholder={placeholder}
+            required={field.required}
+            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+          />
+        )}
+
+        {/* TEXTAREA */}
+        {field.type === "TEXTAREA" && (
+          <Textarea
+            id={field.name}
+            name={field.name}
+            value={value as string}
+            onChange={(e) => handleFieldChange(field.name, e.target.value)}
+            placeholder={placeholder}
+            required={field.required}
+            rows={3}
+            className="rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+          />
+        )}
+
+        {/* SELECT, COUNTRY */}
+        {["SELECT", "COUNTRY"].includes(field.type) && (
+          <Select
+            value={value as string}
+            onValueChange={(v) => handleFieldChange(field.name, v)}
+            required={field.required}
+          >
+            <SelectTrigger className="h-11 rounded-lg border-gray-200 bg-gray-50/50">
+              <SelectValue placeholder={placeholder || "Select..."} />
+            </SelectTrigger>
+            <SelectContent>
+              {(field.options || []).map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {getOptionLabel(option)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* RADIO */}
+        {field.type === "RADIO" && (
+          <RadioGroup
+            value={value as string}
+            onValueChange={(v) => handleFieldChange(field.name, v)}
+            className="flex flex-wrap gap-4"
+          >
+            {(field.options || []).map((option) => (
+              <div key={option.value} className="flex items-center space-x-2">
+                <RadioGroupItem value={option.value} id={`${field.name}-${option.value}`} />
+                <Label htmlFor={`${field.name}-${option.value}`} className="text-sm">
+                  {getOptionLabel(option)}
+                </Label>
+              </div>
+            ))}
+          </RadioGroup>
+        )}
+
+        {/* CHECKBOX */}
+        {field.type === "CHECKBOX" && (
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id={field.name}
+              checked={value as boolean}
+              onCheckedChange={(checked) => handleFieldChange(field.name, !!checked)}
+            />
+            <Label htmlFor={field.name} className="text-sm">
+              {placeholder || label}
+            </Label>
+          </div>
+        )}
+
+        {/* DATE */}
+        {field.type === "DATE" && (
+          <Input
+            id={field.name}
+            name={field.name}
+            type="date"
+            value={value as string}
+            onChange={(e) => handleFieldChange(field.name, e.target.value)}
+            required={field.required}
+            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+          />
+        )}
+
+        {/* TIME */}
+        {field.type === "TIME" && (
+          <Input
+            id={field.name}
+            name={field.name}
+            type="time"
+            value={value as string}
+            onChange={(e) => handleFieldChange(field.name, e.target.value)}
+            required={field.required}
+            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+          />
+        )}
+
+        {/* DATETIME */}
+        {field.type === "DATETIME" && (
+          <Input
+            id={field.name}
+            name={field.name}
+            type="datetime-local"
+            value={value as string}
+            onChange={(e) => handleFieldChange(field.name, e.target.value)}
+            required={field.required}
+            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+          />
+        )}
+      </div>
+    );
+  }
 
   // Loading state
   if (pageLoading) {
@@ -217,12 +415,10 @@ export default function RegisterPage() {
     );
   }
 
-  // Custom CSS
   const customStyles = branding?.customCss ? (
     <style dangerouslySetInnerHTML={{ __html: branding.customCss }} />
   ) : null;
 
-  // Header image
   const headerImage = branding?.headerImageUrl || "/gathering-header.jpg";
 
   // Success screen
@@ -231,7 +427,6 @@ export default function RegisterPage() {
       <>
         {customStyles}
         <div className="min-h-screen lg:grid lg:grid-cols-2" dir={isRtl ? "rtl" : "ltr"}>
-          {/* Left branding panel - desktop only */}
           <div
             className="hidden lg:flex flex-col items-center justify-center p-12"
             style={{
@@ -240,33 +435,13 @@ export default function RegisterPage() {
                 : "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)",
             }}
           >
-            {branding?.logoUrl ? (
+            {branding?.logoUrl && (
               <img src={branding.logoUrl} alt={eventData.eventName} className="max-h-16 mb-8" />
-            ) : null}
+            )}
             <img src={headerImage} alt={eventData.eventName} className="w-full max-w-md rounded-xl shadow-2xl" />
-            <div className="mt-8 text-center space-y-3">
-              <div className="flex items-center justify-center gap-2 text-gray-300">
-                <CalendarDays className="h-4 w-4" />
-                <span className="text-sm">{formatDate(eventData.startDate)}</span>
-              </div>
-              <div className="flex items-center justify-center gap-2 text-gray-300">
-                <Clock className="h-4 w-4" />
-                <span className="text-sm">{formatTime(eventData.startDate)}</span>
-              </div>
-              {eventData.venue && (
-                <div className="flex items-center justify-center gap-2 text-gray-300">
-                  <MapPin className="h-4 w-4" />
-                  <span className="text-sm">{eventData.venue}</span>
-                </div>
-              )}
-            </div>
           </div>
 
-          {/* Right panel / mobile full */}
-          <div
-            className="flex min-h-screen lg:min-h-0 items-center justify-center p-6 lg:p-12"
-            style={{ backgroundColor }}
-          >
+          <div className="flex min-h-screen lg:min-h-0 items-center justify-center p-6 lg:p-12" style={{ backgroundColor }}>
             <div className="w-full max-w-md text-center">
               <div
                 className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full"
@@ -290,7 +465,7 @@ export default function RegisterPage() {
     <>
       {customStyles}
       <div className="min-h-screen lg:grid lg:grid-cols-2" dir={isRtl ? "rtl" : "ltr"}>
-        {/* Left branding panel - desktop */}
+        {/* Left branding panel */}
         <div
           className="hidden lg:flex flex-col items-center justify-center p-12 sticky top-0 h-screen"
           style={{
@@ -299,9 +474,9 @@ export default function RegisterPage() {
               : "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)",
           }}
         >
-          {branding?.logoUrl ? (
+          {branding?.logoUrl && (
             <img src={branding.logoUrl} alt={eventData.eventName} className="max-h-16 mb-8" />
-          ) : null}
+          )}
           <img src={headerImage} alt={eventData.eventName} className="w-full max-w-lg rounded-xl shadow-2xl" />
           <div className="mt-10 text-center space-y-4">
             <div className="flex items-center justify-center gap-3 text-gray-300">
@@ -385,95 +560,9 @@ export default function RegisterPage() {
                   </div>
                 )}
 
-                {/* Name row */}
+                {/* Dynamic form fields */}
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="firstName" className="text-xs font-medium text-gray-500 flex items-center gap-1.5">
-                      <User className="h-3 w-3" />
-                      {t.firstName} <span className="text-red-400">*</span>
-                    </Label>
-                    <Input
-                      id="firstName"
-                      name="firstName"
-                      defaultValue={eventData.contact?.firstName || ""}
-                      required
-                      className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="lastName" className="text-xs font-medium text-gray-500 flex items-center gap-1.5">
-                      <User className="h-3 w-3" />
-                      {t.lastName} <span className="text-red-400">*</span>
-                    </Label>
-                    <Input
-                      id="lastName"
-                      name="lastName"
-                      defaultValue={eventData.contact?.lastName || ""}
-                      required
-                      className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
-                    />
-                  </div>
-                </div>
-
-                {/* Email */}
-                <div className="space-y-1.5">
-                  <Label htmlFor="email" className="text-xs font-medium text-gray-500 flex items-center gap-1.5">
-                    <Mail className="h-3 w-3" />
-                    {t.email} <span className="text-red-400">*</span>
-                  </Label>
-                  <Input
-                    id="email"
-                    name="email"
-                    type="email"
-                    defaultValue={eventData.contact?.email || ""}
-                    required
-                    className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
-                  />
-                </div>
-
-                {/* Phone */}
-                <div className="space-y-1.5">
-                  <Label htmlFor="phone" className="text-xs font-medium text-gray-500 flex items-center gap-1.5">
-                    <Phone className="h-3 w-3" />
-                    {t.phone} <span className="text-red-400">*</span>
-                  </Label>
-                  <Input
-                    id="phone"
-                    name="phone"
-                    defaultValue={eventData.contact?.phone || ""}
-                    required
-                    className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
-                  />
-                </div>
-
-                {/* Organization */}
-                <div className="space-y-1.5">
-                  <Label htmlFor="organization" className="text-xs font-medium text-gray-500 flex items-center gap-1.5">
-                    <Building2 className="h-3 w-3" />
-                    {t.organization} <span className="text-red-400">*</span>
-                  </Label>
-                  <Input
-                    id="organization"
-                    name="organization"
-                    defaultValue={eventData.contact?.organization || "LA GLOIRE"}
-                    required
-                    className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
-                  />
-                </div>
-
-                {/* Designation */}
-                <div className="space-y-1.5">
-                  <Label htmlFor="designation" className="text-xs font-medium text-gray-500 flex items-center gap-1.5">
-                    <Briefcase className="h-3 w-3" />
-                    {t.designation} <span className="text-red-400">*</span>
-                  </Label>
-                  <Input
-                    id="designation"
-                    name="designation"
-                    defaultValue={eventData.contact?.designation || ""}
-                    required
-                    className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
-                  />
+                  {eventData.formFields.map((field) => renderField(field))}
                 </div>
 
                 {/* Submit */}

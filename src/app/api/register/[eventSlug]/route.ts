@@ -17,6 +17,10 @@ export async function GET(
     where: { slug: eventSlug },
     include: {
       branding: true,
+      formFields: {
+        where: { isActive: true },
+        orderBy: { order: "asc" },
+      },
     },
   });
 
@@ -24,37 +28,8 @@ export async function GET(
     return NextResponse.json({ error: "Event not found or not active" }, { status: 404 });
   }
 
-  // Build response with event info and branding
-  const response: {
-    eventName: string;
-    eventDescription: string | null;
-    venue: string | null;
-    startDate: Date;
-    endDate: Date;
-    branding: {
-      primaryColor: string;
-      secondaryColor: string | null;
-      backgroundColor: string | null;
-      textColor: string | null;
-      logoUrl: string | null;
-      headerImageUrl: string | null;
-      welcomeTitle: string | null;
-      welcomeTitleAr: string | null;
-      welcomeMessage: string | null;
-      welcomeMessageAr: string | null;
-      footerText: string | null;
-      footerTextAr: string | null;
-      customCss: string | null;
-    } | null;
-    contact?: {
-      firstName: string;
-      lastName: string;
-      email: string;
-      phone: string | null;
-      organization: string | null;
-      designation: string | null;
-    };
-  } = {
+  // Build response with event info, branding, and form fields
+  const response: Record<string, unknown> = {
     eventName: event.name,
     eventDescription: event.description,
     venue: event.venue,
@@ -75,13 +50,41 @@ export async function GET(
       footerTextAr: event.branding.footerTextAr,
       customCss: event.branding.customCss,
     } : null,
+    formFields: event.formFields.map((field) => ({
+      id: field.id,
+      name: field.name,
+      label: field.label,
+      labelAr: field.labelAr,
+      type: field.type,
+      placeholder: field.placeholder,
+      placeholderAr: field.placeholderAr,
+      helpText: field.helpText,
+      helpTextAr: field.helpTextAr,
+      required: field.required,
+      validation: field.validation,
+      options: field.options,
+      order: field.order,
+      width: field.width,
+      section: field.section,
+      conditional: field.conditional,
+      isSystem: field.isSystem,
+      defaultValue: field.defaultValue,
+    })),
   };
 
   // If token provided, look up the contact
   if (token) {
     const contact = await prisma.contact.findUnique({
       where: { inviteToken: token },
-      select: { firstName: true, lastName: true, email: true, phone: true, organization: true, designation: true },
+      select: {
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        organization: true,
+        designation: true,
+        metadata: true,
+      },
     });
 
     if (contact) {
@@ -101,6 +104,11 @@ export async function POST(
 
   const event = await prisma.event.findUnique({
     where: { slug: eventSlug },
+    include: {
+      formFields: {
+        where: { isActive: true },
+      },
+    },
   });
 
   if (!event || !event.isActive) {
@@ -108,13 +116,26 @@ export async function POST(
   }
 
   const body = await req.json();
-  const result = publicRegistrationSchema.safeParse(body);
 
-  if (!result.success) {
-    return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
+  // Extract core contact fields and additional form data
+  const { firstName, lastName, email, phone, organization, designation, ...additionalFields } = body;
+
+  // Validate required fields
+  if (!firstName || !lastName || !email) {
+    return NextResponse.json({ error: "First name, last name, and email are required" }, { status: 400 });
   }
 
-  const { firstName, lastName, email, phone, organization, designation } = result.data;
+  // Validate required form fields
+  for (const field of event.formFields) {
+    if (field.required && !field.isSystem) {
+      const value = additionalFields[field.name];
+      if (value === undefined || value === null || value === "") {
+        return NextResponse.json({
+          error: `${field.label} is required`
+        }, { status: 400 });
+      }
+    }
+  }
 
   // If a token is provided, look up the invited contact first
   let contact = null;
@@ -145,6 +166,9 @@ export async function POST(
     await prisma.registration.delete({ where: { id: contact.registration.id } });
   }
 
+  // Store additional form fields in metadata
+  const metadata = Object.keys(additionalFields).length > 0 ? additionalFields : null;
+
   if (!contact) {
     // New contact (walk-in / direct link without invite)
     contact = await prisma.contact.create({
@@ -156,12 +180,13 @@ export async function POST(
         phone: phone || null,
         organization: organization || null,
         designation: designation || null,
+        metadata,
         inviteToken: randomBytes(16).toString("hex"),
       },
       include: { registration: true },
     });
   } else {
-    // Update existing invited contact — they may use a different email
+    // Update existing invited contact
     contact = await prisma.contact.update({
       where: { id: contact.id },
       data: {
@@ -171,6 +196,7 @@ export async function POST(
         phone: phone || contact.phone,
         organization: organization || contact.organization,
         designation: designation || contact.designation,
+        metadata: metadata || contact.metadata,
       },
       include: { registration: true },
     });
@@ -186,6 +212,7 @@ export async function POST(
       eventId: event.id,
       status: registrationStatus,
       registeredAt: isConfirmed ? new Date() : null,
+      formData: body, // Store all form data
     },
   });
 
