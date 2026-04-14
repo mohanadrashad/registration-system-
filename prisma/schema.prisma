@@ -75,6 +75,7 @@ model Event {
   startDate   DateTime
   endDate     DateTime
   isActive    Boolean  @default(true)
+  capacity    Int?              // Max registrations (null = unlimited)
   settings    Json?
   categories  String[] @default([])
   createdAt   DateTime @default(now())
@@ -352,6 +353,7 @@ model Registration {
 
 enum RegistrationStatus {
   PENDING
+  PENDING_APPROVAL
   CONFIRMED
   CANCELLED
   WAITLISTED

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { publicRegistrationSchema } from "@/lib/validations/registration";
 import { randomBytes } from "crypto";
+import { approvalService } from "@/lib/services/approval.service";
 
 // GET: Look up contact by invite token to pre-fill the registration form
 // Also returns event details and branding for the registration page
@@ -175,23 +176,38 @@ export async function POST(
     });
   }
 
+  // Determine registration status based on event settings
+  const registrationStatus = await approvalService.determineRegistrationStatus(event.id);
+  const isConfirmed = registrationStatus === "CONFIRMED";
+
   const registration = await prisma.registration.create({
     data: {
       contactId: contact.id,
       eventId: event.id,
-      status: "CONFIRMED",
-      registeredAt: new Date(),
+      status: registrationStatus,
+      registeredAt: isConfirmed ? new Date() : null,
     },
   });
 
+  // Update contact status based on registration status
+  const contactStatus = isConfirmed ? "REGISTERED" : "INVITED";
   await prisma.contact.update({
     where: { id: contact.id },
-    data: { status: "REGISTERED" },
+    data: { status: contactStatus },
   });
+
+  // Return appropriate message based on status
+  let message = "Registration successful!";
+  if (registrationStatus === "PENDING_APPROVAL") {
+    message = "Registration submitted! Your request is pending approval.";
+  } else if (registrationStatus === "WAITLISTED") {
+    message = "You have been added to the waitlist. We will notify you when a spot becomes available.";
+  }
 
   return NextResponse.json({
     success: true,
     confirmationCode: registration.confirmationCode,
-    message: "Registration successful!",
+    status: registrationStatus,
+    message,
   }, { status: 201 });
 }

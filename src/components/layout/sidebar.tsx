@@ -18,6 +18,7 @@ import {
   MessageCircle,
   FormInput,
   Palette,
+  ClipboardCheck,
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
@@ -80,6 +81,12 @@ export function getEventNavItems(eventId: string): EventNavItem[] {
       href: `/dashboard/events/${eventId}/whatsapp`,
       icon: MessageCircle,
       module: "whatsApp",
+    },
+    {
+      title: "Approvals",
+      href: `/dashboard/events/${eventId}/approvals`,
+      icon: ClipboardCheck,
+      module: "approvalWorkflow",
     },
     // Settings section
     {
