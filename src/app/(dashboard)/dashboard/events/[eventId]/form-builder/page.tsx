@@ -115,6 +115,7 @@ export default function FormBuilderPage() {
   const eventId = params.eventId as string;
   const [fields, setFields] = useState<FormField[]>([]);
   const [loading, setLoading] = useState(true);
+  const [eventSlug, setEventSlug] = useState<string>("");
   const [editingField, setEditingField] = useState<FormField | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [newField, setNewField] = useState({
@@ -127,7 +128,20 @@ export default function FormBuilderPage() {
 
   useEffect(() => {
     fetchFields();
+    fetchEventSlug();
   }, [eventId]);
+
+  async function fetchEventSlug() {
+    try {
+      const res = await fetch(`/api/events/${eventId}`);
+      if (res.ok) {
+        const event = await res.json();
+        setEventSlug(event.slug);
+      }
+    } catch {
+      // Ignore error
+    }
+  }
 
   async function fetchFields() {
     try {
@@ -290,16 +304,18 @@ export default function FormBuilderPage() {
         title="Form Builder"
         description="Configure registration form fields"
       >
-        <Button variant="outline" asChild>
-          <a
-            href={`/register/${eventId}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Eye className="mr-2 h-4 w-4" />
-            Preview Form
-          </a>
-        </Button>
+        {eventSlug && (
+          <Button variant="outline" asChild>
+            <a
+              href={`/register/${eventSlug}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Eye className="mr-2 h-4 w-4" />
+              Preview Form
+            </a>
+          </Button>
+        )}
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
           <DialogTrigger asChild>
             <Button>
