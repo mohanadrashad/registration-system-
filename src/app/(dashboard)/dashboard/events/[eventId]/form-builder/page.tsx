@@ -51,6 +51,12 @@ import {
 } from "lucide-react";
 import { FieldType, FieldWidth } from "@prisma/client";
 
+interface FieldOption {
+  value: string;
+  label: string;
+  labelAr?: string;
+}
+
 interface FormField {
   id: string;
   name: string;
@@ -63,8 +69,11 @@ interface FormField {
   width: FieldWidth;
   isSystem: boolean;
   isActive: boolean;
-  options?: { value: string; label: string }[];
+  options?: FieldOption[];
 }
+
+// Field types that need options
+const OPTION_FIELD_TYPES: FieldType[] = ["SELECT", "MULTISELECT", "RADIO"];
 
 const FIELD_ICONS: Record<FieldType, React.ReactNode> = {
   TEXT: <Type className="h-4 w-4" />,
@@ -124,7 +133,10 @@ export default function FormBuilderPage() {
     type: "TEXT" as FieldType,
     required: false,
     width: "FULL" as FieldWidth,
+    options: [] as FieldOption[],
   });
+  const [newOption, setNewOption] = useState({ value: "", label: "" });
+  const [editOption, setEditOption] = useState({ value: "", label: "" });
 
   useEffect(() => {
     fetchFields();
@@ -198,7 +210,9 @@ export default function FormBuilderPage() {
           type: "TEXT",
           required: false,
           width: "FULL",
+          options: [],
         });
+        setNewOption({ value: "", label: "" });
         toast.success("Field added");
       } else {
         const err = await res.json();
@@ -401,6 +415,73 @@ export default function FormBuilderPage() {
                     />
                     <Label>Required</Label>
                   </div>
+
+                  {/* Options Editor for SELECT, MULTISELECT, RADIO */}
+                  {OPTION_FIELD_TYPES.includes(newField.type) && (
+                    <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
+                      <Label className="text-sm font-medium">Options</Label>
+
+                      {/* Existing options list */}
+                      {newField.options.length > 0 && (
+                        <div className="space-y-2">
+                          {newField.options.map((opt, idx) => (
+                            <div key={idx} className="flex items-center gap-2 text-sm bg-white rounded p-2 border">
+                              <span className="flex-1 truncate">{opt.label}</span>
+                              <span className="text-muted-foreground text-xs">({opt.value})</span>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => {
+                                  const opts = [...newField.options];
+                                  opts.splice(idx, 1);
+                                  setNewField({ ...newField, options: opts });
+                                }}
+                              >
+                                <Trash2 className="h-3 w-3 text-destructive" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add new option */}
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Label"
+                          value={newOption.label}
+                          onChange={(e) => setNewOption({ ...newOption, label: e.target.value })}
+                          className="flex-1"
+                        />
+                        <Input
+                          placeholder="Value"
+                          value={newOption.value}
+                          onChange={(e) => setNewOption({ ...newOption, value: e.target.value.replace(/\s/g, "_").toLowerCase() })}
+                          className="w-28"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => {
+                            if (newOption.label && newOption.value) {
+                              setNewField({
+                                ...newField,
+                                options: [...newField.options, { ...newOption }],
+                              });
+                              setNewOption({ value: "", label: "" });
+                            }
+                          }}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Add at least one option for this field type
+                      </p>
+                    </div>
+                  )}
+
                   <Button onClick={addField} className="w-full">
                     Add Field
                   </Button>
@@ -570,6 +651,73 @@ export default function FormBuilderPage() {
                 />
                 <Label>Required</Label>
               </div>
+
+              {/* Options Editor for SELECT, MULTISELECT, RADIO */}
+              {OPTION_FIELD_TYPES.includes(editingField.type) && (
+                <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
+                  <Label className="text-sm font-medium">Options</Label>
+
+                  {/* Existing options list */}
+                  {(editingField.options || []).length > 0 && (
+                    <div className="space-y-2">
+                      {(editingField.options || []).map((opt, idx) => (
+                        <div key={idx} className="flex items-center gap-2 text-sm bg-white rounded p-2 border">
+                          <span className="flex-1 truncate">{opt.label}</span>
+                          <span className="text-muted-foreground text-xs">({opt.value})</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => {
+                              const opts = [...(editingField.options || [])];
+                              opts.splice(idx, 1);
+                              setEditingField({ ...editingField, options: opts });
+                            }}
+                          >
+                            <Trash2 className="h-3 w-3 text-destructive" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add new option */}
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Label"
+                      value={editOption.label}
+                      onChange={(e) => setEditOption({ ...editOption, label: e.target.value })}
+                      className="flex-1"
+                    />
+                    <Input
+                      placeholder="Value"
+                      value={editOption.value}
+                      onChange={(e) => setEditOption({ ...editOption, value: e.target.value.replace(/\s/g, "_").toLowerCase() })}
+                      className="w-28"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        if (editOption.label && editOption.value) {
+                          setEditingField({
+                            ...editingField,
+                            options: [...(editingField.options || []), { ...editOption }],
+                          });
+                          setEditOption({ value: "", label: "" });
+                        }
+                      }}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Add options that users can select from
+                  </p>
+                </div>
+              )}
+
               <div className="flex items-center gap-2">
                 <Switch
                   checked={editingField.isActive}
