@@ -45,10 +45,14 @@ function createTransporter(settings: EventEmailSettings | null) {
   }
 
   if (settings.provider === "CUSTOM_SMTP") {
+    const port = settings.smtpPort || 587;
+    // Implicit TLS only on 465. All other ports (587, 25, 2525) use STARTTLS.
+    const secure = port === 465;
     return nodemailer.createTransport({
       host: settings.smtpHost!,
-      port: settings.smtpPort || 587,
-      secure: settings.smtpSecure,
+      port,
+      secure,
+      requireTLS: !secure && settings.smtpSecure !== false,
       auth: {
         user: settings.smtpUser!,
         pass: settings.smtpPassword!,
