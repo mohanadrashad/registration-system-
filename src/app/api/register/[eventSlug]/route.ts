@@ -121,20 +121,14 @@ export async function POST(
   // Extract core contact fields and additional form data
   const { firstName, lastName, email, phone, organization, designation, ...additionalFields } = body;
 
-  // Validate required fields
-  if (!firstName || !lastName || !email) {
-    return NextResponse.json({ error: "First name, last name, and email are required" }, { status: 400 });
-  }
-
-  // Validate required form fields
+  // Validate required form fields (the form builder is the source of truth)
   for (const field of event.formFields) {
-    if (field.required && !field.isSystem) {
-      const value = additionalFields[field.name];
-      if (value === undefined || value === null || value === "") {
-        return NextResponse.json({
-          error: `${field.label} is required`
-        }, { status: 400 });
-      }
+    if (!field.required) continue;
+    const value = field.isSystem ? body[field.name] : additionalFields[field.name];
+    if (value === undefined || value === null || value === "") {
+      return NextResponse.json({
+        error: `${field.label} is required`
+      }, { status: 400 });
     }
   }
 
@@ -143,11 +137,16 @@ export async function POST(
   const isConfirmed = registrationStatus === "CONFIRMED";
 
   const metadata = Object.keys(additionalFields).length > 0 ? additionalFields : null;
-  const normalizedEmail = email.toLowerCase();
+  const hasEmail = typeof email === "string" && email.trim() !== "";
+  const normalizedEmail = hasEmail
+    ? email.toLowerCase()
+    : `guest-${randomBytes(8).toString("hex")}@noemail.local`;
+  const safeFirstName = firstName || "";
+  const safeLastName = lastName || "";
 
   try {
     const registration = await prisma.$transaction(async (tx) => {
-      // Look up contact by token first, fall back to email
+      // Look up contact by token first, fall back to email (only if real email provided)
       let contact = token
         ? await tx.contact.findUnique({
             where: { inviteToken: token },
@@ -155,7 +154,7 @@ export async function POST(
           })
         : null;
 
-      if (!contact) {
+      if (!contact && hasEmail) {
         contact = await tx.contact.findUnique({
           where: { eventId_email: { eventId: event.id, email: normalizedEmail } },
           include: { registration: true },
@@ -176,9 +175,9 @@ export async function POST(
         ? await tx.contact.update({
             where: { id: contact.id },
             data: {
-              firstName,
-              lastName,
-              email: normalizedEmail,
+              firstName: safeFirstName || contact.firstName,
+              lastName: safeLastName || contact.lastName,
+              email: hasEmail ? normalizedEmail : contact.email,
               phone: phone || contact.phone,
               organization: organization || contact.organization,
               designation: designation || contact.designation,
@@ -188,8 +187,8 @@ export async function POST(
         : await tx.contact.create({
             data: {
               eventId: event.id,
-              firstName,
-              lastName,
+              firstName: safeFirstName,
+              lastName: safeLastName,
               email: normalizedEmail,
               phone: phone || null,
               organization: organization || null,
