@@ -32,9 +32,19 @@ import {
   Clock,
   ExternalLink,
   Award,
+  FileText,
 } from "lucide-react";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
+
+interface FormFieldDef {
+  name: string;
+  label: string;
+  labelAr: string | null;
+  type: string;
+  options: { value: string; label: string; labelAr?: string }[] | null;
+  isSystem: boolean;
+}
 
 interface ContactDetail {
   id: string;
@@ -47,11 +57,13 @@ interface ContactDetail {
   category: string | null;
   status: ContactStatus;
   inviteToken: string | null;
+  metadata: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
   registration: { status: string; registeredAt: string; confirmationCode: string; badgeEmailSent: boolean } | null;
   emailLogs: { id: string; status: string; sentAt: string | null; subject: string }[];
   event: { slug: string; name: string; categories: string[] };
+  formFields: FormFieldDef[];
 }
 
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; color: string }> = {
@@ -171,6 +183,29 @@ export default function AttendeeDetailPage() {
   }
 
   if (!contact) return null;
+
+  const customFields = (contact.formFields || []).filter(
+    (f) => !f.isSystem && !["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"].includes(f.type)
+  );
+  const metadata = contact.metadata || {};
+
+  function formatFieldValue(field: FormFieldDef, raw: unknown): string {
+    if (raw === undefined || raw === null || raw === "") return "-";
+    if (Array.isArray(raw)) {
+      return raw
+        .map((v) => {
+          const opt = field.options?.find((o) => o.value === v);
+          return opt?.label ?? String(v);
+        })
+        .join(", ");
+    }
+    if (typeof raw === "boolean") return raw ? "Yes" : "No";
+    if (field.options && field.options.length > 0) {
+      const opt = field.options.find((o) => o.value === raw);
+      if (opt) return opt.label;
+    }
+    return String(raw);
+  }
 
   return (
     <div className="space-y-6">
@@ -428,6 +463,30 @@ export default function AttendeeDetailPage() {
           </Card>
         </div>
       </div>
+
+      {/* Form Responses (custom fields) */}
+      {customFields.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Form Responses
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {customFields.map((field) => (
+                <div key={field.name} className="flex items-start gap-3 text-sm">
+                  <span className="text-muted-foreground w-32 shrink-0">{field.label}</span>
+                  <span className="font-medium break-words">
+                    {formatFieldValue(field, metadata[field.name])}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

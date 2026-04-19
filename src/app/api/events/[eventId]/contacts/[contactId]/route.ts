@@ -26,7 +26,13 @@ export async function GET(
     return NextResponse.json({ error: "Contact not found" }, { status: 404 });
   }
 
-  return NextResponse.json(contact);
+  const formFields = await prisma.formField.findMany({
+    where: { eventId, isActive: true },
+    orderBy: { order: "asc" },
+    select: { name: true, label: true, labelAr: true, type: true, options: true, isSystem: true },
+  });
+
+  return NextResponse.json({ ...contact, formFields });
 }
 
 export async function PUT(
