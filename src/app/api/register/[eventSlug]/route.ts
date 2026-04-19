@@ -124,7 +124,7 @@ export async function POST(
   // Validate required form fields (the form builder is the source of truth)
   for (const field of event.formFields) {
     if (!field.required) continue;
-    const value = field.isSystem ? body[field.name] : additionalFields[field.name];
+    const value = body[field.name];
     if (value === undefined || value === null || value === "") {
       return NextResponse.json({
         error: `${field.label} is required`
