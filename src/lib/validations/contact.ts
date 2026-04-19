@@ -9,6 +9,7 @@ export const createContactSchema = z.object({
   designation: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
   status: z.enum(["IMPORTED", "INVITED", "REGISTERED", "CANCELLED"]).optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 export const updateContactSchema = createContactSchema.partial();

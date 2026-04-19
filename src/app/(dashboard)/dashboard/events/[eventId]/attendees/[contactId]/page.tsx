@@ -8,8 +8,11 @@ import { getRole, canEdit } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -24,18 +27,27 @@ import {
   Copy,
   Check,
   Mail,
-  User,
-  Building,
-  Phone,
-  Briefcase,
-  Tag,
   Clock,
   ExternalLink,
   Award,
-  FileText,
+  Tag,
+  User,
 } from "lucide-react";
+import { COUNTRIES } from "@/lib/form-builder/countries";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
+
+// Field names that are stored as Contact columns by the register handler's destructure.
+const COLUMN_FIELDS = new Set([
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+  "organization",
+  "designation",
+]);
+
+const LAYOUT_TYPES = new Set(["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"]);
 
 interface FormFieldDef {
   name: string;
@@ -66,12 +78,71 @@ interface ContactDetail {
   formFields: FormFieldDef[];
 }
 
-const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; color: string }> = {
-  IMPORTED: { label: "Imported", variant: "secondary", color: "text-blue-600" },
-  INVITED: { label: "Invited", variant: "outline", color: "text-orange-600" },
-  REGISTERED: { label: "Registered", variant: "default", color: "text-green-600" },
-  CANCELLED: { label: "Cancelled", variant: "destructive", color: "text-red-600" },
+const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
+  IMPORTED: { label: "Imported", variant: "secondary" },
+  INVITED: { label: "Invited", variant: "outline" },
+  REGISTERED: { label: "Registered", variant: "default" },
+  CANCELLED: { label: "Cancelled", variant: "destructive" },
 };
+
+function getFieldValue(contact: ContactDetail, field: FormFieldDef): unknown {
+  if (COLUMN_FIELDS.has(field.name)) {
+    return (contact as unknown as Record<string, unknown>)[field.name];
+  }
+  return contact.metadata?.[field.name];
+}
+
+function formatFieldValue(field: FormFieldDef, raw: unknown): string {
+  if (raw === undefined || raw === null || raw === "") return "-";
+  if (Array.isArray(raw)) {
+    return raw
+      .map((v) => {
+        const opt = field.options?.find((o) => o.value === v);
+        return opt?.label ?? String(v);
+      })
+      .join(", ");
+  }
+  if (typeof raw === "boolean") return raw ? "Yes" : "No";
+  if (field.type === "COUNTRY") {
+    const country = COUNTRIES.find((c) => c.code === raw);
+    if (country) return country.name;
+  }
+  if (field.options && field.options.length > 0) {
+    const opt = field.options.find((o) => o.value === raw);
+    if (opt) return opt.label;
+  }
+  return String(raw);
+}
+
+function isSyntheticEmail(email: string | null | undefined): boolean {
+  return !!email && email.endsWith("@noemail.local");
+}
+
+function deriveDisplayName(contact: ContactDetail, visibleFields: FormFieldDef[]): { primary: string; secondary: string } {
+  const fullName = [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim();
+  const secondary = contact.email && !isSyntheticEmail(contact.email) ? contact.email : "";
+
+  if (fullName) {
+    return { primary: fullName, secondary };
+  }
+
+  const textFields = visibleFields.filter((f) => ["TEXT", "EMAIL", "PHONE"].includes(f.type));
+  const values: string[] = [];
+  for (const f of textFields) {
+    const v = getFieldValue(contact, f);
+    if (typeof v === "string" && v.trim() !== "") {
+      values.push(v.trim());
+      if (values.length === 2) break;
+    }
+  }
+  if (values.length > 0) {
+    return { primary: values.join(" "), secondary };
+  }
+  return {
+    primary: "Attendee",
+    secondary: contact.registration?.confirmationCode || "",
+  };
+}
 
 export default function AttendeeDetailPage() {
   const params = useParams();
@@ -87,34 +158,32 @@ export default function AttendeeDetailPage() {
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Edit form state
-  const [editForm, setEditForm] = useState({
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
-    organization: "",
-    designation: "",
-    category: "",
-    status: "IMPORTED" as string,
-  });
+  const [editValues, setEditValues] = useState<Record<string, unknown>>({});
+  const [editCategory, setEditCategory] = useState("");
+  const [editStatus, setEditStatus] = useState<ContactStatus>("IMPORTED");
 
   const fetchContact = useCallback(async () => {
     try {
       const res = await fetch(`/api/events/${eventId}/contacts/${contactId}`);
       if (!res.ok) throw new Error("Not found");
-      const data = await res.json();
+      const data: ContactDetail = await res.json();
       setContact(data);
-      setEditForm({
-        firstName: data.firstName,
-        lastName: data.lastName,
-        email: data.email,
-        phone: data.phone || "",
-        organization: data.organization || "",
-        designation: data.designation || "",
-        category: data.category || "",
-        status: data.status,
-      });
+
+      const values: Record<string, unknown> = {};
+      for (const field of data.formFields || []) {
+        if (LAYOUT_TYPES.has(field.type)) continue;
+        const raw = getFieldValue(data, field);
+        if (field.type === "CHECKBOX") {
+          values[field.name] = Boolean(raw);
+        } else if (field.type === "MULTISELECT") {
+          values[field.name] = Array.isArray(raw) ? raw : [];
+        } else {
+          values[field.name] = raw ?? "";
+        }
+      }
+      setEditValues(values);
+      setEditCategory(data.category || "");
+      setEditStatus(data.status);
     } catch {
       toast.error("Failed to load attendee");
       router.push(`/dashboard/events/${eventId}/attendees`);
@@ -146,21 +215,33 @@ export default function AttendeeDetailPage() {
   }
 
   async function handleSave() {
+    if (!contact) return;
     setSaving(true);
     try {
+      const columnUpdates: Record<string, unknown> = {};
+      const metadataUpdates: Record<string, unknown> = { ...(contact.metadata || {}) };
+
+      for (const field of contact.formFields || []) {
+        if (LAYOUT_TYPES.has(field.type)) continue;
+        const value = editValues[field.name];
+        if (COLUMN_FIELDS.has(field.name)) {
+          columnUpdates[field.name] = value === "" || value === undefined ? null : value;
+        } else {
+          metadataUpdates[field.name] = value;
+        }
+      }
+
+      const body = {
+        ...columnUpdates,
+        metadata: Object.keys(metadataUpdates).length > 0 ? metadataUpdates : null,
+        category: editCategory || null,
+        status: editStatus,
+      };
+
       const res = await fetch(`/api/events/${eventId}/contacts/${contactId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          firstName: editForm.firstName,
-          lastName: editForm.lastName,
-          email: editForm.email,
-          phone: editForm.phone || null,
-          organization: editForm.organization || null,
-          designation: editForm.designation || null,
-          category: editForm.category || null,
-          status: editForm.status,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (res.ok) {
@@ -178,34 +259,117 @@ export default function AttendeeDetailPage() {
     }
   }
 
+  function renderEditInput(field: FormFieldDef) {
+    const value = editValues[field.name];
+    const setValue = (v: unknown) => setEditValues((prev) => ({ ...prev, [field.name]: v }));
+
+    if (["TEXT", "EMAIL", "PHONE", "NUMBER", "PHONE_COUNTRY"].includes(field.type)) {
+      return (
+        <Input
+          type={field.type === "EMAIL" ? "email" : field.type === "NUMBER" ? "number" : "text"}
+          value={(value as string) || ""}
+          onChange={(e) => setValue(e.target.value)}
+        />
+      );
+    }
+    if (field.type === "TEXTAREA") {
+      return (
+        <Textarea
+          value={(value as string) || ""}
+          onChange={(e) => setValue(e.target.value)}
+          rows={3}
+        />
+      );
+    }
+    if (field.type === "SELECT") {
+      return (
+        <Select value={(value as string) || ""} onValueChange={setValue}>
+          <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+          <SelectContent>
+            {(field.options || []).map((o) => (
+              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+    if (field.type === "COUNTRY") {
+      return (
+        <Select value={(value as string) || ""} onValueChange={setValue}>
+          <SelectTrigger><SelectValue placeholder="Select country..." /></SelectTrigger>
+          <SelectContent>
+            {COUNTRIES.map((c) => (
+              <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+    if (field.type === "RADIO") {
+      return (
+        <RadioGroup value={(value as string) || ""} onValueChange={setValue} className="flex flex-wrap gap-4">
+          {(field.options || []).map((o) => (
+            <div key={o.value} className="flex items-center space-x-2">
+              <RadioGroupItem value={o.value} id={`${field.name}-${o.value}`} />
+              <Label htmlFor={`${field.name}-${o.value}`} className="text-sm">{o.label}</Label>
+            </div>
+          ))}
+        </RadioGroup>
+      );
+    }
+    if (field.type === "CHECKBOX") {
+      return (
+        <div className="flex items-center space-x-2">
+          <Checkbox checked={Boolean(value)} onCheckedChange={(c) => setValue(Boolean(c))} id={field.name} />
+          <Label htmlFor={field.name} className="text-sm">{field.label}</Label>
+        </div>
+      );
+    }
+    if (field.type === "MULTISELECT") {
+      const arr = Array.isArray(value) ? (value as string[]) : [];
+      return (
+        <div className="space-y-1">
+          {(field.options || []).map((o) => {
+            const checked = arr.includes(o.value);
+            return (
+              <div key={o.value} className="flex items-center space-x-2">
+                <Checkbox
+                  checked={checked}
+                  onCheckedChange={(c) => {
+                    const next = c ? [...arr, o.value] : arr.filter((v) => v !== o.value);
+                    setValue(next);
+                  }}
+                  id={`${field.name}-${o.value}`}
+                />
+                <Label htmlFor={`${field.name}-${o.value}`} className="text-sm">{o.label}</Label>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+    if (["DATE", "TIME", "DATETIME"].includes(field.type)) {
+      return (
+        <Input
+          type={field.type === "DATE" ? "date" : field.type === "TIME" ? "time" : "datetime-local"}
+          value={(value as string) || ""}
+          onChange={(e) => setValue(e.target.value)}
+        />
+      );
+    }
+    return (
+      <Input value={(value as string) || ""} onChange={(e) => setValue(e.target.value)} />
+    );
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center py-12">Loading...</div>;
   }
 
   if (!contact) return null;
 
-  const customFields = (contact.formFields || []).filter(
-    (f) => !f.isSystem && !["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"].includes(f.type)
-  );
-  const metadata = contact.metadata || {};
-
-  function formatFieldValue(field: FormFieldDef, raw: unknown): string {
-    if (raw === undefined || raw === null || raw === "") return "-";
-    if (Array.isArray(raw)) {
-      return raw
-        .map((v) => {
-          const opt = field.options?.find((o) => o.value === v);
-          return opt?.label ?? String(v);
-        })
-        .join(", ");
-    }
-    if (typeof raw === "boolean") return raw ? "Yes" : "No";
-    if (field.options && field.options.length > 0) {
-      const opt = field.options.find((o) => o.value === raw);
-      if (opt) return opt.label;
-    }
-    return String(raw);
-  }
+  const visibleFields = (contact.formFields || []).filter((f) => !LAYOUT_TYPES.has(f.type));
+  const displayName = deriveDisplayName(contact, visibleFields);
 
   return (
     <div className="space-y-6">
@@ -219,8 +383,10 @@ export default function AttendeeDetailPage() {
             </Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-bold">{contact.firstName} {contact.lastName}</h1>
-            <p className="text-sm text-muted-foreground">{contact.email}</p>
+            <h1 className="text-2xl font-bold">{displayName.primary}</h1>
+            {displayName.secondary && (
+              <p className="text-sm text-muted-foreground">{displayName.secondary}</p>
+            )}
           </div>
           <Badge variant={statusConfig[contact.status]?.variant || "secondary"} className="ml-2">
             {statusConfig[contact.status]?.label || contact.status}
@@ -235,98 +401,24 @@ export default function AttendeeDetailPage() {
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Contact Information */}
+        {/* Attendee Information — mirrors the event's form definition */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Contact Information</CardTitle>
+            <CardTitle className="text-lg">Attendee Information</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {editing ? (
+          <CardContent>
+            {visibleFields.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                This event has no form fields yet. Build the form in the form builder to collect attendee info.
+              </p>
+            ) : editing ? (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>First Name</Label>
-                    <Input
-                      value={editForm.firstName}
-                      onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })}
-                      required
-                    />
+                {visibleFields.map((field) => (
+                  <div key={field.name} className="space-y-1.5">
+                    {field.type !== "CHECKBOX" && <Label>{field.label}</Label>}
+                    {renderEditInput(field)}
                   </div>
-                  <div className="space-y-2">
-                    <Label>Last Name</Label>
-                    <Input
-                      value={editForm.lastName}
-                      onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })}
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Email</Label>
-                  <Input
-                    type="email"
-                    value={editForm.email}
-                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Phone</Label>
-                  <Input
-                    value={editForm.phone}
-                    onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Organization</Label>
-                  <Input
-                    value={editForm.organization}
-                    onChange={(e) => setEditForm({ ...editForm, organization: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Designation</Label>
-                  <Input
-                    value={editForm.designation}
-                    onChange={(e) => setEditForm({ ...editForm, designation: e.target.value })}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Category</Label>
-                    {contact.event.categories.length > 0 ? (
-                      <Select value={editForm.category} onValueChange={(v) => setEditForm({ ...editForm, category: v })}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select category" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {contact.event.categories.map((cat) => (
-                            <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input
-                        value={editForm.category}
-                        onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
-                      />
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Status</Label>
-                    <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="IMPORTED">Imported</SelectItem>
-                        <SelectItem value="INVITED">Invited</SelectItem>
-                        <SelectItem value="REGISTERED">Registered</SelectItem>
-                        <SelectItem value="CANCELLED">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
+                ))}
                 <div className="flex justify-end gap-2 pt-2">
                   <Button variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
                   <Button onClick={handleSave} disabled={saving}>
@@ -336,19 +428,20 @@ export default function AttendeeDetailPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                <InfoRow icon={User} label="Name" value={`${contact.firstName} ${contact.lastName}`} />
-                <InfoRow icon={Mail} label="Email" value={contact.email} />
-                <InfoRow icon={Phone} label="Phone" value={contact.phone || "-"} />
-                <InfoRow icon={Building} label="Organization" value={contact.organization || "-"} />
-                <InfoRow icon={Briefcase} label="Designation" value={contact.designation || "-"} />
-                <InfoRow icon={Tag} label="Category" value={contact.category || "Uncategorized"} />
-                <InfoRow icon={Clock} label="Added" value={new Date(contact.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })} />
+                {visibleFields.map((field) => (
+                  <div key={field.name} className="flex items-start gap-3 text-sm">
+                    <span className="text-muted-foreground w-32 shrink-0">{field.label}</span>
+                    <span className="font-medium break-words">
+                      {formatFieldValue(field, getFieldValue(contact, field))}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Registration Link + Registration Info */}
+        {/* Right column */}
         <div className="space-y-6">
           {/* Registration Link */}
           <Card>
@@ -361,7 +454,7 @@ export default function AttendeeDetailPage() {
             <CardContent>
               <p className="text-xs text-muted-foreground mb-2">
                 {contact.inviteToken
-                  ? "This is the personal registration link for this attendee. Share it if they didn't receive the email."
+                  ? "Personal registration link for this attendee. Share it if they didn't receive the email."
                   : "This attendee has no invite token. They can use the general registration link."}
               </p>
               <div className="flex items-center gap-2">
@@ -375,6 +468,68 @@ export default function AttendeeDetailPage() {
                   {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Admin — category/status/added (not part of the form) */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <User className="h-4 w-4" />
+                Admin
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              {editing ? (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Category</Label>
+                    {contact.event.categories.length > 0 ? (
+                      <Select value={editCategory} onValueChange={setEditCategory}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select category" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {contact.event.categories.map((cat) => (
+                            <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input value={editCategory} onChange={(e) => setEditCategory(e.target.value)} />
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Status</Label>
+                    <Select value={editStatus} onValueChange={(v) => setEditStatus(v as ContactStatus)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="IMPORTED">Imported</SelectItem>
+                        <SelectItem value="INVITED">Invited</SelectItem>
+                        <SelectItem value="REGISTERED">Registered</SelectItem>
+                        <SelectItem value="CANCELLED">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground flex items-center gap-2">
+                      <Tag className="h-3.5 w-3.5" />Category
+                    </span>
+                    <span className="font-medium">{contact.category || "Uncategorized"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground flex items-center gap-2">
+                      <Clock className="h-3.5 w-3.5" />Added
+                    </span>
+                    <span className="font-medium">
+                      {new Date(contact.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
+                    </span>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -463,40 +618,6 @@ export default function AttendeeDetailPage() {
           </Card>
         </div>
       </div>
-
-      {/* Form Responses (custom fields) */}
-      {customFields.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Form Responses
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {customFields.map((field) => (
-                <div key={field.name} className="flex items-start gap-3 text-sm">
-                  <span className="text-muted-foreground w-32 shrink-0">{field.label}</span>
-                  <span className="font-medium break-words">
-                    {formatFieldValue(field, metadata[field.name])}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-function InfoRow({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string }) {
-  return (
-    <div className="flex items-center gap-3 text-sm">
-      <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-      <span className="text-muted-foreground w-24 shrink-0">{label}</span>
-      <span className="font-medium">{value}</span>
     </div>
   );
 }

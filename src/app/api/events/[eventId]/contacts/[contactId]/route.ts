@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { updateContactSchema } from "@/lib/validations/contact";
@@ -51,9 +52,15 @@ export async function PUT(
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
   }
 
+  const { metadata, ...rest } = result.data;
+  const data: Prisma.ContactUpdateInput = { ...rest };
+  if (metadata !== undefined) {
+    data.metadata = metadata === null ? Prisma.DbNull : (metadata as Prisma.InputJsonValue);
+  }
+
   const contact = await prisma.contact.update({
     where: { id: contactId },
-    data: result.data,
+    data,
   });
 
   return NextResponse.json(contact);

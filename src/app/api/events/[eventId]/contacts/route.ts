@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { createContactSchema } from "@/lib/validations/contact";
@@ -118,11 +119,17 @@ export async function POST(
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
   }
 
+  const { metadata, ...rest } = result.data;
   const contact = await prisma.contact.create({
     data: {
-      ...result.data,
+      ...rest,
       eventId,
       inviteToken: randomBytes(16).toString("hex"),
+      ...(metadata === null
+        ? { metadata: Prisma.DbNull }
+        : metadata !== undefined
+        ? { metadata: metadata as Prisma.InputJsonValue }
+        : {}),
     },
   });
 
