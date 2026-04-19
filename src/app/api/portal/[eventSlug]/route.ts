@@ -1,9 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 interface RouteParams {
   params: Promise<{ eventSlug: string }>;
 }
+
+const COLUMN_FIELDS = new Set([
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+  "organization",
+  "designation",
+]);
+
+const LAYOUT_TYPES = new Set(["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"]);
 
 // GET - Get registration details by email and confirmation code
 export async function GET(req: NextRequest, { params }: RouteParams) {
@@ -19,12 +31,24 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Find event
     const event = await prisma.event.findUnique({
       where: { slug: eventSlug },
       include: {
         modules: true,
         branding: true,
+        formFields: {
+          where: { isActive: true },
+          orderBy: { order: "asc" },
+          select: {
+            name: true,
+            label: true,
+            labelAr: true,
+            type: true,
+            options: true,
+            required: true,
+            isSystem: true,
+          },
+        },
       },
     });
 
@@ -32,7 +56,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
     }
 
-    // Check if self-service portal is enabled
     if (!event.modules?.selfServicePortal) {
       return NextResponse.json(
         { error: "Self-service portal is not enabled for this event" },
@@ -40,7 +63,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Find registration
     const registration = await prisma.registration.findFirst({
       where: {
         eventId: event.id,
@@ -70,6 +92,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         startDate: event.startDate,
         endDate: event.endDate,
         branding: event.branding,
+        formFields: event.formFields,
       },
       registration: {
         id: registration.id,
@@ -86,6 +109,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         phone: registration.contact.phone,
         organization: registration.contact.organization,
         designation: registration.contact.designation,
+        metadata: registration.contact.metadata,
       },
     });
   } catch (error) {
@@ -97,7 +121,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   }
 }
 
-// POST - Update registration details
+// POST - Update registration details or cancel
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { eventSlug } = await params;
@@ -111,10 +135,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Find event
     const event = await prisma.event.findUnique({
       where: { slug: eventSlug },
-      include: { modules: true },
+      include: {
+        modules: true,
+        formFields: {
+          where: { isActive: true },
+          select: { name: true, type: true, required: true, label: true },
+        },
+      },
     });
 
     if (!event || !event.isActive) {
@@ -128,7 +157,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Find registration
     const registration = await prisma.registration.findFirst({
       where: {
         eventId: event.id,
@@ -147,7 +175,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Handle cancel action
     if (action === "cancel") {
       if (registration.status === "CANCELLED") {
         return NextResponse.json(
@@ -172,19 +199,46 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Handle update action
-    if (updates) {
-      const allowedUpdates: Record<string, unknown> = {};
+    if (updates && typeof updates === "object") {
+      const allowedNames = new Set(
+        (event.formFields || [])
+          .filter((f) => !LAYOUT_TYPES.has(f.type) && f.name !== "email")
+          .map((f) => f.name)
+      );
 
-      // Only allow updating certain fields
-      if (updates.phone) allowedUpdates.phone = updates.phone;
-      if (updates.organization) allowedUpdates.organization = updates.organization;
-      if (updates.designation) allowedUpdates.designation = updates.designation;
+      for (const field of event.formFields || []) {
+        if (!field.required || LAYOUT_TYPES.has(field.type) || field.name === "email") continue;
+        const v = (updates as Record<string, unknown>)[field.name];
+        if (v === undefined || v === null || v === "") {
+          return NextResponse.json(
+            { error: `${field.label} is required` },
+            { status: 400 }
+          );
+        }
+      }
 
-      if (Object.keys(allowedUpdates).length > 0) {
+      const columnUpdates: Record<string, unknown> = {};
+      const existingMetadata = (registration.contact.metadata as Record<string, unknown>) || {};
+      const metadataUpdates: Record<string, unknown> = { ...existingMetadata };
+
+      for (const [name, value] of Object.entries(updates as Record<string, unknown>)) {
+        if (!allowedNames.has(name)) continue;
+        if (COLUMN_FIELDS.has(name)) {
+          columnUpdates[name] = value === "" || value === undefined ? null : value;
+        } else {
+          metadataUpdates[name] = value;
+        }
+      }
+
+      const data: Prisma.ContactUpdateInput = { ...columnUpdates };
+      if (Object.keys(metadataUpdates).length > 0) {
+        data.metadata = metadataUpdates as Prisma.InputJsonValue;
+      }
+
+      if (Object.keys(data).length > 0) {
         await prisma.contact.update({
           where: { id: registration.contactId },
-          data: allowedUpdates,
+          data,
         });
       }
 

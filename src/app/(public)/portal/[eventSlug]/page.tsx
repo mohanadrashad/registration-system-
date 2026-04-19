@@ -5,6 +5,16 @@ import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -21,16 +31,34 @@ import {
   XCircle,
   Calendar,
   MapPin,
-  Mail,
-  Phone,
-  Building2,
-  Briefcase,
   Download,
   Edit,
   Loader2,
   LogOut,
   AlertTriangle,
 } from "lucide-react";
+import { COUNTRIES } from "@/lib/form-builder/countries";
+
+const COLUMN_FIELDS = new Set([
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+  "organization",
+  "designation",
+]);
+
+const LAYOUT_TYPES = new Set(["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"]);
+
+interface FormFieldDef {
+  name: string;
+  label: string;
+  labelAr: string | null;
+  type: string;
+  options: { value: string; label: string; labelAr?: string }[] | null;
+  required: boolean;
+  isSystem: boolean;
+}
 
 interface EventInfo {
   name: string;
@@ -38,6 +66,7 @@ interface EventInfo {
   venue?: string;
   startDate: string;
   endDate: string;
+  formFields: FormFieldDef[];
 }
 
 interface RegistrationInfo {
@@ -53,9 +82,39 @@ interface ContactInfo {
   firstName: string;
   lastName: string;
   email: string;
-  phone?: string;
-  organization?: string;
-  designation?: string;
+  phone?: string | null;
+  organization?: string | null;
+  designation?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+function getFieldValue(contact: ContactInfo, field: FormFieldDef): unknown {
+  if (COLUMN_FIELDS.has(field.name)) {
+    return (contact as unknown as Record<string, unknown>)[field.name];
+  }
+  return contact.metadata?.[field.name];
+}
+
+function formatFieldValue(field: FormFieldDef, raw: unknown): string {
+  if (raw === undefined || raw === null || raw === "") return "-";
+  if (Array.isArray(raw)) {
+    return raw
+      .map((v) => {
+        const opt = field.options?.find((o) => o.value === v);
+        return opt?.label ?? String(v);
+      })
+      .join(", ");
+  }
+  if (typeof raw === "boolean") return raw ? "Yes" : "No";
+  if (field.type === "COUNTRY") {
+    const country = COUNTRIES.find((c) => c.code === raw);
+    if (country) return country.name;
+  }
+  if (field.options && field.options.length > 0) {
+    const opt = field.options.find((o) => o.value === raw);
+    if (opt) return opt.label;
+  }
+  return String(raw);
 }
 
 export default function PortalPage() {
@@ -76,14 +135,29 @@ export default function PortalPage() {
 
   // Edit state
   const [editing, setEditing] = useState(false);
-  const [editPhone, setEditPhone] = useState("");
-  const [editOrganization, setEditOrganization] = useState("");
-  const [editDesignation, setEditDesignation] = useState("");
+  const [editValues, setEditValues] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   // Cancel dialog
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+
+  function seedEditValues(contactData: ContactInfo, fields: FormFieldDef[]) {
+    const values: Record<string, unknown> = {};
+    for (const field of fields || []) {
+      if (LAYOUT_TYPES.has(field.type)) continue;
+      const raw = getFieldValue(contactData, field);
+      if (field.type === "CHECKBOX") {
+        values[field.name] = Boolean(raw);
+      } else if (field.type === "MULTISELECT") {
+        values[field.name] = Array.isArray(raw) ? raw : [];
+      } else {
+        values[field.name] = raw ?? "";
+      }
+    }
+    setEditValues(values);
+  }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -101,14 +175,12 @@ export default function PortalPage() {
         setEvent(data.event);
         setRegistration(data.registration);
         setContact(data.contact);
-        setEditPhone(data.contact.phone || "");
-        setEditOrganization(data.contact.organization || "");
-        setEditDesignation(data.contact.designation || "");
+        seedEditValues(data.contact, data.event.formFields || []);
         setIsLoggedIn(true);
       } else {
         setLoginError(data.error || "Login failed");
       }
-    } catch (error) {
+    } catch {
       setLoginError("Failed to connect. Please try again.");
     } finally {
       setLoggingIn(false);
@@ -116,34 +188,46 @@ export default function PortalPage() {
   }
 
   async function handleSave() {
+    if (!event || !contact) return;
     setSaving(true);
+    setSaveError("");
 
     try {
+      const updates: Record<string, unknown> = {};
+      for (const field of event.formFields || []) {
+        if (LAYOUT_TYPES.has(field.type)) continue;
+        if (field.name === "email") continue; // email is the login identifier; not editable here
+        updates[field.name] = editValues[field.name];
+      }
+
       const res = await fetch(`/api/portal/${eventSlug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          code,
-          updates: {
-            phone: editPhone,
-            organization: editOrganization,
-            designation: editDesignation,
-          },
-        }),
+        body: JSON.stringify({ email, code, updates }),
       });
 
+      const data = await res.json();
+
       if (res.ok) {
-        setContact({
-          ...contact!,
-          phone: editPhone,
-          organization: editOrganization,
-          designation: editDesignation,
-        });
+        const updatedContact: ContactInfo = { ...contact };
+        const updatedMetadata: Record<string, unknown> = { ...(contact.metadata || {}) };
+        for (const field of event.formFields || []) {
+          if (LAYOUT_TYPES.has(field.type) || field.name === "email") continue;
+          const v = editValues[field.name];
+          if (COLUMN_FIELDS.has(field.name)) {
+            (updatedContact as unknown as Record<string, unknown>)[field.name] = v;
+          } else {
+            updatedMetadata[field.name] = v;
+          }
+        }
+        updatedContact.metadata = updatedMetadata;
+        setContact(updatedContact);
         setEditing(false);
+      } else {
+        setSaveError(data.error || "Failed to save changes");
       }
-    } catch (error) {
-      // Error handling
+    } catch {
+      setSaveError("Failed to connect. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -156,11 +240,7 @@ export default function PortalPage() {
       const res = await fetch(`/api/portal/${eventSlug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          code,
-          action: "cancel",
-        }),
+        body: JSON.stringify({ email, code, action: "cancel" }),
       });
 
       if (res.ok) {
@@ -170,8 +250,8 @@ export default function PortalPage() {
         });
         setCancelDialogOpen(false);
       }
-    } catch (error) {
-      // Error handling
+    } catch {
+      // silently ignore; dialog stays open
     } finally {
       setCancelling(false);
     }
@@ -182,8 +262,142 @@ export default function PortalPage() {
     setEvent(null);
     setRegistration(null);
     setContact(null);
+    setEditValues({});
+    setEditing(false);
     setEmail("");
     setCode("");
+  }
+
+  function startEditing() {
+    if (event && contact) {
+      seedEditValues(contact, event.formFields || []);
+    }
+    setSaveError("");
+    setEditing(true);
+  }
+
+  function renderEditInput(field: FormFieldDef) {
+    const value = editValues[field.name];
+    const setValue = (v: unknown) => setEditValues((prev) => ({ ...prev, [field.name]: v }));
+
+    if (["TEXT", "EMAIL", "PHONE", "NUMBER", "PHONE_COUNTRY"].includes(field.type)) {
+      return (
+        <Input
+          type={field.type === "EMAIL" ? "email" : field.type === "NUMBER" ? "number" : "text"}
+          value={(value as string) || ""}
+          onChange={(e) => setValue(e.target.value)}
+        />
+      );
+    }
+    if (field.type === "TEXTAREA") {
+      return (
+        <Textarea
+          value={(value as string) || ""}
+          onChange={(e) => setValue(e.target.value)}
+          rows={3}
+        />
+      );
+    }
+    if (field.type === "SELECT") {
+      return (
+        <Select value={(value as string) || ""} onValueChange={setValue}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select..." />
+          </SelectTrigger>
+          <SelectContent>
+            {(field.options || []).map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+    if (field.type === "COUNTRY") {
+      return (
+        <Select value={(value as string) || ""} onValueChange={setValue}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select country..." />
+          </SelectTrigger>
+          <SelectContent>
+            {COUNTRIES.map((c) => (
+              <SelectItem key={c.code} value={c.code}>
+                {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+    if (field.type === "RADIO") {
+      return (
+        <RadioGroup value={(value as string) || ""} onValueChange={setValue} className="flex flex-wrap gap-4">
+          {(field.options || []).map((o) => (
+            <div key={o.value} className="flex items-center space-x-2">
+              <RadioGroupItem value={o.value} id={`${field.name}-${o.value}`} />
+              <Label htmlFor={`${field.name}-${o.value}`} className="text-sm">
+                {o.label}
+              </Label>
+            </div>
+          ))}
+        </RadioGroup>
+      );
+    }
+    if (field.type === "CHECKBOX") {
+      return (
+        <div className="flex items-center space-x-2">
+          <Checkbox
+            id={field.name}
+            checked={Boolean(value)}
+            onCheckedChange={(c) => setValue(Boolean(c))}
+          />
+          <Label htmlFor={field.name} className="text-sm">
+            {field.label}
+          </Label>
+        </div>
+      );
+    }
+    if (field.type === "MULTISELECT") {
+      const arr = Array.isArray(value) ? (value as string[]) : [];
+      return (
+        <div className="space-y-1">
+          {(field.options || []).map((o) => {
+            const checked = arr.includes(o.value);
+            return (
+              <div key={o.value} className="flex items-center space-x-2">
+                <Checkbox
+                  id={`${field.name}-${o.value}`}
+                  checked={checked}
+                  onCheckedChange={(c) => {
+                    const next = c ? [...arr, o.value] : arr.filter((v) => v !== o.value);
+                    setValue(next);
+                  }}
+                />
+                <Label htmlFor={`${field.name}-${o.value}`} className="text-sm">
+                  {o.label}
+                </Label>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+    if (["DATE", "TIME", "DATETIME"].includes(field.type)) {
+      return (
+        <Input
+          type={field.type === "DATE" ? "date" : field.type === "TIME" ? "time" : "datetime-local"}
+          value={(value as string) || ""}
+          onChange={(e) => setValue(e.target.value)}
+        />
+      );
+    }
+    return (
+      <Input
+        value={(value as string) || ""}
+        onChange={(e) => setValue(e.target.value)}
+      />
+    );
   }
 
   function getStatusBadge(status: string) {
@@ -229,9 +443,7 @@ export default function PortalPage() {
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">Attendee Portal</CardTitle>
-            <CardDescription>
-              View and manage your registration
-            </CardDescription>
+            <CardDescription>View and manage your registration</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleLogin} className="space-y-4">
@@ -284,7 +496,8 @@ export default function PortalPage() {
     );
   }
 
-  // Portal view
+  const visibleFields = (event?.formFields || []).filter((f) => !LAYOUT_TYPES.has(f.type));
+
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4">
       <div className="max-w-2xl mx-auto space-y-6">
@@ -332,12 +545,9 @@ export default function PortalPage() {
 
             <div className="pt-4 border-t">
               <p className="text-sm text-muted-foreground mb-1">Confirmation Code</p>
-              <p className="font-mono text-lg font-semibold">
-                {registration?.confirmationCode}
-              </p>
+              <p className="font-mono text-lg font-semibold">{registration?.confirmationCode}</p>
             </div>
 
-            {/* Badge Download */}
             {registration?.badgeGenerated && registration?.badgeUrl && (
               <div className="pt-4 border-t">
                 <Button asChild className="w-full">
@@ -351,13 +561,13 @@ export default function PortalPage() {
           </CardContent>
         </Card>
 
-        {/* Contact Info Card */}
+        {/* Your Details — driven by the event's form fields */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>Your Details</CardTitle>
-              {!editing && registration?.status !== "CANCELLED" && (
-                <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+              {!editing && registration?.status !== "CANCELLED" && visibleFields.length > 0 && (
+                <Button variant="outline" size="sm" onClick={startEditing}>
                   <Edit className="h-4 w-4 mr-2" />
                   Edit
                 </Button>
@@ -365,56 +575,39 @@ export default function PortalPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {editing ? (
+            {visibleFields.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No details to display.</p>
+            ) : editing && contact ? (
               <div className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">First Name</Label>
-                    <p className="font-medium">{contact?.firstName}</p>
+                {saveError && (
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-600">
+                    {saveError}
                   </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Last Name</Label>
-                    <p className="font-medium">{contact?.lastName}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <Label className="text-xs text-muted-foreground">Email</Label>
-                  <p className="font-medium">{contact?.email}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="editPhone">Phone</Label>
-                  <Input
-                    id="editPhone"
-                    value={editPhone}
-                    onChange={(e) => setEditPhone(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="editOrganization">Organization</Label>
-                  <Input
-                    id="editOrganization"
-                    value={editOrganization}
-                    onChange={(e) => setEditOrganization(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="editDesignation">Designation</Label>
-                  <Input
-                    id="editDesignation"
-                    value={editDesignation}
-                    onChange={(e) => setEditDesignation(e.target.value)}
-                  />
-                </div>
-
-                <div className="flex gap-2">
+                )}
+                {visibleFields.map((field) => {
+                  if (field.name === "email") {
+                    return (
+                      <div key={field.name}>
+                        <Label className="text-xs text-muted-foreground">{field.label}</Label>
+                        <p className="font-medium">{contact.email}</p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={field.name} className="space-y-1.5">
+                      {field.type !== "CHECKBOX" && (
+                        <Label>
+                          {field.label}
+                          {field.required && <span className="text-destructive ml-1">*</span>}
+                        </Label>
+                      )}
+                      {renderEditInput(field)}
+                    </div>
+                  );
+                })}
+                <div className="flex gap-2 pt-2">
                   <Button onClick={handleSave} disabled={saving}>
-                    {saving ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : null}
+                    {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Save Changes
                   </Button>
                   <Button variant="outline" onClick={() => setEditing(false)}>
@@ -422,58 +615,18 @@ export default function PortalPage() {
                   </Button>
                 </div>
               </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="flex items-center gap-3">
-                    <Mail className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-xs text-muted-foreground">Name</p>
-                      <p className="font-medium">
-                        {contact?.firstName} {contact?.lastName}
-                      </p>
-                    </div>
+            ) : contact ? (
+              <div className="space-y-3">
+                {visibleFields.map((field) => (
+                  <div key={field.name} className="flex items-start gap-3 text-sm">
+                    <span className="text-muted-foreground w-32 shrink-0">{field.label}</span>
+                    <span className="font-medium break-words">
+                      {formatFieldValue(field, getFieldValue(contact, field))}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Mail className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-xs text-muted-foreground">Email</p>
-                      <p className="font-medium">{contact?.email}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {contact?.phone && (
-                  <div className="flex items-center gap-3">
-                    <Phone className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-xs text-muted-foreground">Phone</p>
-                      <p className="font-medium">{contact.phone}</p>
-                    </div>
-                  </div>
-                )}
-
-                {contact?.organization && (
-                  <div className="flex items-center gap-3">
-                    <Building2 className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-xs text-muted-foreground">Organization</p>
-                      <p className="font-medium">{contact.organization}</p>
-                    </div>
-                  </div>
-                )}
-
-                {contact?.designation && (
-                  <div className="flex items-center gap-3">
-                    <Briefcase className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-xs text-muted-foreground">Designation</p>
-                      <p className="font-medium">{contact.designation}</p>
-                    </div>
-                  </div>
-                )}
+                ))}
               </div>
-            )}
+            ) : null}
           </CardContent>
         </Card>
 
@@ -487,17 +640,13 @@ export default function PortalPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button
-                variant="destructive"
-                onClick={() => setCancelDialogOpen(true)}
-              >
+              <Button variant="destructive" onClick={() => setCancelDialogOpen(true)}>
                 Cancel My Registration
               </Button>
             </CardContent>
           </Card>
         )}
 
-        {/* Cancel Dialog */}
         <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
           <DialogContent>
             <DialogHeader>
@@ -514,14 +663,8 @@ export default function PortalPage() {
               <Button variant="outline" onClick={() => setCancelDialogOpen(false)}>
                 Keep Registration
               </Button>
-              <Button
-                variant="destructive"
-                onClick={handleCancel}
-                disabled={cancelling}
-              >
-                {cancelling ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : null}
+              <Button variant="destructive" onClick={handleCancel} disabled={cancelling}>
+                {cancelling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Yes, Cancel
               </Button>
             </DialogFooter>
