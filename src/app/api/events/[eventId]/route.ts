@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorize } from "@/lib/api-auth";
 import { updateEventSchema } from "@/lib/validations/event";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await authorize();
+  if (ctx instanceof NextResponse) return ctx;
 
   const { eventId } = await params;
   const event = await prisma.event.findUnique({
@@ -29,8 +29,8 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await authorize("editor");
+  if (ctx instanceof NextResponse) return ctx;
 
   const { eventId } = await params;
   const body = await req.json();
@@ -57,8 +57,8 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await authorize("manager");
+  if (ctx instanceof NextResponse) return ctx;
 
   const { eventId } = await params;
   await prisma.event.delete({ where: { id: eventId } });

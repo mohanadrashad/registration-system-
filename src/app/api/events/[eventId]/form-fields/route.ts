@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorize } from "@/lib/api-auth";
 import { FieldType, FieldWidth } from "@prisma/client";
 
 interface RouteParams {
@@ -10,10 +10,8 @@ interface RouteParams {
 // GET - List all form fields for an event
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize();
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId } = await params;
 
@@ -35,10 +33,8 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Create a new form field
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize("editor");
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId } = await params;
     const body = await request.json();

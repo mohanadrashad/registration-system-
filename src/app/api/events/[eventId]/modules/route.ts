@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorize } from "@/lib/api-auth";
 
 interface RouteParams {
   params: Promise<{ eventId: string }>;
@@ -9,10 +9,8 @@ interface RouteParams {
 // GET - Get event modules
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize();
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId } = await params;
 
@@ -37,10 +35,8 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Create default modules for an event
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize("editor");
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId } = await params;
 
@@ -80,10 +76,8 @@ export async function POST(request: Request, { params }: RouteParams) {
 // PATCH - Update module states
 export async function PATCH(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize("manager");
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId } = await params;
     const body = await request.json();

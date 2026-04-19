@@ -11,35 +11,41 @@ interface TemplateVariables {
   [key: string]: string | undefined;
 }
 
+// Variables that are URLs and may legitimately contain reserved chars.
+// Their values come from the application (links we build), not end-user
+// input, so escaping them would corrupt the URL. Keep this list tight.
+const URL_VARIABLES = new Set(["registrationLink", "badgeUrl"]);
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderValue(key: string, value: string): string {
+  return URL_VARIABLES.has(key) ? value : escapeHtml(value);
+}
+
+function substitute(html: string, variables: TemplateVariables): string {
+  return html.replace(/{{(\w+)}}/g, (_, key) => {
+    const value = variables[key];
+    if (value === undefined) return "";
+    return renderValue(key, value);
+  });
+}
+
 export function renderEmailTemplate(
   bodyHtml: string,
   headerHtml: string | null,
   footerHtml: string | null,
   variables: TemplateVariables
 ): string {
-  let html = bodyHtml;
-
-  // Replace template variables
-  for (const [key, value] of Object.entries(variables)) {
-    if (value !== undefined) {
-      html = html.replace(new RegExp(`{{${key}}}`, "g"), value);
-    }
-  }
-
-  // Wrap with header and footer
-  const header = headerHtml
-    ? headerHtml.replace(
-        /{{(\w+)}}/g,
-        (_, key) => variables[key] || ""
-      )
-    : "";
-
-  const footer = footerHtml
-    ? footerHtml.replace(
-        /{{(\w+)}}/g,
-        (_, key) => variables[key] || ""
-      )
-    : "";
+  const html = substitute(bodyHtml, variables);
+  const header = headerHtml ? substitute(headerHtml, variables) : "";
+  const footer = footerHtml ? substitute(footerHtml, variables) : "";
 
   return `
 <!DOCTYPE html>
@@ -69,11 +75,9 @@ export function renderSubject(
   subject: string,
   variables: TemplateVariables
 ): string {
-  let rendered = subject;
-  for (const [key, value] of Object.entries(variables)) {
-    if (value !== undefined) {
-      rendered = rendered.replace(new RegExp(`{{${key}}}`, "g"), value);
-    }
-  }
-  return rendered;
+  // Subjects are plain text — collapse newlines/tabs, skip HTML escaping.
+  return subject.replace(/{{(\w+)}}/g, (_, key) => {
+    const value = variables[key];
+    return value === undefined ? "" : value.replace(/[\r\n\t]/g, " ");
+  });
 }

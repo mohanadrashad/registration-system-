@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorize } from "@/lib/api-auth";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ eventId: string; templateId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await authorize();
+  if (ctx instanceof NextResponse) return ctx;
 
   const { templateId } = await params;
   const template = await prisma.emailTemplate.findUnique({
@@ -22,8 +22,8 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ eventId: string; templateId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await authorize("editor");
+  if (ctx instanceof NextResponse) return ctx;
 
   const { templateId } = await params;
   const body = await req.json();
@@ -49,8 +49,8 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ eventId: string; templateId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await authorize("editor");
+  if (ctx instanceof NextResponse) return ctx;
 
   const { templateId } = await params;
   await prisma.emailTemplate.delete({ where: { id: templateId } });

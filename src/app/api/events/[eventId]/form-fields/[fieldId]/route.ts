@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorize } from "@/lib/api-auth";
 import { FieldType, FieldWidth } from "@prisma/client";
 
 interface RouteParams {
@@ -10,10 +10,8 @@ interface RouteParams {
 // GET - Get a single form field
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize();
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId, fieldId } = await params;
 
@@ -38,10 +36,8 @@ export async function GET(request: Request, { params }: RouteParams) {
 // PATCH - Update a form field
 export async function PATCH(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize("editor");
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId, fieldId } = await params;
     const body = await request.json();
@@ -115,10 +111,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 // DELETE - Delete a form field
 export async function DELETE(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize("editor");
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId, fieldId } = await params;
 

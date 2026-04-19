@@ -1,17 +1,40 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
-import { sendEmail } from "@/lib/email";
+import { authorize } from "@/lib/api-auth";
+import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
 
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ eventId: string; campaignId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await authorize("editor");
+  if (ctx instanceof NextResponse) return ctx;
 
   const { eventId, campaignId } = await params;
+
+  // Atomically transition status from DRAFT/SCHEDULED/FAILED → SENDING to prevent
+  // concurrent sends racing past the status check.
+  const claimed = await prisma.emailCampaign.updateMany({
+    where: {
+      id: campaignId,
+      eventId,
+      status: { in: ["DRAFT", "SCHEDULED", "FAILED"] },
+    },
+    data: { status: "SENDING" },
+  });
+
+  if (claimed.count === 0) {
+    const existing = await prisma.emailCampaign.findFirst({
+      where: { id: campaignId, eventId },
+      select: { id: true, status: true },
+    });
+    if (!existing) return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Campaign already sent or in progress", status: existing.status },
+      { status: 409 }
+    );
+  }
 
   const campaign = await prisma.emailCampaign.findUnique({
     where: { id: campaignId },
@@ -19,10 +42,6 @@ export async function POST(
   });
 
   if (!campaign) return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
-
-  if (campaign.status === "SENDING" || campaign.status === "COMPLETED") {
-    return NextResponse.json({ error: "Campaign already sent or in progress" }, { status: 400 });
-  }
 
   // Get recipients based on filter
   const filter = (campaign.recipientFilter as Record<string, string>) || {};
@@ -38,13 +57,9 @@ export async function POST(
     include: { registration: true },
   });
 
-  // Update campaign status
   await prisma.emailCampaign.update({
     where: { id: campaignId },
-    data: {
-      status: "SENDING",
-      totalRecipients: contacts.length,
-    },
+    data: { totalRecipients: contacts.length },
   });
 
   let sentCount = 0;
@@ -98,13 +113,13 @@ export async function POST(
 
     const subject = renderSubject(campaign.template.subject, variables);
 
-    try {
-      const result = await sendEmail({
-        to: contact.email,
-        subject,
-        html,
-      });
+    const result = await sendEventEmail(eventId, {
+      to: contact.email,
+      subject,
+      html,
+    });
 
+    if (result.success) {
       await prisma.emailLog.create({
         data: {
           campaignId,
@@ -113,12 +128,11 @@ export async function POST(
           subject,
           status: "SENT",
           sentAt: new Date(),
-          resendId: result.id,
+          resendId: result.messageId,
         },
       });
-
       sentCount++;
-    } catch (error) {
+    } else {
       await prisma.emailLog.create({
         data: {
           campaignId,
@@ -126,7 +140,7 @@ export async function POST(
           toEmail: contact.email,
           subject,
           status: "FAILED",
-          errorMessage: (error as Error).message,
+          errorMessage: result.error ?? "Unknown error",
         },
       });
       failedCount++;

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorize } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
+import { sanitizeCss } from "@/lib/security/sanitize-css";
 
 interface RouteParams {
   params: Promise<{ eventId: string }>;
@@ -9,10 +10,8 @@ interface RouteParams {
 // GET - Get branding settings for an event
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize();
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId } = await params;
 
@@ -57,10 +56,8 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Create or update branding settings
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize("editor");
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId } = await params;
     const body = await request.json();
@@ -103,7 +100,7 @@ export async function POST(request: Request, { params }: RouteParams) {
         logoWhiteUrl,
         faviconUrl,
         headerImageUrl,
-        customCss,
+        customCss: customCss ? sanitizeCss(customCss) : null,
         welcomeTitle,
         welcomeTitleAr,
         welcomeMessage,
@@ -121,7 +118,7 @@ export async function POST(request: Request, { params }: RouteParams) {
         logoWhiteUrl,
         faviconUrl,
         headerImageUrl,
-        customCss,
+        customCss: customCss ? sanitizeCss(customCss) : null,
         welcomeTitle,
         welcomeTitleAr,
         welcomeMessage,

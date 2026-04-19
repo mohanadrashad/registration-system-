@@ -1,46 +1,46 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
+import { EventWhatsAppSettings } from "@prisma/client";
 
 interface RouteParams {
   params: Promise<{ eventId: string }>;
 }
 
+const MASK = "••••••••";
+
+function maskSettings(settings: EventWhatsAppSettings | null) {
+  if (!settings) return { isActive: false, provider: "META" as const };
+  return {
+    id: settings.id,
+    eventId: settings.eventId,
+    provider: settings.provider,
+    isActive: settings.isActive,
+    phoneNumberId: settings.phoneNumberId,
+    businessAccountId: settings.businessAccountId,
+    accessToken: settings.accessToken ? MASK : null,
+    webhookVerifyToken: settings.webhookVerifyToken ? MASK : null,
+    confirmationTemplate: settings.confirmationTemplate,
+    reminderTemplate: settings.reminderTemplate,
+    badgeTemplate: settings.badgeTemplate,
+    createdAt: settings.createdAt,
+    updatedAt: settings.updatedAt,
+  };
+}
+
 // GET - Get WhatsApp settings for an event
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
 
-    // Check if event exists
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      include: {
-        whatsAppSettings: true,
-        modules: true,
-      },
+    const ctx = await authorizeEvent(eventId, { module: "whatsApp" });
+    if (ctx instanceof NextResponse) return ctx;
+
+    const settings = await prisma.eventWhatsAppSettings.findUnique({
+      where: { eventId },
     });
 
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
-    }
-
-    // Check if WhatsApp module is enabled
-    if (!event.modules?.whatsApp) {
-      return NextResponse.json(
-        { error: "WhatsApp module is not enabled for this event" },
-        { status: 403 }
-      );
-    }
-
-    return NextResponse.json(event.whatsAppSettings || {
-      isActive: false,
-      provider: "META",
-    });
+    return NextResponse.json(maskSettings(settings));
   } catch (error) {
     console.error("Error getting WhatsApp settings:", error);
     return NextResponse.json(
@@ -53,30 +53,15 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Create or update WhatsApp settings
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
-    const body = await request.json();
 
-    // Check if event exists and module is enabled
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      include: { modules: true },
+    const ctx = await authorizeEvent(eventId, {
+      role: "editor",
+      module: "whatsApp",
     });
+    if (ctx instanceof NextResponse) return ctx;
 
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
-    }
-
-    if (!event.modules?.whatsApp) {
-      return NextResponse.json(
-        { error: "WhatsApp module is not enabled for this event" },
-        { status: 403 }
-      );
-    }
+    const body = await request.json();
 
     const {
       isActive,
@@ -90,6 +75,17 @@ export async function POST(request: Request, { params }: RouteParams) {
       badgeTemplate,
     } = body;
 
+    // Preserve existing secrets when client submits the mask placeholder
+    const existing = await prisma.eventWhatsAppSettings.findUnique({
+      where: { eventId },
+    });
+    const resolvedAccessToken =
+      accessToken === MASK ? existing?.accessToken ?? null : accessToken ?? null;
+    const resolvedVerifyToken =
+      webhookVerifyToken === MASK
+        ? existing?.webhookVerifyToken ?? null
+        : webhookVerifyToken ?? null;
+
     const settings = await prisma.eventWhatsAppSettings.upsert({
       where: { eventId },
       update: {
@@ -97,8 +93,8 @@ export async function POST(request: Request, { params }: RouteParams) {
         provider: provider || "META",
         phoneNumberId,
         businessAccountId,
-        accessToken,
-        webhookVerifyToken,
+        accessToken: resolvedAccessToken,
+        webhookVerifyToken: resolvedVerifyToken,
         confirmationTemplate,
         reminderTemplate,
         badgeTemplate,
@@ -109,15 +105,15 @@ export async function POST(request: Request, { params }: RouteParams) {
         provider: provider || "META",
         phoneNumberId,
         businessAccountId,
-        accessToken,
-        webhookVerifyToken,
+        accessToken: resolvedAccessToken,
+        webhookVerifyToken: resolvedVerifyToken,
         confirmationTemplate,
         reminderTemplate,
         badgeTemplate,
       },
     });
 
-    return NextResponse.json(settings);
+    return NextResponse.json(maskSettings(settings));
   } catch (error) {
     console.error("Error saving WhatsApp settings:", error);
     return NextResponse.json(

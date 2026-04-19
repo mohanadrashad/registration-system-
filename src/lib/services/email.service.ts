@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { sendEmail } from "@/lib/email";
+import { sendEventEmail } from "./email-provider.service";
 import { renderEmailTemplate } from "@/lib/email-renderer";
 import { EmailLogStatus, EmailTemplateType, Prisma } from "@prisma/client";
 
@@ -110,19 +110,29 @@ export const emailService = {
         }
       );
 
-      const result = await sendEmail({
+      const result = await sendEventEmail(contact.eventId, {
         to: contact.email,
         subject: template.subject,
         html,
       });
 
-      // Update log
+      if (!result.success) {
+        await prisma.emailLog.update({
+          where: { id: log.id },
+          data: {
+            status: "FAILED",
+            errorMessage: result.error ?? "Unknown error",
+          },
+        });
+        return { success: false, error: result.error, logId: log.id };
+      }
+
       await prisma.emailLog.update({
         where: { id: log.id },
         data: {
           status: "SENT",
           sentAt: new Date(),
-          resendId: result.id,
+          resendId: result.messageId,
         },
       });
 

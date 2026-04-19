@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorize } from "@/lib/api-auth";
 import { generateQRCode, generateBadgeHtml } from "@/lib/badge-generator";
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await authorize("editor");
+  if (ctx instanceof NextResponse) return ctx;
 
   const { eventId } = await params;
   const body = await req.json();

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { checkInService } from "@/lib/services/checkin.service";
 import { CheckInMethod } from "@prisma/client";
 
@@ -10,12 +10,14 @@ interface RouteParams {
 // POST - Check in a registration
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+
+    const ctx = await authorizeEvent(eventId, {
+      role: "editor",
+      module: "checkIn",
+    });
+    if (ctx instanceof NextResponse) return ctx;
+
     const body = await request.json();
 
     if (!body.confirmationCode) {
@@ -41,7 +43,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       location: body.location,
       checkInPointId: body.checkInPointId,
       deviceId: body.deviceId,
-      checkedInBy: (session.user as { id?: string }).id,
+      checkedInBy: ctx.session.user.id,
       notes: body.notes,
     });
 
@@ -82,12 +84,11 @@ export async function POST(request: Request, { params }: RouteParams) {
 // GET - Get check-in stats
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+
+    const ctx = await authorizeEvent(eventId, { module: "checkIn" });
+    if (ctx instanceof NextResponse) return ctx;
+
     const stats = await checkInService.getStats(eventId);
 
     return NextResponse.json(stats);

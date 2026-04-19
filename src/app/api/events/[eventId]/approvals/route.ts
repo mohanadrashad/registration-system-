@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorize } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { approvalService } from "@/lib/services/approval.service";
 
@@ -10,10 +10,8 @@ interface RouteParams {
 // GET - Get pending approvals, waitlist, and capacity info
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize();
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId } = await params;
 
@@ -50,10 +48,8 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Approve or reject a registration
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const ctx = await authorize("editor");
+    if (ctx instanceof NextResponse) return ctx;
 
     const { eventId } = await params;
     const body = await request.json();
@@ -83,14 +79,14 @@ export async function POST(request: Request, { params }: RouteParams) {
 
     switch (action) {
       case "approve":
-        result = await approvalService.approve(registrationId, session.user.id);
+        result = await approvalService.approve(registrationId, ctx.session.user.id);
         break;
 
       case "reject":
         result = await approvalService.reject(
           registrationId,
           reason,
-          session.user.id
+          ctx.session.user.id
         );
         break;
 

@@ -1,17 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
-import { getRole, canEdit } from "@/lib/permissions";
-import { sendEmail } from "@/lib/email";
+import { authorize } from "@/lib/api-auth";
+import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canEdit(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const ctx = await authorize("editor");
+  if (ctx instanceof NextResponse) return ctx;
 
   const { eventId } = await params;
   const body = await req.json();
@@ -103,13 +101,13 @@ export async function POST(
     );
     const subject = renderSubject(template.subject, variables);
 
-    try {
-      const result = await sendEmail({
-        to: contact.email,
-        subject,
-        html,
-      });
+    const result = await sendEventEmail(eventId, {
+      to: contact.email,
+      subject,
+      html,
+    });
 
+    if (result.success) {
       await prisma.emailLog.create({
         data: {
           campaignId: campaign.id,
@@ -118,7 +116,7 @@ export async function POST(
           subject,
           status: "SENT",
           sentAt: new Date(),
-          resendId: result.id,
+          resendId: result.messageId,
         },
       });
 
@@ -139,7 +137,7 @@ export async function POST(
       }
 
       sentCount++;
-    } catch (error) {
+    } else {
       await prisma.emailLog.create({
         data: {
           campaignId: campaign.id,
@@ -147,7 +145,7 @@ export async function POST(
           toEmail: contact.email,
           subject,
           status: "FAILED",
-          errorMessage: (error as Error).message,
+          errorMessage: result.error ?? "Unknown error",
         },
       });
       failedCount++;
