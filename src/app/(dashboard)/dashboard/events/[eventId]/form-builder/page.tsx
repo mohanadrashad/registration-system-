@@ -425,9 +425,8 @@ export default function FormBuilderPage() {
                       {newField.options.length > 0 && (
                         <div className="space-y-2">
                           {newField.options.map((opt, idx) => (
-                            <div key={idx} className="flex items-center gap-2 text-sm bg-white rounded p-2 border">
+                            <div key={idx} className="flex items-center gap-2 text-sm bg-white rounded px-3 py-2 border">
                               <span className="flex-1 truncate">{opt.label}</span>
-                              <span className="text-muted-foreground text-xs">({opt.value})</span>
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -448,23 +447,30 @@ export default function FormBuilderPage() {
                       {/* Add new option */}
                       <div className="flex gap-2">
                         <Input
-                          placeholder="Label"
+                          placeholder="Type option and press Enter or +"
                           value={newOption.label}
-                          onChange={(e) => setNewOption({ ...newOption, label: e.target.value })}
+                          onChange={(e) => setNewOption({
+                            label: e.target.value,
+                            value: e.target.value.replace(/\s/g, "_").toLowerCase()
+                          })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && newOption.label) {
+                              e.preventDefault();
+                              setNewField({
+                                ...newField,
+                                options: [...newField.options, { ...newOption }],
+                              });
+                              setNewOption({ value: "", label: "" });
+                            }
+                          }}
                           className="flex-1"
-                        />
-                        <Input
-                          placeholder="Value"
-                          value={newOption.value}
-                          onChange={(e) => setNewOption({ ...newOption, value: e.target.value.replace(/\s/g, "_").toLowerCase() })}
-                          className="w-28"
                         />
                         <Button
                           type="button"
                           variant="outline"
                           size="icon"
                           onClick={() => {
-                            if (newOption.label && newOption.value) {
+                            if (newOption.label) {
                               setNewField({
                                 ...newField,
                                 options: [...newField.options, { ...newOption }],
@@ -477,7 +483,7 @@ export default function FormBuilderPage() {
                         </Button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Add at least one option for this field type
+                        Type each option and press Enter or click +
                       </p>
                     </div>
                   )}
@@ -661,9 +667,8 @@ export default function FormBuilderPage() {
                   {(editingField.options || []).length > 0 && (
                     <div className="space-y-2">
                       {(editingField.options || []).map((opt, idx) => (
-                        <div key={idx} className="flex items-center gap-2 text-sm bg-white rounded p-2 border">
+                        <div key={idx} className="flex items-center gap-2 text-sm bg-white rounded px-3 py-2 border">
                           <span className="flex-1 truncate">{opt.label}</span>
-                          <span className="text-muted-foreground text-xs">({opt.value})</span>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -684,23 +689,30 @@ export default function FormBuilderPage() {
                   {/* Add new option */}
                   <div className="flex gap-2">
                     <Input
-                      placeholder="Label"
+                      placeholder="Type option and press Enter or +"
                       value={editOption.label}
-                      onChange={(e) => setEditOption({ ...editOption, label: e.target.value })}
+                      onChange={(e) => setEditOption({
+                        label: e.target.value,
+                        value: e.target.value.replace(/\s/g, "_").toLowerCase()
+                      })}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && editOption.label) {
+                          e.preventDefault();
+                          setEditingField({
+                            ...editingField,
+                            options: [...(editingField.options || []), { ...editOption }],
+                          });
+                          setEditOption({ value: "", label: "" });
+                        }
+                      }}
                       className="flex-1"
-                    />
-                    <Input
-                      placeholder="Value"
-                      value={editOption.value}
-                      onChange={(e) => setEditOption({ ...editOption, value: e.target.value.replace(/\s/g, "_").toLowerCase() })}
-                      className="w-28"
                     />
                     <Button
                       type="button"
                       variant="outline"
                       size="icon"
                       onClick={() => {
-                        if (editOption.label && editOption.value) {
+                        if (editOption.label) {
                           setEditingField({
                             ...editingField,
                             options: [...(editingField.options || []), { ...editOption }],
@@ -713,7 +725,7 @@ export default function FormBuilderPage() {
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Add options that users can select from
+                    Type each option and press Enter or click +
                   </p>
                 </div>
               )}
