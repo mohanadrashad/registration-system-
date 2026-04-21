@@ -118,3 +118,31 @@ export async function POST(request: Request, { params }: RouteParams) {
     );
   }
 }
+
+// DELETE - Remove custom domain for an event
+export async function DELETE(_request: Request, { params }: RouteParams) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { eventId } = await params;
+
+    const existing = await prisma.eventDomain.findUnique({
+      where: { eventId },
+    });
+
+    if (existing) {
+      await prisma.eventDomain.delete({ where: { eventId } });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting domain:", error);
+    return NextResponse.json(
+      { error: "Failed to delete domain" },
+      { status: 500 }
+    );
+  }
+}

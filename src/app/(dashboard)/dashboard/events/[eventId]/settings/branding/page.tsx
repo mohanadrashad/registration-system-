@@ -9,6 +9,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Palette,
@@ -23,6 +31,9 @@ import {
   XCircle,
   Copy,
   ExternalLink,
+  Pencil,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 
 interface BrandingSettings {
@@ -67,6 +78,9 @@ export default function BrandingPage() {
   const [savingDomain, setSavingDomain] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [eventSlug, setEventSlug] = useState("");
+  const [isEditingDomain, setIsEditingDomain] = useState(false);
+  const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -135,15 +149,39 @@ export default function BrandingPage() {
       if (res.ok) {
         const data = await res.json();
         setDomain(data);
+        setIsEditingDomain(false);
         toast.success("Domain settings saved");
       } else {
         const error = await res.json();
         toast.error(error.error || "Failed to save domain");
       }
-    } catch (error) {
+    } catch {
       toast.error("Failed to save domain");
     } finally {
       setSavingDomain(false);
+    }
+  }
+
+  async function removeDomain() {
+    setRemoving(true);
+    try {
+      const res = await fetch(`/api/events/${eventId}/domain`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        setDomain({ isVerified: false });
+        setIsEditingDomain(false);
+        setRemoveDialogOpen(false);
+        toast.success("Domain removed");
+      } else {
+        const error = await res.json().catch(() => null);
+        toast.error(error?.error || "Failed to remove domain");
+      }
+    } catch {
+      toast.error("Failed to remove domain");
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -660,14 +698,37 @@ export default function BrandingPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="customDomain">Custom Domain</Label>
-                <Input
-                  id="customDomain"
-                  value={domain.customDomain || ""}
-                  onChange={(e) =>
-                    setDomain({ ...domain, customDomain: e.target.value })
-                  }
-                  placeholder="register.your-event.com"
-                />
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="customDomain"
+                    value={domain.customDomain || ""}
+                    onChange={(e) =>
+                      setDomain({ ...domain, customDomain: e.target.value })
+                    }
+                    placeholder="register.your-event.com"
+                    readOnly={!!domain.customDomain && !isEditingDomain}
+                    className={!!domain.customDomain && !isEditingDomain ? "bg-muted" : ""}
+                  />
+                  {!!domain.customDomain && !isEditingDomain && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsEditingDomain(true)}
+                      className="shrink-0"
+                    >
+                      <Pencil className="h-4 w-4 mr-1" />
+                      Edit
+                    </Button>
+                  )}
+                </div>
+                {isEditingDomain && domain.isVerified && (
+                  <div className="rounded-lg border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-800 flex gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                      Changing the domain will reset verification. You&apos;ll need to
+                      re-add the TXT record on the new hostname.
+                    </span>
+                  </div>
+                )}
                 <p className="text-xs text-muted-foreground">
                   Enter your custom domain without https://
                 </p>
@@ -722,7 +783,12 @@ export default function BrandingPage() {
                           </div>
                           <div>
                             <span className="text-xs text-muted-foreground">Name/Host:</span>
-                            <code className="ml-2 text-sm">@</code>
+                            <code className="ml-2 text-sm">
+                              {(() => {
+                                const parts = (domain.customDomain || "").split(".").filter(Boolean);
+                                return parts.length > 2 ? parts.slice(0, -2).join(".") : "@";
+                              })()}
+                            </code>
                           </div>
                           <div>
                             <span className="text-xs text-muted-foreground">Value:</span>
@@ -772,22 +838,108 @@ export default function BrandingPage() {
                 </>
               )}
 
-              <div className="flex justify-end">
-                <Button onClick={saveDomain} disabled={savingDomain}>
-                  {savingDomain ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    "Save Domain"
+              <div className="flex justify-between items-center">
+                <div>
+                  {domain.customDomain && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setRemoveDialogOpen(true)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Remove Domain
+                    </Button>
                   )}
-                </Button>
+                </div>
+                <div className="flex gap-2">
+                  {isEditingDomain && domain.customDomain && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setIsEditingDomain(false);
+                        // Refetch to revert any unsaved edits — simpler than tracking original value
+                        fetch(`/api/events/${eventId}/domain`)
+                          .then((r) => (r.ok ? r.json() : null))
+                          .then((d) => d && setDomain(d));
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                  <Button
+                    onClick={saveDomain}
+                    disabled={
+                      savingDomain ||
+                      (!!domain.customDomain && !isEditingDomain)
+                    }
+                  >
+                    {savingDomain ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      "Save Domain"
+                    )}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={removeDialogOpen} onOpenChange={setRemoveDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Remove Custom Domain
+            </DialogTitle>
+            <DialogDescription>
+              This will disconnect{" "}
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                {domain.customDomain}
+              </code>{" "}
+              from this event. Emails, badge links, and QR codes will immediately
+              fall back to the default URL.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-sm">
+            <p className="font-medium">You&apos;ll also want to clean up externally:</p>
+            <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+              <li>Remove the domain from your Vercel project&apos;s Domains settings.</li>
+              <li>Delete the CNAME record in your DNS provider.</li>
+              <li>Delete the TXT verification record if still present.</li>
+            </ul>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRemoveDialogOpen(false)}
+              disabled={removing}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={removeDomain}
+              disabled={removing}
+            >
+              {removing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Removing...
+                </>
+              ) : (
+                "Remove Domain"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
