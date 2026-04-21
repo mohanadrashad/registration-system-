@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { sendEventEmail } from "@/lib/services/email-provider.service";
+import { eventBaseUrlFromDomain } from "@/lib/urls";
 
 export async function POST(
   _req: Request,
@@ -12,7 +13,10 @@ export async function POST(
 
   const { eventId } = await params;
 
-  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    include: { domain: { select: { customDomain: true, isVerified: true } } },
+  });
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
 
   const registrations = await prisma.registration.findMany({
@@ -20,7 +24,7 @@ export async function POST(
     include: { contact: true },
   });
 
-  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = eventBaseUrlFromDomain(event.domain);
   let sent = 0;
   let failed = 0;
 

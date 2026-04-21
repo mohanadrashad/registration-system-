@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
+import { eventBaseUrlFromDomain } from "@/lib/urls";
 
 export async function POST(
   _req: Request,
@@ -38,7 +39,10 @@ export async function POST(
 
   const campaign = await prisma.emailCampaign.findUnique({
     where: { id: campaignId },
-    include: { template: true, event: true },
+    include: {
+      template: true,
+      event: { include: { domain: { select: { customDomain: true, isVerified: true } } } },
+    },
   });
 
   if (!campaign) return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
@@ -66,7 +70,7 @@ export async function POST(
   let failedCount = 0;
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = eventBaseUrlFromDomain(campaign.event.domain);
 
   for (const contact of contacts) {
     // Check if already sent

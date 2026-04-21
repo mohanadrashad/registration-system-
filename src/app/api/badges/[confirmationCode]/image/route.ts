@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ImageResponse } from "next/og";
 import { prisma } from "@/lib/prisma";
 import { generateQRCode } from "@/lib/badge-generator";
+import { eventBaseUrlFromDomain } from "@/lib/urls";
 import { readFileSync } from "fs";
 import { join } from "path";
 import React from "react";
@@ -27,14 +28,17 @@ export async function GET(
 
   const registration = await prisma.registration.findUnique({
     where: { confirmationCode },
-    include: { contact: true, event: true },
+    include: {
+      contact: true,
+      event: { include: { domain: { select: { customDomain: true, isVerified: true } } } },
+    },
   });
 
   if (!registration) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = eventBaseUrlFromDomain(registration.event.domain);
   const qrCodeDataUrl = await generateQRCode(`${appUrl}/badge/${confirmationCode}`);
 
   const fontLight = readFileSync(join(process.cwd(), "public/fonts/Montserrat-Light.otf"));

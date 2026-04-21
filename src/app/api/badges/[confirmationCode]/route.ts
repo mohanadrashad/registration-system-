@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { generateQRCode, generateBadgeHtml } from "@/lib/badge-generator";
+import { eventBaseUrlFromDomain } from "@/lib/urls";
 
 export async function GET(
   _req: Request,
@@ -12,7 +13,7 @@ export async function GET(
     where: { confirmationCode },
     include: {
       contact: true,
-      event: true,
+      event: { include: { domain: { select: { customDomain: true, isVerified: true } } } },
     },
   });
 
@@ -20,7 +21,7 @@ export async function GET(
     return NextResponse.json({ error: "Badge not found" }, { status: 404 });
   }
 
-  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = eventBaseUrlFromDomain(registration.event.domain);
   const qrCodeDataUrl = await generateQRCode(
     `${appUrl}/badge/${confirmationCode}`
   );

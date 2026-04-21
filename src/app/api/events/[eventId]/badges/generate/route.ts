@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { generateQRCode, generateBadgeHtml } from "@/lib/badge-generator";
+import { eventBaseUrlFromDomain } from "@/lib/urls";
 
 export async function POST(
   req: Request,
@@ -14,7 +15,10 @@ export async function POST(
   const body = await req.json();
   const { registrationIds } = body;
 
-  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    include: { domain: { select: { customDomain: true, isVerified: true } } },
+  });
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
 
   const badgeTemplate = await prisma.badgeTemplate.findUnique({
@@ -44,7 +48,7 @@ export async function POST(
     include: { contact: true },
   });
 
-  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = eventBaseUrlFromDomain(event.domain);
   let generated = 0;
 
   for (const reg of registrations) {

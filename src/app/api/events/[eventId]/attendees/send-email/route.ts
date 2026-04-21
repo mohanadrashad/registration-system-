@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
+import { eventBaseUrlFromDomain } from "@/lib/urls";
 
 export async function POST(
   req: Request,
@@ -35,7 +36,10 @@ export async function POST(
     );
   }
 
-  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    include: { domain: { select: { customDomain: true, isVerified: true } } },
+  });
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
 
   // Create an auto campaign for audit trail
@@ -56,7 +60,7 @@ export async function POST(
 
   let sentCount = 0;
   let failedCount = 0;
-  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = eventBaseUrlFromDomain(event.domain);
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
