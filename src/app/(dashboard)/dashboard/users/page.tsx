@@ -25,8 +25,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Shield } from "lucide-react";
+import { Plus, Pencil, Trash2, Shield, X } from "lucide-react";
 import { ROLE_LABELS, type AppRole } from "@/lib/permissions";
+
+type EventRole = Exclude<AppRole, "SUPER_ADMIN">;
 
 interface User {
   id: string;
@@ -34,6 +36,16 @@ interface User {
   email: string;
   role: AppRole;
   createdAt: string;
+}
+
+interface EventOption {
+  id: string;
+  name: string;
+}
+
+interface Assignment {
+  eventId: string;
+  role: EventRole;
 }
 
 const roleVariant: Record<AppRole, "default" | "secondary" | "outline" | "destructive"> = {
@@ -48,6 +60,7 @@ export default function UsersPage() {
   const router = useRouter();
 
   const [users, setUsers] = useState<User[]>([]);
+  const [events, setEvents] = useState<EventOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -57,6 +70,8 @@ export default function UsersPage() {
   const [addForm, setAddForm] = useState({ name: "", email: "", password: "", role: "VIEWER" as AppRole });
   // Edit form state
   const [editForm, setEditForm] = useState({ name: "", email: "", role: "VIEWER" as AppRole, password: "" });
+  const [editAssignments, setEditAssignments] = useState<Assignment[]>([]);
+  const [assignmentsLoading, setAssignmentsLoading] = useState(false);
 
   useEffect(() => {
     if (status === "loading") return;
@@ -68,8 +83,15 @@ export default function UsersPage() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("/api/users");
-      if (res.ok) setUsers(await res.json());
+      const [usersRes, eventsRes] = await Promise.all([
+        fetch("/api/users"),
+        fetch("/api/events"),
+      ]);
+      if (usersRes.ok) setUsers(await usersRes.json());
+      if (eventsRes.ok) {
+        const data: { id: string; name: string }[] = await eventsRes.json();
+        setEvents(data.map((e) => ({ id: e.id, name: e.name })));
+      }
     } finally {
       setLoading(false);
     }
@@ -110,15 +132,30 @@ export default function UsersPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (res.ok) {
-      toast.success("User updated");
-      setEditOpen(false);
-      setEditUser(null);
-      fetchUsers();
-    } else {
+    if (!res.ok) {
       const err = await res.json().catch(() => null);
       toast.error(err?.error || "Failed to update user");
+      return;
     }
+
+    // Persist event assignments (ignored server-side for SUPER_ADMIN via UI hiding).
+    if (editForm.role !== "SUPER_ADMIN") {
+      const assignRes = await fetch(`/api/users/${editUser.id}/events`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignments: editAssignments }),
+      });
+      if (!assignRes.ok) {
+        const err = await assignRes.json().catch(() => null);
+        toast.error(err?.error || "User updated but event access failed to save");
+        return;
+      }
+    }
+
+    toast.success("User updated");
+    setEditOpen(false);
+    setEditUser(null);
+    fetchUsers();
   }
 
   async function handleDeleteUser(user: User) {
@@ -133,10 +170,49 @@ export default function UsersPage() {
     }
   }
 
-  function openEdit(user: User) {
+  async function openEdit(user: User) {
     setEditUser(user);
     setEditForm({ name: user.name || "", email: user.email, role: user.role, password: "" });
+    setEditAssignments([]);
     setEditOpen(true);
+    setAssignmentsLoading(true);
+    try {
+      const res = await fetch(`/api/users/${user.id}/events`);
+      if (res.ok) {
+        const data: { eventId: string; role: EventRole }[] = await res.json();
+        setEditAssignments(
+          data.map((d) => ({ eventId: d.eventId, role: d.role }))
+        );
+      }
+    } finally {
+      setAssignmentsLoading(false);
+    }
+  }
+
+  function updateAssignment(index: number, patch: Partial<Assignment>) {
+    setEditAssignments((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], ...patch };
+      return next;
+    });
+  }
+
+  function removeAssignment(index: number) {
+    setEditAssignments((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function addAssignment() {
+    const unassigned = events.find(
+      (e) => !editAssignments.some((a) => a.eventId === e.id)
+    );
+    if (!unassigned) {
+      toast.info("No more events available to assign.");
+      return;
+    }
+    setEditAssignments((prev) => [
+      ...prev,
+      { eventId: unassigned.id, role: "VIEWER" },
+    ]);
   }
 
   if (status === "loading" || loading) {
@@ -282,7 +358,7 @@ export default function UsersPage() {
                 <Input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} required />
               </div>
               <div className="space-y-2">
-                <Label>Role</Label>
+                <Label>Global role</Label>
                 <Select value={editForm.role} onValueChange={(v) => setEditForm({ ...editForm, role: v as AppRole })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -292,7 +368,84 @@ export default function UsersPage() {
                     <SelectItem value="SUPER_ADMIN">Super Admin — full access</SelectItem>
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  Only <span className="font-medium">Super Admin</span> grants site-wide access. For every other role, assign per-event access below.
+                </p>
               </div>
+
+              {editForm.role !== "SUPER_ADMIN" && (
+                <div className="space-y-2">
+                  <Label>Event access</Label>
+                  {assignmentsLoading ? (
+                    <div className="text-xs text-muted-foreground">Loading assignments…</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {editAssignments.length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          No events assigned. User will log in but see an empty events list.
+                        </p>
+                      )}
+                      {editAssignments.map((a, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <Select
+                            value={a.eventId}
+                            onValueChange={(v) => updateAssignment(i, { eventId: v })}
+                          >
+                            <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {events.map((ev) => {
+                                const takenElsewhere = editAssignments.some(
+                                  (other, j) => j !== i && other.eventId === ev.id
+                                );
+                                return (
+                                  <SelectItem
+                                    key={ev.id}
+                                    value={ev.id}
+                                    disabled={takenElsewhere}
+                                  >
+                                    {ev.name}
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            value={a.role}
+                            onValueChange={(v) =>
+                              updateAssignment(i, { role: v as EventRole })
+                            }
+                          >
+                            <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="VIEWER">Viewer</SelectItem>
+                              <SelectItem value="EDITOR">Editor</SelectItem>
+                              <SelectItem value="MANAGER">Manager</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <button
+                            type="button"
+                            onClick={() => removeAssignment(i)}
+                            className="p-2 rounded-md hover:bg-muted"
+                            title="Remove"
+                          >
+                            <X className="h-4 w-4 text-muted-foreground" />
+                          </button>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={addAssignment}
+                        disabled={editAssignments.length >= events.length}
+                      >
+                        <Plus className="mr-2 h-3.5 w-3.5" /> Add event
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label>New Password <span className="text-xs text-muted-foreground">(leave blank to keep current)</span></Label>
                 <Input type="password" value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} placeholder="••••••••" />

@@ -19,6 +19,7 @@ import {
   FormInput,
   Palette,
   ClipboardCheck,
+  Users2,
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
@@ -104,6 +105,11 @@ export function getEventNavItems(eventId: string): EventNavItem[] {
       href: `/dashboard/events/${eventId}/settings/email`,
       icon: Mail,
       module: "customEmail",
+    },
+    {
+      title: "Team",
+      href: `/dashboard/events/${eventId}/settings/team`,
+      icon: Users2,
     },
     {
       title: "Settings",

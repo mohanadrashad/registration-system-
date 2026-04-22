@@ -1,6 +1,9 @@
 export const dynamic = "force-dynamic";
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { auth } from "@/lib/auth";
+import { getRole } from "@/lib/permissions";
 import { PageHeader } from "@/components/layout/page-header";
 import { DashboardShell } from "@/components/layout/dashboard-shell";
 import { Button } from "@/components/ui/button";
@@ -11,7 +14,16 @@ import { Plus, Calendar, Users, ClipboardList } from "lucide-react";
 import { format } from "date-fns";
 
 export default async function EventsPage() {
+  const session = await auth();
+  const role = getRole(session);
+  const isSuper = role === "SUPER_ADMIN";
+  const userId = session?.user?.id;
+
+  const where: Prisma.EventWhereInput =
+    isSuper || !userId ? {} : { members: { some: { userId } } };
+
   const events = await prisma.event.findMany({
+    where,
     orderBy: { createdAt: "desc" },
     include: {
       _count: { select: { contacts: true, registrations: true } },
@@ -22,23 +34,34 @@ export default async function EventsPage() {
     <DashboardShell>
     <div className="space-y-6">
       <PageHeader title="Events" description="Manage your events">
-        <Link href="/dashboard/events/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            New Event
-          </Button>
-        </Link>
+        {isSuper && (
+          <Link href="/dashboard/events/new">
+            <Button>
+              <Plus className="mr-2 h-4 w-4" />
+              New Event
+            </Button>
+          </Link>
+        )}
       </PageHeader>
 
       {events.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Calendar className="mb-4 h-12 w-12 text-muted-foreground" />
-            <p className="text-lg font-medium">No events yet</p>
-            <p className="text-sm text-muted-foreground">Create your first event to get started</p>
-            <Link href="/dashboard/events/new" className="mt-4">
-              <Button>Create Event</Button>
-            </Link>
+            {isSuper ? (
+              <>
+                <p className="text-lg font-medium">No events yet</p>
+                <p className="text-sm text-muted-foreground">Create your first event to get started</p>
+                <Link href="/dashboard/events/new" className="mt-4">
+                  <Button>Create Event</Button>
+                </Link>
+              </>
+            ) : (
+              <>
+                <p className="text-lg font-medium">No events assigned</p>
+                <p className="text-sm text-muted-foreground">Contact an administrator to be given access to an event.</p>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (

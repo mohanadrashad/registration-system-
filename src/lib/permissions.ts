@@ -22,3 +22,23 @@ export const ROLE_LABELS: Record<AppRole, string> = {
   MANAGER: "Manager",
   SUPER_ADMIN: "Super Admin",
 };
+
+// ─── Per-event authorization ───
+// `global === "SUPER_ADMIN"` bypasses every event-scoped check. For other
+// users the `eventRole` (from the EventMember row) is what matters; the
+// user's global role is otherwise ignored for event operations.
+
+export function canViewEvent(global: AppRole, event: AppRole | null): boolean {
+  if (global === "SUPER_ADMIN") return true;
+  return event !== null;
+}
+
+export function canEditEvent(global: AppRole, event: AppRole | null): boolean {
+  if (global === "SUPER_ADMIN") return true;
+  return event === "EDITOR" || event === "MANAGER";
+}
+
+export function canManageEvent(global: AppRole, event: AppRole | null): boolean {
+  if (global === "SUPER_ADMIN") return true;
+  return event === "MANAGER";
+}

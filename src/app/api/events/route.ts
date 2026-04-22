@@ -1,14 +1,22 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorize, apiError } from "@/lib/api-auth";
 import { createEventSchema } from "@/lib/validations/event";
 import slugify from "slugify";
 
 export async function GET() {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const authResult = await authorize("authenticated");
+  if (authResult instanceof NextResponse) return authResult;
+
+  const { role, session } = authResult;
+  const where: Prisma.EventWhereInput =
+    role === "SUPER_ADMIN"
+      ? {}
+      : { members: { some: { userId: session.user.id } } };
 
   const events = await prisma.event.findMany({
+    where,
     orderBy: { createdAt: "desc" },
     include: {
       _count: {
@@ -21,14 +29,15 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Only SUPER_ADMIN can create events.
+  const authResult = await authorize("super_admin");
+  if (authResult instanceof NextResponse) return authResult;
 
   const body = await req.json();
   const result = createEventSchema.safeParse(body);
 
   if (!result.success) {
-    return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
+    return apiError(JSON.stringify(result.error.flatten()), 400);
   }
 
   const { name, description, venue, startDate, endDate } = result.data;

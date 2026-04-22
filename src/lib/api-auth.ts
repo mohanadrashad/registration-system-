@@ -5,7 +5,10 @@ import {
   AppRole,
   canDelete,
   canEdit,
+  canEditEvent,
+  canManageEvent,
   canManageUsers,
+  canViewEvent,
   getRole,
 } from "@/lib/permissions";
 import {
@@ -35,6 +38,7 @@ export interface AuthContext {
 
 export interface EventAuthContext extends AuthContext {
   event: Event;
+  eventRole: AppRole | null;
 }
 
 export function apiError(
@@ -80,11 +84,45 @@ export async function authorizeEvent(
     module?: ModuleName;
   } = {}
 ): Promise<EventAuthContext | NextResponse> {
-  const authResult = await authorize(options.role ?? "authenticated");
+  // Start with authentication only — per-event role is evaluated below.
+  const authResult = await authorize("authenticated");
   if (authResult instanceof NextResponse) return authResult;
 
   const event = await prisma.event.findUnique({ where: { id: eventId } });
   if (!event) return apiError("Event not found", 404);
+
+  const { role: globalRole, session } = authResult;
+
+  let eventRole: AppRole | null = null;
+  if (globalRole !== "SUPER_ADMIN") {
+    const membership = await prisma.eventMember.findUnique({
+      where: { userId_eventId: { userId: session.user.id, eventId } },
+      select: { role: true },
+    });
+    eventRole = (membership?.role as AppRole | undefined) ?? null;
+  }
+
+  const requirement = options.role ?? "authenticated";
+  const passes = (() => {
+    switch (requirement) {
+      case "authenticated":
+        return canViewEvent(globalRole, eventRole);
+      case "editor":
+        return canEditEvent(globalRole, eventRole);
+      case "manager":
+        return canManageEvent(globalRole, eventRole);
+      case "super_admin":
+        return canManageUsers(globalRole);
+    }
+  })();
+
+  if (!passes) {
+    return apiError(
+      globalRole === "SUPER_ADMIN" ? "Forbidden" : "No access to this event",
+      403,
+      eventRole === null ? "NOT_EVENT_MEMBER" : "INSUFFICIENT_EVENT_ROLE"
+    );
+  }
 
   if (options.module) {
     const enabled = await isModuleEnabled(eventId, options.module);
@@ -97,5 +135,5 @@ export async function authorizeEvent(
     }
   }
 
-  return { ...authResult, event };
+  return { ...authResult, event, eventRole };
 }
