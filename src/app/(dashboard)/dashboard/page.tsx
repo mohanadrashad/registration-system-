@@ -1,12 +1,18 @@
 export const dynamic = "force-dynamic";
 
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { auth } from "@/lib/auth";
+import { getRole } from "@/lib/permissions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/page-header";
 import { DashboardShell } from "@/components/layout/dashboard-shell";
 import { Calendar, Users, ClipboardList, Mail } from "lucide-react";
 
 export default async function DashboardPage() {
+  const session = await auth();
+  if (getRole(session) !== "SUPER_ADMIN") redirect("/dashboard/events");
+
   let eventCount = 0;
   let contactCount = 0;
   let registrationCount = 0;

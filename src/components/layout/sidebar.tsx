@@ -25,11 +25,6 @@ import { LucideIcon } from "lucide-react";
 
 const mainNavItems = [
   {
-    title: "Dashboard",
-    href: "/dashboard",
-    icon: LayoutDashboard,
-  },
-  {
     title: "Events",
     href: "/dashboard/events",
     icon: Calendar,
@@ -140,6 +135,20 @@ export function Sidebar({ eventId }: { eventId?: string }) {
           <div className="mb-2 px-2 text-xs font-semibold uppercase text-muted-foreground">
             General
           </div>
+          {isSuperAdmin && (
+            <Link
+              href="/dashboard"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                pathname === "/dashboard"
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground"
+              )}
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              Dashboard
+            </Link>
+          )}
           {mainNavItems.map((item) => (
             <Link
               key={item.href}
