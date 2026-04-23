@@ -52,7 +52,18 @@ export async function POST(req: Request) {
       startDate: new Date(startDate),
       endDate: new Date(endDate),
       modules: {
-        create: {}, // Creates with all defaults
+        create: {}, // defaults
+      },
+      phases: {
+        create: {
+          type: "REGISTRATION",
+          title: "Registration",
+          titleAr: "التسجيل",
+          order: 0,
+          steps: {
+            create: { title: "Details", titleAr: "التفاصيل", order: 0 },
+          },
+        },
       },
     },
     include: {

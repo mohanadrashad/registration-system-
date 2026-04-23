@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { getDefaultFieldsForEvent } from "@/lib/form-builder";
+import { getOrCreateDefaultRegistrationStep } from "@/lib/services/phase.service";
 
 interface RouteParams {
   params: Promise<{ eventId: string }>;
@@ -38,11 +39,13 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
-    // Create default fields
+    // Create default fields, all attached to the event's default
+    // registration step (auto-created if missing).
     const defaultFields = getDefaultFieldsForEvent(eventId);
+    const step = await getOrCreateDefaultRegistrationStep(eventId);
 
     await prisma.formField.createMany({
-      data: defaultFields,
+      data: defaultFields.map((f) => ({ ...f, stepId: step.id })),
     });
 
     // Return created fields
