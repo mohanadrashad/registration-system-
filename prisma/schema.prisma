@@ -10,18 +10,18 @@ datasource db {
 // ─── NextAuth Models ───
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String    @unique
-  emailVerified DateTime?
-  password      String
-  image         String?
-  role          UserRole  @default(VIEWER)
-  accounts      Account[]
-  sessions      Session[]
+  id               String        @id @default(cuid())
+  name             String?
+  email            String        @unique
+  emailVerified    DateTime?
+  password         String
+  image            String?
+  role             UserRole      @default(VIEWER)
+  accounts         Account[]
+  sessions         Session[]
   eventMemberships EventMember[]
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 }
 
 model Account {
@@ -76,27 +76,28 @@ model Event {
   startDate   DateTime
   endDate     DateTime
   isActive    Boolean  @default(true)
-  capacity    Int?              // Max registrations (null = unlimited)
+  capacity    Int? // Max registrations (null = unlimited)
   settings    Json?
   categories  String[] @default([])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  contacts       Contact[]
-  registrations  Registration[]
-  emailTemplates EmailTemplate[]
-  emailCampaigns EmailCampaign[]
-  badgeTemplate  BadgeTemplate?
-  modules        EventModules?
-  formFields     FormField[]
-  emailSettings  EventEmailSettings?
-  checkIns       CheckIn[]
-  checkInPoints  CheckInPoint[]
+  contacts         Contact[]
+  registrations    Registration[]
+  emailTemplates   EmailTemplate[]
+  emailCampaigns   EmailCampaign[]
+  badgeTemplate    BadgeTemplate?
+  modules          EventModules?
+  formFields       FormField[]
+  emailSettings    EventEmailSettings?
+  checkIns         CheckIn[]
+  checkInPoints    CheckInPoint[]
   whatsAppSettings EventWhatsAppSettings?
-  whatsAppLogs   WhatsAppLog[]
-  branding       EventBranding?
-  domain         EventDomain?
-  members        EventMember[]
+  whatsAppLogs     WhatsAppLog[]
+  branding         EventBranding?
+  domain           EventDomain?
+  members          EventMember[]
+  phases           Phase[]
 }
 
 // ─── Event Access (per-event membership) ───
@@ -109,8 +110,8 @@ model EventMember {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@unique([userId, eventId])
   @@index([eventId])
@@ -120,125 +121,126 @@ model EventMember {
 // ─── Event Modules (Feature Toggles) ───
 
 model EventModules {
-  id                  String   @id @default(cuid())
-  eventId             String   @unique
+  id      String @id @default(cuid())
+  eventId String @unique
 
   // Optional Modules (all default to false except formBuilder)
-  formBuilder         Boolean  @default(true)   // Dynamic form fields (core, but toggleable)
-  checkIn             Boolean  @default(false)  // QR check-in system
-  whatsApp            Boolean  @default(false)  // WhatsApp notifications
-  sessions            Boolean  @default(false)  // Agenda/session management
-  payments            Boolean  @default(false)  // Payment collection
-  selfServicePortal   Boolean  @default(false)  // Attendee self-service
-  approvalWorkflow    Boolean  @default(false)  // Manual registration approval
-  waitlist            Boolean  @default(false)  // Waitlist when capacity reached
-  multiLanguage       Boolean  @default(false)  // AR/EN form toggle
-  customDomain        Boolean  @default(false)  // Custom domain support
-  customEmail         Boolean  @default(false)  // Custom SMTP per event
-  webhooks            Boolean  @default(false)  // External integrations
+  formBuilder       Boolean @default(true) // Dynamic form fields (core, but toggleable)
+  checkIn           Boolean @default(false) // QR check-in system
+  whatsApp          Boolean @default(false) // WhatsApp notifications
+  sessions          Boolean @default(false) // Agenda/session management
+  payments          Boolean @default(false) // Payment collection
+  selfServicePortal Boolean @default(false) // Attendee self-service
+  approvalWorkflow  Boolean @default(false) // Manual registration approval
+  waitlist          Boolean @default(false) // Waitlist when capacity reached
+  multiLanguage     Boolean @default(false) // AR/EN form toggle
+  customDomain      Boolean @default(false) // Custom domain support
+  customEmail       Boolean @default(false) // Custom SMTP per event
+  webhooks          Boolean @default(false) // External integrations
+  postRegPhases     Boolean @default(false) // Post-registration data collection phases
 
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  event               Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
 // ─── Event Email Settings ───
 
 model EventEmailSettings {
-  id              String        @id @default(cuid())
-  eventId         String        @unique
+  id      String @id @default(cuid())
+  eventId String @unique
 
-  provider        EmailProvider @default(SYSTEM)
-  fromName        String        // "AlUla Conference Team"
-  fromEmail       String        // "register@alula.sa"
-  replyTo         String?
+  provider  EmailProvider @default(SYSTEM)
+  fromName  String // "AlUla Conference Team"
+  fromEmail String // "register@alula.sa"
+  replyTo   String?
 
   // Custom SMTP
-  smtpHost        String?
-  smtpPort        Int?
-  smtpUser        String?
-  smtpPassword    String?       // Should be encrypted in production
-  smtpSecure      Boolean       @default(true)
+  smtpHost     String?
+  smtpPort     Int?
+  smtpUser     String?
+  smtpPassword String? // Should be encrypted in production
+  smtpSecure   Boolean @default(true)
 
   // Provider API Keys (Resend, SendGrid, etc.)
-  apiKey          String?       // Should be encrypted in production
+  apiKey String? // Should be encrypted in production
 
   // Verification
-  isVerified      Boolean       @default(false)
-  verifiedAt      DateTime?
+  isVerified Boolean   @default(false)
+  verifiedAt DateTime?
 
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  event           Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
 enum EmailProvider {
-  SYSTEM        // Use system default SMTP
-  CUSTOM_SMTP   // Custom SMTP server
-  RESEND        // Resend API
-  SENDGRID      // SendGrid API
-  MAILGUN       // Mailgun API
+  SYSTEM // Use system default SMTP
+  CUSTOM_SMTP // Custom SMTP server
+  RESEND // Resend API
+  SENDGRID // SendGrid API
+  MAILGUN // Mailgun API
 }
 
 // ─── WhatsApp Settings ───
 
 model EventWhatsAppSettings {
-  id                    String          @id @default(cuid())
-  eventId               String          @unique
+  id      String @id @default(cuid())
+  eventId String @unique
 
-  provider              WhatsAppProvider @default(META)
-  isActive              Boolean         @default(false)
+  provider WhatsAppProvider @default(META)
+  isActive Boolean          @default(false)
 
   // Meta Business API
-  phoneNumberId         String?
-  businessAccountId     String?
-  accessToken           String?         // Should be encrypted
-  webhookVerifyToken    String?
+  phoneNumberId      String?
+  businessAccountId  String?
+  accessToken        String? // Should be encrypted
+  webhookVerifyToken String?
 
   // Templates (must be approved by Meta)
-  confirmationTemplate  String?         // Template name for confirmation
-  reminderTemplate      String?         // Template name for reminder
-  badgeTemplate         String?         // Template name for badge delivery
+  confirmationTemplate String? // Template name for confirmation
+  reminderTemplate     String? // Template name for reminder
+  badgeTemplate        String? // Template name for badge delivery
 
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  event                 Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
 enum WhatsAppProvider {
-  META          // Official Meta Business API
-  TWILIO        // Twilio WhatsApp
-  WATI          // WATI.io
+  META // Official Meta Business API
+  TWILIO // Twilio WhatsApp
+  WATI // WATI.io
 }
 
 // ─── WhatsApp Logs ───
 
 model WhatsAppLog {
-  id            String         @id @default(cuid())
-  eventId       String
-  contactId     String
+  id        String @id @default(cuid())
+  eventId   String
+  contactId String
 
-  templateName  String
-  phoneNumber   String
+  templateName String
+  phoneNumber  String
 
-  status        WhatsAppStatus @default(PENDING)
-  messageId     String?        // From provider
+  status    WhatsAppStatus @default(PENDING)
+  messageId String? // From provider
 
-  variables     Json?          // Template variables sent
+  variables Json? // Template variables sent
 
-  sentAt        DateTime?
-  deliveredAt   DateTime?
-  readAt        DateTime?
-  failedAt      DateTime?
-  errorMessage  String?
+  sentAt       DateTime?
+  deliveredAt  DateTime?
+  readAt       DateTime?
+  failedAt     DateTime?
+  errorMessage String?
 
-  createdAt     DateTime       @default(now())
+  createdAt DateTime @default(now())
 
-  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  contact       Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  event   Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@index([eventId])
   @@index([contactId])
@@ -256,57 +258,57 @@ enum WhatsAppStatus {
 // ─── Event Branding ───
 
 model EventBranding {
-  id               String   @id @default(cuid())
-  eventId          String   @unique
+  id      String @id @default(cuid())
+  eventId String @unique
 
   // Colors
-  primaryColor     String   @default("#7dc242")
-  secondaryColor   String?
-  backgroundColor  String?
-  textColor        String?
+  primaryColor    String  @default("#7dc242")
+  secondaryColor  String?
+  backgroundColor String?
+  textColor       String?
 
   // Logo & Images
-  logoUrl          String?
-  logoWhiteUrl     String?  // For dark backgrounds
-  faviconUrl       String?
-  headerImageUrl   String?
+  logoUrl        String?
+  logoWhiteUrl   String? // For dark backgrounds
+  faviconUrl     String?
+  headerImageUrl String?
 
   // Custom CSS
-  customCss        String?  @db.Text
+  customCss String? @db.Text
 
   // Registration Page
   welcomeTitle     String?
   welcomeTitleAr   String?
-  welcomeMessage   String?  @db.Text
-  welcomeMessageAr String?  @db.Text
+  welcomeMessage   String? @db.Text
+  welcomeMessageAr String? @db.Text
 
   // Footer
-  footerText       String?
-  footerTextAr     String?
+  footerText   String?
+  footerTextAr String?
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  event            Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
 // ─── Event Domain ───
 
 model EventDomain {
-  id                 String    @id @default(cuid())
-  eventId            String    @unique
+  id      String @id @default(cuid())
+  eventId String @unique
 
-  customDomain       String?   @unique  // "register.client-event.com"
-  isVerified         Boolean   @default(false)
-  verifiedAt         DateTime?
+  customDomain String?   @unique // "register.client-event.com"
+  isVerified   Boolean   @default(false)
+  verifiedAt   DateTime?
 
   // DNS verification
-  verificationRecord String?   // TXT record value
+  verificationRecord String? // TXT record value
 
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  event              Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
 // ─── Contact ───
@@ -335,7 +337,7 @@ model Contact {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
-  event        Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event        Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration Registration?
   emailLogs    EmailLog[]
   whatsAppLogs WhatsAppLog[]
@@ -362,10 +364,12 @@ model Registration {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
-  contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  event    Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  badge    Badge?
-  checkIns CheckIn[]
+  contact          Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  event            Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  badge            Badge?
+  checkIns         CheckIn[]
+  phaseSubmissions PhaseSubmission[]
+  phaseAccess      PhaseAccess[]
 
   @@index([eventId])
   @@index([status])
@@ -382,24 +386,24 @@ enum RegistrationStatus {
 // ─── Check-in Records ───
 
 model CheckIn {
-  id              String        @id @default(cuid())
-  registrationId  String
-  eventId         String
+  id             String @id @default(cuid())
+  registrationId String
+  eventId        String
 
-  checkInTime     DateTime      @default(now())
-  checkOutTime    DateTime?
+  checkInTime  DateTime  @default(now())
+  checkOutTime DateTime?
 
-  method          CheckInMethod
-  location        String?       // "Main Entrance", "VIP Gate"
-  checkInPointId  String?
-  deviceId        String?       // Device identifier
-  checkedInBy     String?       // User ID who performed check-in
+  method         CheckInMethod
+  location       String? // "Main Entrance", "VIP Gate"
+  checkInPointId String?
+  deviceId       String? // Device identifier
+  checkedInBy    String? // User ID who performed check-in
 
-  notes           String?
-  metadata        Json?
+  notes    String?
+  metadata Json?
 
-  registration    Registration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
-  event           Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@index([registrationId])
   @@index([eventId, checkInTime])
@@ -407,25 +411,25 @@ model CheckIn {
 }
 
 enum CheckInMethod {
-  QR_SCAN       // QR code scanned
-  MANUAL        // Manual lookup by staff
-  SELF_SERVICE  // Self check-in kiosk
-  BULK          // Bulk check-in
+  QR_SCAN // QR code scanned
+  MANUAL // Manual lookup by staff
+  SELF_SERVICE // Self check-in kiosk
+  BULK // Bulk check-in
 }
 
 // ─── Check-in Points ───
 
 model CheckInPoint {
-  id        String   @id @default(cuid())
-  eventId   String
-  name      String   // "Main Entrance", "VIP Gate"
-  nameAr    String?
-  isActive  Boolean  @default(true)
+  id       String  @id @default(cuid())
+  eventId  String
+  name     String // "Main Entrance", "VIP Gate"
+  nameAr   String?
+  isActive Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@index([eventId])
 }
@@ -447,8 +451,9 @@ model EmailTemplate {
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt
 
-  event     Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  campaigns EmailCampaign[]
+  event          Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  campaigns      EmailCampaign[]
+  phaseReminders Phase[]         @relation("PhaseReminderTemplate")
 
   @@index([eventId])
 }
@@ -562,52 +567,57 @@ model Badge {
 // ─── Dynamic Form Fields ───
 
 model FormField {
-  id            String      @id @default(cuid())
-  eventId       String
+  id      String  @id @default(cuid())
+  eventId String
+  // Phase→Step ownership (nullable during Pass 1; backfill fills it,
+  // Pass 3 flips to required).
+  stepId  String?
 
   // Field Identity
-  name          String      // Internal name: "firstName", "country", "dietary"
-  label         String      // Display label: "First Name"
-  labelAr       String?     // Arabic label: "الاسم الأول"
+  name    String // Internal name: "firstName", "country", "dietary"
+  label   String // Display label: "First Name"
+  labelAr String? // Arabic label: "الاسم الأول"
 
   // Field Configuration
   type          FieldType
   placeholder   String?
   placeholderAr String?
-  helpText      String?     // Helper text below field
+  helpText      String? // Helper text below field
   helpTextAr    String?
 
   // Validation
-  required      Boolean     @default(false)
-  validation    Json?       // {minLength, maxLength, pattern, min, max, customMessage}
+  required   Boolean @default(false)
+  validation Json? // {minLength, maxLength, pattern, min, max, customMessage}
 
   // Options (for SELECT, MULTISELECT, RADIO, CHECKBOX)
-  options       Json?       // [{value: "sa", label: "Saudi Arabia", labelAr: "السعودية"}]
+  options Json? // [{value: "sa", label: "Saudi Arabia", labelAr: "السعودية"}]
 
   // Layout
-  order         Int         @default(0)
-  width         FieldWidth  @default(FULL)
-  section       String?     // Group fields: "Personal Info", "Work Details"
+  order   Int        @default(0)
+  width   FieldWidth @default(FULL)
+  section String? // Group fields: "Personal Info", "Work Details"
 
   // Conditional Logic
-  conditional   Json?       // {showIf: {field: "attendeeType", operator: "equals", value: "VIP"}}
+  conditional Json? // {showIf: {field: "attendeeType", operator: "equals", value: "VIP"}}
 
   // State
-  isActive      Boolean     @default(true)
-  isSystem      Boolean     @default(false)  // System fields can't be deleted
+  isActive Boolean @default(true)
+  isSystem Boolean @default(false) // System fields can't be deleted
 
   // Metadata
-  defaultValue  String?
-  metadata      Json?       // Any additional config
+  defaultValue String?
+  metadata     Json? // Any additional config
 
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  event         Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  step  Step? @relation(fields: [stepId], references: [id], onDelete: Cascade)
 
   @@unique([eventId, name])
   @@index([eventId, order])
   @@index([eventId, isActive])
+  @@index([stepId, order])
 }
 
 enum FieldType {
@@ -630,19 +640,122 @@ enum FieldType {
   DATETIME
 
   // Special
-  COUNTRY       // Pre-populated country list
+  COUNTRY // Pre-populated country list
   PHONE_COUNTRY // Phone with country code
-  FILE          // File upload
-  HIDDEN        // Hidden field
+  FILE // File upload
+  HIDDEN // Hidden field
 
   // Layout (non-input)
-  HEADING       // Section heading
-  DIVIDER       // Visual separator
-  PARAGRAPH     // Informational text
+  HEADING // Section heading
+  DIVIDER // Visual separator
+  PARAGRAPH // Informational text
 }
 
 enum FieldWidth {
-  FULL          // 100% width
-  HALF          // 50% width (2 columns)
-  THIRD         // 33% width (3 columns)
+  FULL // 100% width
+  HALF // 50% width (2 columns)
+  THIRD // 33% width (3 columns)
+}
+
+// ─── Phase → Step → FormField (multi-page forms + post-reg phases) ───
+
+model Phase {
+  id      String    @id @default(cuid())
+  eventId String
+  type    PhaseType
+
+  title         String
+  titleAr       String?
+  description   String? @db.Text
+  descriptionAr String? @db.Text
+
+  order    Int     @default(0)
+  isActive Boolean @default(true)
+
+  // POST_REGISTRATION only (NULL for REGISTRATION type)
+  opensAt            DateTime?
+  closesAt           DateTime?
+  isRequired         Boolean   @default(false)
+  reminderSent       Boolean   @default(false)
+  reminderTemplateId String? // NULL = no automatic reminder (manual only)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event            Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  reminderTemplate EmailTemplate?    @relation("PhaseReminderTemplate", fields: [reminderTemplateId], references: [id])
+  steps            Step[]
+  submissions      PhaseSubmission[]
+  accessOverrides  PhaseAccess[]
+
+  @@unique([eventId, order])
+  @@index([eventId, type])
+}
+
+enum PhaseType {
+  REGISTRATION
+  POST_REGISTRATION
+}
+
+model Step {
+  id      String @id @default(cuid())
+  phaseId String
+
+  title         String
+  titleAr       String?
+  description   String? @db.Text
+  descriptionAr String? @db.Text
+
+  order Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  phase  Phase       @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  fields FormField[]
+
+  @@unique([phaseId, order])
+  @@index([phaseId])
+}
+
+model PhaseSubmission {
+  id             String @id @default(cuid())
+  phaseId        String
+  registrationId String
+
+  data        Json
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  phase        Phase        @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([phaseId, registrationId])
+  @@index([registrationId])
+  @@index([phaseId])
+}
+
+model PhaseAccess {
+  id             String @id @default(cuid())
+  phaseId        String
+  registrationId String
+
+  status     AccessStatus
+  unlockedAt DateTime?
+  unlockedBy String? // User.id of admin who changed it
+  reason     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  phase        Phase        @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([phaseId, registrationId])
+  @@index([registrationId])
+}
+
+enum AccessStatus {
+  LOCKED // Admin explicitly locked; ignores dates
+  OPEN // Admin explicitly unlocked; ignores dates
 }
