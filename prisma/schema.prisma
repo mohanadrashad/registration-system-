@@ -567,11 +567,11 @@ model Badge {
 // ─── Dynamic Form Fields ───
 
 model FormField {
-  id      String  @id @default(cuid())
+  id      String @id @default(cuid())
   eventId String
-  // Phase→Step ownership (nullable during Pass 1; backfill fills it,
-  // Pass 3 flips to required).
-  stepId  String?
+  // Phase→Step ownership (required; backfill populated existing rows,
+  // Pass 3 flipped the column to non-nullable).
+  stepId  String
 
   // Field Identity
   name    String // Internal name: "firstName", "country", "dietary"
@@ -612,7 +612,7 @@ model FormField {
   updatedAt DateTime @updatedAt
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  step  Step? @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  step  Step  @relation(fields: [stepId], references: [id], onDelete: Cascade)
 
   @@unique([eventId, name])
   @@index([eventId, order])

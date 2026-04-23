@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
+import { getOrCreateDefaultRegistrationStep } from "@/lib/services/phase.service";
 import { FieldType, FieldWidth } from "@prisma/client";
 
 interface RouteParams {
@@ -64,9 +65,12 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
+    const step = await getOrCreateDefaultRegistrationStep(eventId);
+
     const field = await prisma.formField.create({
       data: {
         eventId,
+        stepId: step.id,
         name: body.name,
         label: body.label,
         labelAr: body.labelAr,

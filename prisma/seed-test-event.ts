@@ -304,6 +304,11 @@ async function main() {
   const startDate = new Date(now.getTime() + 21 * 24 * 60 * 60 * 1000); // +3 weeks
   const endDate = new Date(startDate.getTime() + 2 * 24 * 60 * 60 * 1000); // 2-day event
 
+  // Step titles come from the `section` field on each FieldSeed. We create
+  // the event with its REGISTRATION phase + three steps in one go, then
+  // look up each step's id and use it when creating fields.
+  const stepTitles = Array.from(new Set(FIELDS.map((f) => f.section)));
+
   const event = await prisma.event.create({
     data: {
       name: "Test Event 2026",
@@ -316,31 +321,63 @@ async function main() {
       isActive: true,
       categories: ["VIP", "Speaker", "Attendee"],
       modules: { create: {} }, // defaults; multiLanguage stays false
+      phases: {
+        create: {
+          type: "REGISTRATION",
+          title: "Registration",
+          titleAr: "التسجيل",
+          order: 0,
+          steps: {
+            create: stepTitles.map((title, i) => ({ title, order: i })),
+          },
+        },
+      },
+    },
+    include: {
+      phases: {
+        where: { type: "REGISTRATION" },
+        include: { steps: { orderBy: { order: "asc" } } },
+      },
     },
   });
   console.log(`Created event: ${event.name} (${event.id})`);
 
-  const fieldRows: Prisma.FormFieldCreateManyInput[] = FIELDS.map((f) => ({
-    eventId: event.id,
-    name: f.name,
-    label: f.label,
-    labelAr: f.labelAr,
-    type: f.type,
-    required: f.required ?? false,
-    order: f.order,
-    width: f.width ?? "FULL",
-    section: f.section,
-    placeholder: f.placeholder,
-    placeholderAr: f.placeholderAr,
-    helpText: f.helpText,
-    helpTextAr: f.helpTextAr,
-    isSystem: f.isSystem ?? false,
-    options: (f.options ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-    conditional: f.conditional ?? Prisma.JsonNull,
-    validation: f.validation ?? Prisma.JsonNull,
-  }));
+  const stepsByTitle = new Map(
+    event.phases[0].steps.map((s) => [s.title, s.id])
+  );
+
+  const fieldRows: Prisma.FormFieldCreateManyInput[] = FIELDS.map((f) => {
+    const stepId = stepsByTitle.get(f.section);
+    if (!stepId) {
+      throw new Error(
+        `Unknown section "${f.section}" for field ${f.name} — no matching Step was created.`
+      );
+    }
+    return {
+      eventId: event.id,
+      stepId,
+      name: f.name,
+      label: f.label,
+      labelAr: f.labelAr,
+      type: f.type,
+      required: f.required ?? false,
+      order: f.order,
+      width: f.width ?? "FULL",
+      section: f.section,
+      placeholder: f.placeholder,
+      placeholderAr: f.placeholderAr,
+      helpText: f.helpText,
+      helpTextAr: f.helpTextAr,
+      isSystem: f.isSystem ?? false,
+      options: (f.options ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+      conditional: f.conditional ?? Prisma.JsonNull,
+      validation: f.validation ?? Prisma.JsonNull,
+    };
+  });
   await prisma.formField.createMany({ data: fieldRows });
-  console.log(`Created ${FIELDS.length} form fields across 3 sections.`);
+  console.log(
+    `Created ${FIELDS.length} form fields across ${stepTitles.length} steps.`
+  );
 
   for (const r of REGISTRATIONS) {
     const contact = await prisma.contact.create({

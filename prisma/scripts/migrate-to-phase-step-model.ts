@@ -156,10 +156,13 @@ async function main() {
     `\nDone. ${events.length} event(s) scanned, ${phasesCreated} new REGISTRATION phase(s) created, ${totalAssigned} FormField.stepId assignments made.`
   );
 
-  // Sanity check: how many FormField rows still have NULL stepId?
-  const orphaned = await prisma.formField.count({
-    where: { stepId: null },
-  });
+  // Sanity check: how many FormField rows still have NULL stepId? Use a
+  // raw query because the schema post-Pass-3 types stepId as non-nullable
+  // (but a pre-Pass-3 DB can still hold NULLs until this backfill runs).
+  const orphanedRows = await prisma.$queryRaw<{ count: bigint }[]>`
+    SELECT COUNT(*)::bigint AS count FROM "FormField" WHERE "stepId" IS NULL
+  `;
+  const orphaned = Number(orphanedRows[0]?.count ?? 0);
   if (orphaned > 0) {
     console.warn(
       `\n⚠ ${orphaned} FormField row(s) still have stepId = NULL. Pass 3 (making stepId required) will fail until this is zero. Investigate before merging Pass 3.`
