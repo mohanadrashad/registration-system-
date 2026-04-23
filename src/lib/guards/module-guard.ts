@@ -75,6 +75,11 @@ export const MODULE_INFO: Record<
     description: "Send registration data to external services",
     category: "advanced",
   },
+  postRegPhases: {
+    name: "Post-Registration Phases",
+    description: "Collect additional info after registration (flight, hotel, etc.) with per-phase open/close windows",
+    category: "registration",
+  },
 };
 
 /**
