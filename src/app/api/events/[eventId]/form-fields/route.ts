@@ -65,12 +65,30 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
-    const step = await getOrCreateDefaultRegistrationStep(eventId);
+    // Caller can pass an explicit stepId (must belong to this event); if
+    // omitted we fall back to the event's default Registration step.
+    let stepId: string;
+    if (typeof body.stepId === "string" && body.stepId.length > 0) {
+      const ownership = await prisma.step.findUnique({
+        where: { id: body.stepId },
+        select: { phase: { select: { eventId: true } } },
+      });
+      if (!ownership || ownership.phase.eventId !== eventId) {
+        return NextResponse.json(
+          { error: "stepId does not belong to this event" },
+          { status: 400 }
+        );
+      }
+      stepId = body.stepId;
+    } else {
+      const step = await getOrCreateDefaultRegistrationStep(eventId);
+      stepId = step.id;
+    }
 
     const field = await prisma.formField.create({
       data: {
         eventId,
-        stepId: step.id,
+        stepId,
         name: body.name,
         label: body.label,
         labelAr: body.labelAr,
