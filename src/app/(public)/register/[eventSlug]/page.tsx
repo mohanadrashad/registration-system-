@@ -976,7 +976,26 @@ export default function RegisterPage() {
                 </div>
               )}
 
-              <form onSubmit={onSubmit} className="space-y-5 registration-form">
+              <form
+                onSubmit={onSubmit}
+                onKeyDown={(e) => {
+                  // Pressing Enter inside a non-textarea field on a non-last
+                  // step should advance, not submit. Without this guard the
+                  // browser fires a synthetic submit because there's a
+                  // type="submit" button somewhere on the page.
+                  if (
+                    e.key === "Enter" &&
+                    isMultiStep &&
+                    !isLastStep &&
+                    (e.target as HTMLElement).tagName !== "TEXTAREA"
+                  ) {
+                    e.preventDefault();
+                    goNext();
+                  }
+                }}
+                noValidate
+                className="space-y-5 registration-form"
+              >
                 {error && (
                   <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-600">
                     {error}
