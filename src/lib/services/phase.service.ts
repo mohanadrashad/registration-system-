@@ -159,9 +159,13 @@ export async function reorderPhase(
   if (phases[swapIdx].type === "REGISTRATION") return; // can't swap past it
   const a = phases[idx];
   const b = phases[swapIdx];
+  // Three-step swap via a temp value, because @@unique([eventId, order])
+  // would reject a direct swap (both rows would briefly hold the same order).
+  const TEMP = -1;
   await prisma.$transaction([
-    prisma.phase.update({ where: { id: a.id }, data: { order: b.order } }),
+    prisma.phase.update({ where: { id: a.id }, data: { order: TEMP } }),
     prisma.phase.update({ where: { id: b.id }, data: { order: a.order } }),
+    prisma.phase.update({ where: { id: a.id }, data: { order: b.order } }),
   ]);
 }
 
@@ -261,9 +265,13 @@ export async function reorderStep(
   if (swapIdx < 0 || swapIdx >= steps.length) return;
   const a = steps[idx];
   const b = steps[swapIdx];
+  // Three-step swap via temp value: @@unique([phaseId, order]) rejects a
+  // direct two-step swap because both rows would briefly share an order.
+  const TEMP = -1;
   await prisma.$transaction([
-    prisma.step.update({ where: { id: a.id }, data: { order: b.order } }),
+    prisma.step.update({ where: { id: a.id }, data: { order: TEMP } }),
     prisma.step.update({ where: { id: b.id }, data: { order: a.order } }),
+    prisma.step.update({ where: { id: a.id }, data: { order: b.order } }),
   ]);
 }
 
