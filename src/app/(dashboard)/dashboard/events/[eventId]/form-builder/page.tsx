@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -92,14 +93,25 @@ interface Phase {
   id: string;
   type: PhaseType;
   title: string;
+  titleAr?: string | null;
+  description?: string | null;
+  descriptionAr?: string | null;
   order: number;
   steps: Step[];
   opensAt?: string | null;
   closesAt?: string | null;
+  isRequired: boolean;
+  reminderTemplateId?: string | null;
 }
 
 interface ModulesPayload {
   postRegPhases?: boolean;
+  multiLanguage?: boolean;
+}
+
+interface EmailTemplateOption {
+  id: string;
+  name: string;
 }
 
 const OPTION_FIELD_TYPES: FieldType[] = ["SELECT", "MULTISELECT", "RADIO"];
@@ -148,6 +160,213 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   PARAGRAPH: "Info Text",
 };
 
+function toDateTimeLocal(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  // datetime-local needs YYYY-MM-DDTHH:MM in local time, no timezone.
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromDateTimeLocal(value: string): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function PhaseSettingsCard({
+  phase,
+  multiLanguageEnabled,
+  emailTemplates,
+  onUpdate,
+}: {
+  phase: Phase;
+  multiLanguageEnabled: boolean;
+  emailTemplates: EmailTemplateOption[];
+  onUpdate: (patch: Partial<Phase>) => void;
+}) {
+  const [title, setTitle] = useState(phase.title);
+  const [titleAr, setTitleAr] = useState(phase.titleAr ?? "");
+  const [description, setDescription] = useState(phase.description ?? "");
+  const [descriptionAr, setDescriptionAr] = useState(
+    phase.descriptionAr ?? ""
+  );
+  const [opensAt, setOpensAt] = useState(toDateTimeLocal(phase.opensAt));
+  const [closesAt, setClosesAt] = useState(toDateTimeLocal(phase.closesAt));
+  const [isRequired, setIsRequired] = useState(phase.isRequired);
+  const [reminderTemplateId, setReminderTemplateId] = useState(
+    phase.reminderTemplateId ?? "__none__"
+  );
+
+  // Reset local state when the selected phase changes.
+  useEffect(() => {
+    setTitle(phase.title);
+    setTitleAr(phase.titleAr ?? "");
+    setDescription(phase.description ?? "");
+    setDescriptionAr(phase.descriptionAr ?? "");
+    setOpensAt(toDateTimeLocal(phase.opensAt));
+    setClosesAt(toDateTimeLocal(phase.closesAt));
+    setIsRequired(phase.isRequired);
+    setReminderTemplateId(phase.reminderTemplateId ?? "__none__");
+  }, [phase.id, phase.title, phase.titleAr, phase.description, phase.descriptionAr, phase.opensAt, phase.closesAt, phase.isRequired, phase.reminderTemplateId]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Phase settings · {phase.title}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className={multiLanguageEnabled ? "grid grid-cols-2 gap-4" : ""}>
+          <div className="space-y-2">
+            <Label>Title (English)</Label>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => {
+                if (title.trim() && title !== phase.title) {
+                  onUpdate({ title: title.trim() });
+                }
+              }}
+            />
+          </div>
+          {multiLanguageEnabled && (
+            <div className="space-y-2">
+              <Label>Title (Arabic)</Label>
+              <Input
+                dir="rtl"
+                value={titleAr}
+                onChange={(e) => setTitleAr(e.target.value)}
+                onBlur={() => {
+                  if (titleAr !== (phase.titleAr ?? "")) {
+                    onUpdate({ titleAr: titleAr.trim() || null });
+                  }
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className={multiLanguageEnabled ? "grid grid-cols-2 gap-4" : ""}>
+          <div className="space-y-2">
+            <Label>Description (English)</Label>
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onBlur={() => {
+                if (description !== (phase.description ?? "")) {
+                  onUpdate({ description: description.trim() || null });
+                }
+              }}
+              placeholder="Shown to attendees on the portal phase card"
+              rows={2}
+            />
+          </div>
+          {multiLanguageEnabled && (
+            <div className="space-y-2">
+              <Label>Description (Arabic)</Label>
+              <Textarea
+                dir="rtl"
+                value={descriptionAr}
+                onChange={(e) => setDescriptionAr(e.target.value)}
+                onBlur={() => {
+                  if (descriptionAr !== (phase.descriptionAr ?? "")) {
+                    onUpdate({
+                      descriptionAr: descriptionAr.trim() || null,
+                    });
+                  }
+                }}
+                rows={2}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Opens at</Label>
+            <Input
+              type="datetime-local"
+              value={opensAt}
+              onChange={(e) => setOpensAt(e.target.value)}
+              onBlur={() => {
+                const iso = fromDateTimeLocal(opensAt);
+                if (iso !== (phase.opensAt ?? null)) {
+                  onUpdate({ opensAt: iso });
+                }
+              }}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Closes at</Label>
+            <Input
+              type="datetime-local"
+              value={closesAt}
+              onChange={(e) => setClosesAt(e.target.value)}
+              onBlur={() => {
+                const iso = fromDateTimeLocal(closesAt);
+                if (iso !== (phase.closesAt ?? null)) {
+                  onUpdate({ closesAt: iso });
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 rounded-md border p-3">
+          <Switch
+            checked={isRequired}
+            onCheckedChange={(c) => {
+              setIsRequired(c);
+              onUpdate({ isRequired: c });
+            }}
+          />
+          <div>
+            <Label className="font-medium">Required phase</Label>
+            <p className="text-xs text-muted-foreground">
+              Informational only in v1 — surfaces in admin reports. Does not
+              block check-in.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Reminder email template</Label>
+          <Select
+            value={reminderTemplateId}
+            onValueChange={(v) => {
+              setReminderTemplateId(v);
+              onUpdate({
+                reminderTemplateId: v === "__none__" ? null : v,
+              });
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">
+                — No automatic reminder —
+              </SelectItem>
+              {emailTemplates.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            When set, a single reminder fires automatically the first time the
+            dashboard is opened after this phase&apos;s open time. Leave blank
+            for manual sending only.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function FormBuilderPage() {
   const params = useParams();
   const eventId = params.eventId as string;
@@ -156,6 +375,8 @@ export default function FormBuilderPage() {
   const [selectedPhaseId, setSelectedPhaseId] = useState<string>("");
   const [selectedStepId, setSelectedStepId] = useState<string>("");
   const [postRegEnabled, setPostRegEnabled] = useState(false);
+  const [multiLanguageEnabled, setMultiLanguageEnabled] = useState(false);
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplateOption[]>([]);
   const [eventSlug, setEventSlug] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
@@ -172,25 +393,26 @@ export default function FormBuilderPage() {
   const [newOption, setNewOption] = useState({ value: "", label: "" });
   const [editOption, setEditOption] = useState({ value: "", label: "" });
 
+  // Inline rename state — null when not editing, draft string when editing.
   const [renamingPhaseId, setRenamingPhaseId] = useState<string | null>(null);
-  const [renamingPhaseTitle, setRenamingPhaseTitle] = useState("");
+  const [renamingPhaseDraft, setRenamingPhaseDraft] = useState("");
   const [renamingStepId, setRenamingStepId] = useState<string | null>(null);
-  const [renamingStepTitle, setRenamingStepTitle] = useState("");
+  const [renamingStepDraft, setRenamingStepDraft] = useState("");
   const [newPhaseTitle, setNewPhaseTitle] = useState("");
   const [showAddPhase, setShowAddPhase] = useState(false);
 
   const fetchEverything = useCallback(async () => {
     try {
-      const [phasesRes, eventRes, modulesRes] = await Promise.all([
+      const [phasesRes, eventRes, modulesRes, templatesRes] = await Promise.all([
         fetch(`/api/events/${eventId}/phases`),
         fetch(`/api/events/${eventId}`),
         fetch(`/api/events/${eventId}/modules`),
+        fetch(`/api/events/${eventId}/emails/templates`),
       ]);
 
       if (phasesRes.ok) {
         const data: Phase[] = await phasesRes.json();
         setPhases(data);
-        // Maintain selection if possible; otherwise default to first phase + first step.
         setSelectedPhaseId((current) => {
           const stillExists = data.find((p) => p.id === current);
           return stillExists ? current : data[0]?.id ?? "";
@@ -203,6 +425,11 @@ export default function FormBuilderPage() {
       if (modulesRes.ok) {
         const modules: ModulesPayload = await modulesRes.json();
         setPostRegEnabled(!!modules.postRegPhases);
+        setMultiLanguageEnabled(!!modules.multiLanguage);
+      }
+      if (templatesRes.ok) {
+        const templates: { id: string; name: string }[] = await templatesRes.json();
+        setEmailTemplates(templates.map((t) => ({ id: t.id, name: t.name })));
       }
     } catch {
       toast.error("Failed to load form builder");
@@ -389,24 +616,41 @@ export default function FormBuilderPage() {
     }
   }
 
-  async function renamePhase() {
+  async function commitPhaseRename() {
     if (!renamingPhaseId) return;
-    const title = renamingPhaseTitle.trim();
+    const title = renamingPhaseDraft.trim();
+    const id = renamingPhaseId;
+    setRenamingPhaseId(null);
     if (!title) return;
-    const res = await fetch(
-      `/api/events/${eventId}/phases/${renamingPhaseId}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title }),
-      }
-    );
+    const res = await fetch(`/api/events/${eventId}/phases/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
     if (res.ok) {
       toast.success("Phase renamed");
-      setRenamingPhaseId(null);
       fetchEverything();
     } else {
-      toast.error("Failed to rename");
+      const err = await res.json().catch(() => null);
+      toast.error(err?.error || "Failed to rename");
+    }
+  }
+
+  async function updatePhaseSettings(
+    phaseId: string,
+    patch: Partial<Phase>
+  ) {
+    const res = await fetch(`/api/events/${eventId}/phases/${phaseId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) {
+      toast.success("Phase updated");
+      fetchEverything();
+    } else {
+      const err = await res.json().catch(() => null);
+      toast.error(err?.error || "Failed to update phase");
     }
   }
 
@@ -460,12 +704,14 @@ export default function FormBuilderPage() {
     }
   }
 
-  async function renameStep() {
+  async function commitStepRename() {
     if (!renamingStepId || !selectedPhaseId) return;
-    const title = renamingStepTitle.trim();
+    const title = renamingStepDraft.trim();
+    const id = renamingStepId;
+    setRenamingStepId(null);
     if (!title) return;
     const res = await fetch(
-      `/api/events/${eventId}/phases/${selectedPhaseId}/steps/${renamingStepId}`,
+      `/api/events/${eventId}/phases/${selectedPhaseId}/steps/${id}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -474,10 +720,10 @@ export default function FormBuilderPage() {
     );
     if (res.ok) {
       toast.success("Step renamed");
-      setRenamingStepId(null);
       fetchEverything();
     } else {
-      toast.error("Failed to rename");
+      const err = await res.json().catch(() => null);
+      toast.error(err?.error || "Failed to rename");
     }
   }
 
@@ -714,22 +960,37 @@ export default function FormBuilderPage() {
               </span>
               {phases.map((p, i) => {
                 const active = p.id === selectedPhaseId;
+                const isRenaming = renamingPhaseId === p.id;
                 return (
                   <div key={p.id} className="flex items-center">
-                    <button
-                      onClick={() => setSelectedPhaseId(p.id)}
-                      className={`px-3 py-1.5 rounded-l-md text-sm border ${
-                        active
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-background hover:bg-muted"
-                      }`}
-                    >
-                      {p.type === "REGISTRATION" && (
-                        <Lock className="inline h-3 w-3 mr-1 opacity-60" />
-                      )}
-                      {p.title}
-                    </button>
-                    {active && p.type !== "REGISTRATION" && (
+                    {isRenaming ? (
+                      <Input
+                        autoFocus
+                        value={renamingPhaseDraft}
+                        onChange={(e) => setRenamingPhaseDraft(e.target.value)}
+                        onBlur={commitPhaseRename}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitPhaseRename();
+                          if (e.key === "Escape") setRenamingPhaseId(null);
+                        }}
+                        className="h-8 w-44"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setSelectedPhaseId(p.id)}
+                        className={`px-3 py-1.5 rounded-l-md text-sm border ${
+                          active
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background hover:bg-muted"
+                        }`}
+                      >
+                        {p.type === "REGISTRATION" && (
+                          <Lock className="inline h-3 w-3 mr-1 opacity-60" />
+                        )}
+                        {p.title}
+                      </button>
+                    )}
+                    {active && p.type !== "REGISTRATION" && !isRenaming && (
                       <div className="flex border border-l-0 rounded-r-md overflow-hidden">
                         <button
                           onClick={() => reorderPhase(p.id, "up")}
@@ -750,7 +1011,7 @@ export default function FormBuilderPage() {
                         <button
                           onClick={() => {
                             setRenamingPhaseId(p.id);
-                            setRenamingPhaseTitle(p.title);
+                            setRenamingPhaseDraft(p.title);
                           }}
                           className="px-1 py-1.5 text-xs bg-background hover:bg-muted border-l"
                           title="Rename"
@@ -830,22 +1091,37 @@ export default function FormBuilderPage() {
               </span>
               {selectedPhase.steps.map((s, i) => {
                 const active = s.id === selectedStepId;
+                const isRenaming = renamingStepId === s.id;
                 return (
                   <div key={s.id} className="flex items-center">
-                    <button
-                      onClick={() => setSelectedStepId(s.id)}
-                      className={`px-3 py-1.5 rounded-l-md text-sm border ${
-                        active
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-background hover:bg-muted"
-                      }`}
-                    >
-                      {s.title}
-                      <span className="ml-2 text-xs opacity-70">
-                        {s.fields.length}
-                      </span>
-                    </button>
-                    {active && (
+                    {isRenaming ? (
+                      <Input
+                        autoFocus
+                        value={renamingStepDraft}
+                        onChange={(e) => setRenamingStepDraft(e.target.value)}
+                        onBlur={commitStepRename}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitStepRename();
+                          if (e.key === "Escape") setRenamingStepId(null);
+                        }}
+                        className="h-8 w-44"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setSelectedStepId(s.id)}
+                        className={`px-3 py-1.5 rounded-l-md text-sm border ${
+                          active
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background hover:bg-muted"
+                        }`}
+                      >
+                        {s.title}
+                        <span className="ml-2 text-xs opacity-70">
+                          {s.fields.length}
+                        </span>
+                      </button>
+                    )}
+                    {active && !isRenaming && (
                       <div className="flex border border-l-0 rounded-r-md overflow-hidden">
                         <button
                           onClick={() => reorderStep(s.id, "up")}
@@ -866,7 +1142,7 @@ export default function FormBuilderPage() {
                         <button
                           onClick={() => {
                             setRenamingStepId(s.id);
-                            setRenamingStepTitle(s.title);
+                            setRenamingStepDraft(s.title);
                           }}
                           className="px-1 py-1.5 text-xs bg-background hover:bg-muted border-l"
                           title="Rename"
@@ -1026,51 +1302,15 @@ export default function FormBuilderPage() {
         </Card>
       )}
 
-      {/* Inline rename dialog for phase */}
-      <Dialog
-        open={!!renamingPhaseId}
-        onOpenChange={(open) => !open && setRenamingPhaseId(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rename Phase</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <Input
-              value={renamingPhaseTitle}
-              onChange={(e) => setRenamingPhaseTitle(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && renamePhase()}
-              autoFocus
-            />
-            <Button onClick={renamePhase} className="w-full">
-              Save
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Inline rename dialog for step */}
-      <Dialog
-        open={!!renamingStepId}
-        onOpenChange={(open) => !open && setRenamingStepId(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rename Step</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <Input
-              value={renamingStepTitle}
-              onChange={(e) => setRenamingStepTitle(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && renameStep()}
-              autoFocus
-            />
-            <Button onClick={renameStep} className="w-full">
-              Save
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Phase settings card — only for POST_REGISTRATION phases. */}
+      {selectedPhase && selectedPhase.type === "POST_REGISTRATION" && (
+        <PhaseSettingsCard
+          phase={selectedPhase}
+          multiLanguageEnabled={multiLanguageEnabled}
+          emailTemplates={emailTemplates}
+          onUpdate={(patch) => updatePhaseSettings(selectedPhase.id, patch)}
+        />
+      )}
 
       {/* Edit Dialog (existing field-edit UI, unchanged) */}
       <Dialog

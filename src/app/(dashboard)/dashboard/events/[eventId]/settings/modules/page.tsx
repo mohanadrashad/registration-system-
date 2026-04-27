@@ -19,6 +19,7 @@ import {
   Globe2,
   Mail,
   Webhook,
+  Layers,
 } from "lucide-react";
 
 interface ModuleConfig {
@@ -80,6 +81,13 @@ const MODULES: ModuleConfig[] = [
     category: "Registration",
   },
   {
+    key: "postRegPhases",
+    name: "Post-Registration Phases",
+    description: "Collect additional info after registration (flight, hotel, etc.) with per-phase open/close windows",
+    icon: <Layers className="h-5 w-5" />,
+    category: "Registration",
+  },
+  {
     key: "selfServicePortal",
     name: "Self-Service Portal",
     description: "Allow attendees to view and edit their registration",
@@ -138,6 +146,7 @@ interface Modules {
   customDomain: boolean;
   customEmail: boolean;
   webhooks: boolean;
+  postRegPhases: boolean;
 }
 
 export default function ModulesSettingsPage() {

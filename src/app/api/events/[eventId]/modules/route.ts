@@ -96,6 +96,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       "customDomain",
       "customEmail",
       "webhooks",
+      "postRegPhases",
     ];
 
     const updates: Record<string, boolean> = {};
