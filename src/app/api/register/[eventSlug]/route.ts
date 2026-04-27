@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { randomBytes } from "crypto";
 import { approvalService } from "@/lib/services/approval.service";
 import { sanitizeCss } from "@/lib/security/sanitize-css";
+import { isFieldRequiredByCondition } from "@/lib/form-conditional";
 
 // GET: Look up contact by invite token to pre-fill the registration form
 // Also returns event details and branding for the registration page
@@ -14,13 +15,28 @@ export async function GET(
   const { eventSlug } = await params;
   const token = req.nextUrl.searchParams.get("token");
 
+  // Pull only the REGISTRATION phase, with its steps and active fields.
+  // Post-registration phase fields are deliberately excluded — they're
+  // collected later through the portal, not in this form.
   const event = await prisma.event.findUnique({
     where: { slug: eventSlug },
     include: {
       branding: true,
-      formFields: {
-        where: { isActive: true },
+      phases: {
+        where: { type: "REGISTRATION" },
         orderBy: { order: "asc" },
+        take: 1,
+        include: {
+          steps: {
+            orderBy: { order: "asc" },
+            include: {
+              fields: {
+                where: { isActive: true },
+                orderBy: { order: "asc" },
+              },
+            },
+          },
+        },
       },
     },
   });
@@ -29,7 +45,37 @@ export async function GET(
     return NextResponse.json({ error: "Event not found or not active" }, { status: 404 });
   }
 
-  // Build response with event info, branding, and form fields
+  const registrationPhase = event.phases[0] ?? null;
+
+  const steps = (registrationPhase?.steps ?? []).map((step) => ({
+    id: step.id,
+    title: step.title,
+    titleAr: step.titleAr,
+    description: step.description,
+    descriptionAr: step.descriptionAr,
+    order: step.order,
+    fields: step.fields.map((field) => ({
+      id: field.id,
+      name: field.name,
+      label: field.label,
+      labelAr: field.labelAr,
+      type: field.type,
+      placeholder: field.placeholder,
+      placeholderAr: field.placeholderAr,
+      helpText: field.helpText,
+      helpTextAr: field.helpTextAr,
+      required: field.required,
+      validation: field.validation,
+      options: field.options,
+      order: field.order,
+      width: field.width,
+      section: field.section,
+      conditional: field.conditional,
+      isSystem: field.isSystem,
+      defaultValue: field.defaultValue,
+    })),
+  }));
+
   const response: Record<string, unknown> = {
     eventName: event.name,
     eventDescription: event.description,
@@ -51,26 +97,7 @@ export async function GET(
       footerTextAr: event.branding.footerTextAr,
       customCss: sanitizeCss(event.branding.customCss),
     } : null,
-    formFields: event.formFields.map((field) => ({
-      id: field.id,
-      name: field.name,
-      label: field.label,
-      labelAr: field.labelAr,
-      type: field.type,
-      placeholder: field.placeholder,
-      placeholderAr: field.placeholderAr,
-      helpText: field.helpText,
-      helpTextAr: field.helpTextAr,
-      required: field.required,
-      validation: field.validation,
-      options: field.options,
-      order: field.order,
-      width: field.width,
-      section: field.section,
-      conditional: field.conditional,
-      isSystem: field.isSystem,
-      defaultValue: field.defaultValue,
-    })),
+    steps,
   };
 
   // If token provided, look up the contact
@@ -103,11 +130,20 @@ export async function POST(
   const { eventSlug } = await params;
   const token = req.nextUrl.searchParams.get("token");
 
+  // Validate against fields belonging to the REGISTRATION phase only.
   const event = await prisma.event.findUnique({
     where: { slug: eventSlug },
     include: {
-      formFields: {
-        where: { isActive: true },
+      phases: {
+        where: { type: "REGISTRATION" },
+        take: 1,
+        include: {
+          steps: {
+            include: {
+              fields: { where: { isActive: true } },
+            },
+          },
+        },
       },
     },
   });
@@ -116,14 +152,21 @@ export async function POST(
     return NextResponse.json({ error: "Event not found or not active" }, { status: 404 });
   }
 
+  const registrationFields = (event.phases[0]?.steps ?? []).flatMap(
+    (step) => step.fields
+  );
+
   const body = await req.json();
 
   // Extract core contact fields and additional form data
   const { firstName, lastName, email, phone, organization, designation, ...additionalFields } = body;
 
-  // Validate required form fields (the form builder is the source of truth)
-  for (const field of event.formFields) {
+  // Validate required fields. Skip a field if it has a `conditional.showIf`
+  // that evaluates false against the submitted body — hidden fields aren't
+  // required.
+  for (const field of registrationFields) {
     if (!field.required) continue;
+    if (!isFieldRequiredByCondition(field.conditional, body)) continue;
     const value = body[field.name];
     if (value === undefined || value === null || value === "") {
       return NextResponse.json({
