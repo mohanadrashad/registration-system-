@@ -66,6 +66,14 @@ interface FieldOption {
   labelAr?: string;
 }
 
+interface ConditionalRule {
+  showIf: {
+    field: string;
+    operator: "equals" | "notEquals" | "contains";
+    value: string | boolean;
+  };
+}
+
 interface FormField {
   id: string;
   name: string;
@@ -80,6 +88,7 @@ interface FormField {
   isActive: boolean;
   options?: FieldOption[];
   stepId: string;
+  conditional?: ConditionalRule | null;
 }
 
 interface Step {
@@ -174,6 +183,162 @@ function fromDateTimeLocal(value: string): string | null {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
+}
+
+function ConditionalEditor({
+  value,
+  onChange,
+  candidateFields,
+}: {
+  value: ConditionalRule | null | undefined;
+  onChange: (next: ConditionalRule | null) => void;
+  candidateFields: FormField[];
+}) {
+  const enabled = !!value?.showIf?.field;
+  const target = candidateFields.find((f) => f.name === value?.showIf?.field);
+
+  function toggle(on: boolean) {
+    if (on) {
+      const first = candidateFields[0];
+      if (!first) {
+        // No other fields exist to depend on yet; do nothing.
+        return;
+      }
+      onChange({
+        showIf: {
+          field: first.name,
+          operator: "equals",
+          value: first.type === "CHECKBOX" ? true : "",
+        },
+      });
+    } else {
+      onChange(null);
+    }
+  }
+
+  function patch(next: Partial<ConditionalRule["showIf"]>) {
+    if (!value?.showIf) return;
+    onChange({ showIf: { ...value.showIf, ...next } });
+  }
+
+  return (
+    <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
+      <div className="flex items-center gap-2">
+        <Switch checked={enabled} onCheckedChange={toggle} />
+        <Label className="text-sm font-medium">
+          Show this field only if…
+        </Label>
+      </div>
+      {enabled && value?.showIf && (
+        <div className="space-y-2 pl-2">
+          {candidateFields.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              You need at least one other field on the event to use a
+              condition.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">
+                    Depends on field
+                  </Label>
+                  <Select
+                    value={value.showIf.field}
+                    onValueChange={(v) => {
+                      const next = candidateFields.find((f) => f.name === v);
+                      patch({
+                        field: v,
+                        // Reset value when field type changes so we don't
+                        // leave stale strings on a checkbox dependency.
+                        value: next?.type === "CHECKBOX" ? true : "",
+                      });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {candidateFields.map((f) => (
+                        <SelectItem key={f.id} value={f.name}>
+                          {f.label}
+                          <span className="text-xs text-muted-foreground ml-2">
+                            ({f.name})
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">
+                    Operator
+                  </Label>
+                  <Select
+                    value={value.showIf.operator}
+                    onValueChange={(v) =>
+                      patch({
+                        operator: v as "equals" | "notEquals" | "contains",
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="equals">equals</SelectItem>
+                      <SelectItem value="notEquals">does not equal</SelectItem>
+                      <SelectItem value="contains">contains</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Value</Label>
+                {target?.type === "CHECKBOX" ? (
+                  <Select
+                    value={String(value.showIf.value)}
+                    onValueChange={(v) => patch({ value: v === "true" })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="true">checked</SelectItem>
+                      <SelectItem value="false">unchecked</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : target?.options && target.options.length > 0 ? (
+                  <Select
+                    value={String(value.showIf.value)}
+                    onValueChange={(v) => patch({ value: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select expected value…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {target.options.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    value={String(value.showIf.value ?? "")}
+                    onChange={(e) => patch({ value: e.target.value })}
+                    placeholder="Expected value"
+                  />
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function PhaseSettingsCard({
@@ -389,6 +554,7 @@ export default function FormBuilderPage() {
     required: false,
     width: "FULL" as FieldWidth,
     options: [] as FieldOption[],
+    conditional: null as ConditionalRule | null,
   });
   const [newOption, setNewOption] = useState({ value: "", label: "" });
   const [editOption, setEditOption] = useState({ value: "", label: "" });
@@ -467,6 +633,21 @@ export default function FormBuilderPage() {
   const totalSteps = selectedPhase?.steps.length ?? 0;
   const totalPhases = phases.length;
 
+  // All fields on the event, used as candidates for `showIf` conditions.
+  // We exclude system-only display fields (HEADING/DIVIDER/PARAGRAPH/HIDDEN)
+  // since you can't usefully condition on them.
+  const allFieldsOnEvent = useMemo(
+    () =>
+      phases.flatMap((p) =>
+        p.steps.flatMap((s) =>
+          s.fields.filter(
+            (f) => !["HEADING", "DIVIDER", "PARAGRAPH"].includes(f.type)
+          )
+        )
+      ),
+    [phases]
+  );
+
   // ── Field operations ───────────────────────────────────────────────
 
   async function seedDefaultFields() {
@@ -506,6 +687,7 @@ export default function FormBuilderPage() {
         required: false,
         width: "FULL",
         options: [],
+        conditional: null,
       });
       setNewOption({ value: "", label: "" });
       toast.success("Field added");
@@ -869,6 +1051,14 @@ export default function FormBuilderPage() {
                 />
                 <Label>Required</Label>
               </div>
+
+              <ConditionalEditor
+                value={newField.conditional}
+                onChange={(c) =>
+                  setNewField({ ...newField, conditional: c })
+                }
+                candidateFields={allFieldsOnEvent}
+              />
 
               {OPTION_FIELD_TYPES.includes(newField.type) && (
                 <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
@@ -1393,6 +1583,16 @@ export default function FormBuilderPage() {
                 />
                 <Label>Required</Label>
               </div>
+
+              <ConditionalEditor
+                value={editingField.conditional}
+                onChange={(c) =>
+                  setEditingField({ ...editingField, conditional: c })
+                }
+                candidateFields={allFieldsOnEvent.filter(
+                  (f) => f.id !== editingField.id
+                )}
+              />
 
               {OPTION_FIELD_TYPES.includes(editingField.type) && (
                 <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
