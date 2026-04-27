@@ -27,8 +27,17 @@ export async function GET(
     return NextResponse.json({ error: "Contact not found" }, { status: 404 });
   }
 
+  // Scope the "Attendee Information" panel to fields from the
+  // REGISTRATION phase only. Post-registration phase fields live on
+  // their own submissions and shouldn't bleed into the attendee
+  // overview (otherwise stale or unrelated rows like leftover test
+  // fields on a Flight Info phase pollute every attendee row).
   const formFields = await prisma.formField.findMany({
-    where: { eventId, isActive: true },
+    where: {
+      eventId,
+      isActive: true,
+      step: { phase: { type: "REGISTRATION" } },
+    },
     orderBy: { order: "asc" },
     select: { name: true, label: true, labelAr: true, type: true, options: true, isSystem: true },
   });
