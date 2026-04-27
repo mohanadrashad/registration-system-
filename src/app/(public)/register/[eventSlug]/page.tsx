@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,8 +22,11 @@ import {
   MapPin,
   Clock,
   Loader2,
+  ArrowLeft,
+  ArrowRight,
 } from "lucide-react";
 import { COUNTRIES } from "@/lib/form-builder/countries";
+import { isFieldVisible } from "@/lib/form-conditional";
 
 interface FormField {
   id: string;
@@ -44,6 +47,16 @@ interface FormField {
   conditional?: Record<string, unknown>;
   isSystem: boolean;
   defaultValue?: string;
+}
+
+interface FormStep {
+  id: string;
+  title: string;
+  titleAr?: string | null;
+  description?: string | null;
+  descriptionAr?: string | null;
+  order: number;
+  fields: FormField[];
 }
 
 interface Branding {
@@ -69,9 +82,19 @@ interface EventData {
   startDate: string;
   endDate: string;
   branding?: Branding | null;
-  formFields: FormField[];
+  steps: FormStep[];
   contact?: Record<string, string | null>;
 }
+
+type FormValueMap = Record<string, string | boolean | string[]>;
+
+interface DraftPayload {
+  currentStep: number;
+  formValues: FormValueMap;
+  savedAt: string;
+}
+
+const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const translations = {
   ar: {
@@ -85,6 +108,12 @@ const translations = {
     loading: "جاري التحميل...",
     eventNotFound: "الفعالية غير موجودة",
     required: "مطلوب",
+    next: "التالي",
+    back: "السابق",
+    stepOf: (current: number, total: number) => `الخطوة ${current} من ${total}`,
+    draftRestored: "تم استرجاع بياناتك من زيارتك السابقة.",
+    startOver: "البدء من جديد",
+    fillRequired: "يرجى إكمال الحقول المطلوبة قبل المتابعة.",
   },
   en: {
     title: "Event Registration",
@@ -97,14 +126,22 @@ const translations = {
     loading: "Loading...",
     eventNotFound: "Event not found",
     required: "Required",
+    next: "Next",
+    back: "Back",
+    stepOf: (current: number, total: number) => `Step ${current} of ${total}`,
+    draftRestored: "Resumed from your last visit.",
+    startOver: "Start over",
+    fillRequired: "Please complete the required fields before continuing.",
   },
 };
 
 export default function RegisterPage() {
   const params = useParams();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const eventSlug = params.eventSlug as string;
   const token = searchParams.get("token");
+  const draftKey = `registration-draft:${eventSlug}`;
 
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
@@ -112,7 +149,9 @@ export default function RegisterPage() {
   const [success, setSuccess] = useState(false);
   const [eventData, setEventData] = useState<EventData | null>(null);
   const [lang, setLang] = useState<"ar" | "en">("ar");
-  const [formValues, setFormValues] = useState<Record<string, string | boolean | string[]>>({});
+  const [formValues, setFormValues] = useState<FormValueMap>({});
+  const [currentStep, setCurrentStep] = useState(0);
+  const [draftRestored, setDraftRestored] = useState(false);
 
   const t = translations[lang];
   const isRtl = lang === "ar";
@@ -122,6 +161,14 @@ export default function RegisterPage() {
   const backgroundColor = branding?.backgroundColor || "#ffffff";
   const textColor = branding?.textColor || "#000000";
 
+  const steps = eventData?.steps ?? [];
+  const totalSteps = steps.length;
+  const isMultiStep = totalSteps > 1;
+  const activeStep = steps[currentStep] ?? null;
+  const isLastStep = currentStep === totalSteps - 1;
+  const isFirstStep = currentStep === 0;
+
+  // ── Initial load: fetch event + restore draft if present ─────────────
   useEffect(() => {
     async function fetchEventData() {
       try {
@@ -132,25 +179,69 @@ export default function RegisterPage() {
         const res = await fetch(url);
 
         if (res.ok) {
-          const data = await res.json();
+          const data: EventData = await res.json();
           setEventData(data);
 
-          // Initialize form values with defaults and contact data
-          const initialValues: Record<string, string | boolean | string[]> = {};
-          data.formFields?.forEach((field: FormField) => {
+          const allFields = data.steps.flatMap((s) => s.fields);
+          const initial: FormValueMap = {};
+          for (const field of allFields) {
             if (data.contact && data.contact[field.name]) {
-              initialValues[field.name] = data.contact[field.name];
+              initial[field.name] = data.contact[field.name] as string;
             } else if (field.defaultValue) {
-              initialValues[field.name] = field.defaultValue;
+              initial[field.name] = field.defaultValue;
             } else if (field.type === "CHECKBOX") {
-              initialValues[field.name] = false;
+              initial[field.name] = false;
             } else if (field.type === "MULTISELECT") {
-              initialValues[field.name] = [];
+              initial[field.name] = [];
             } else {
-              initialValues[field.name] = "";
+              initial[field.name] = "";
             }
-          });
-          setFormValues(initialValues);
+          }
+
+          // Restore draft if recent.
+          let resumedStep: number | null = null;
+          let resumedValues: FormValueMap | null = null;
+          if (typeof window !== "undefined") {
+            try {
+              const raw = window.localStorage.getItem(draftKey);
+              if (raw) {
+                const parsed: DraftPayload = JSON.parse(raw);
+                const ageMs = Date.now() - new Date(parsed.savedAt).getTime();
+                if (Number.isFinite(ageMs) && ageMs < DRAFT_TTL_MS) {
+                  resumedValues = parsed.formValues;
+                  resumedStep = parsed.currentStep;
+                } else {
+                  window.localStorage.removeItem(draftKey);
+                }
+              }
+            } catch {
+              window.localStorage.removeItem(draftKey);
+            }
+          }
+
+          if (resumedValues) {
+            setFormValues({ ...initial, ...resumedValues });
+            setDraftRestored(true);
+          } else {
+            setFormValues(initial);
+          }
+
+          // Initial step: prefer ?step= query param if valid, else draft, else 0.
+          const stepParam = searchParams.get("step");
+          const total = data.steps.length;
+          const fromQuery =
+            stepParam !== null
+              ? Math.max(0, Math.min(total - 1, parseInt(stepParam, 10) - 1))
+              : null;
+          const fromDraft =
+            resumedStep !== null
+              ? Math.max(0, Math.min(total - 1, resumedStep))
+              : null;
+          setCurrentStep(
+            (fromQuery !== null && !Number.isNaN(fromQuery))
+              ? fromQuery
+              : fromDraft ?? 0
+          );
         } else {
           setError(t.eventNotFound);
         }
@@ -162,14 +253,111 @@ export default function RegisterPage() {
     }
 
     fetchEventData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventSlug, token]);
+
+  // ── Sync ?step=N to URL when currentStep changes ────────────────────
+  useEffect(() => {
+    if (pageLoading || totalSteps === 0) return;
+    const stepNumber = currentStep + 1;
+    const params = new URLSearchParams(searchParams.toString());
+    if (isMultiStep) {
+      params.set("step", String(stepNumber));
+    } else {
+      params.delete("step");
+    }
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : `?`, { scroll: false });
+  }, [currentStep, pageLoading, totalSteps, isMultiStep, router, searchParams]);
+
+  // ── Debounced localStorage draft save ───────────────────────────────
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (pageLoading || totalSteps === 0) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      try {
+        const payload: DraftPayload = {
+          currentStep,
+          formValues,
+          savedAt: new Date().toISOString(),
+        };
+        window.localStorage.setItem(draftKey, JSON.stringify(payload));
+      } catch {
+        /* ignore quota errors */
+      }
+    }, 500);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [formValues, currentStep, pageLoading, totalSteps, draftKey]);
+
+  function clearDraft() {
+    try {
+      window.localStorage.removeItem(draftKey);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function handleStartOver() {
+    clearDraft();
+    setDraftRestored(false);
+    // Re-init from defaults (refetch is overkill — just reset known keys).
+    if (!eventData) return;
+    const allFields = eventData.steps.flatMap((s) => s.fields);
+    const reset: FormValueMap = {};
+    for (const field of allFields) {
+      if (field.defaultValue) reset[field.name] = field.defaultValue;
+      else if (field.type === "CHECKBOX") reset[field.name] = false;
+      else if (field.type === "MULTISELECT") reset[field.name] = [];
+      else reset[field.name] = "";
+    }
+    setFormValues(reset);
+    setCurrentStep(0);
+  }
 
   function handleFieldChange(name: string, value: string | boolean | string[]) {
     setFormValues((prev) => ({ ...prev, [name]: value }));
+    setError("");
+  }
+
+  // ── Step navigation with per-step validation ────────────────────────
+  function validateCurrentStep(): boolean {
+    if (!activeStep) return false;
+    for (const field of activeStep.fields) {
+      if (!field.required) continue;
+      if (!isFieldVisible(field.conditional, formValues)) continue;
+      const value = formValues[field.name];
+      const empty =
+        value === undefined ||
+        value === null ||
+        value === "" ||
+        (Array.isArray(value) && value.length === 0);
+      if (empty) {
+        setError(t.fillRequired);
+        return false;
+      }
+    }
+    setError("");
+    return true;
+  }
+
+  function goNext() {
+    if (!validateCurrentStep()) return;
+    if (isLastStep) return;
+    setCurrentStep((s) => s + 1);
+  }
+
+  function goBack() {
+    if (isFirstStep) return;
+    setError("");
+    setCurrentStep((s) => s - 1);
   }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!validateCurrentStep()) return;
     setLoading(true);
     setError("");
 
@@ -186,6 +374,7 @@ export default function RegisterPage() {
     const result = await res.json();
 
     if (res.ok) {
+      clearDraft();
       setSuccess(true);
     } else {
       setError(result.error || "Registration failed");
@@ -193,6 +382,7 @@ export default function RegisterPage() {
     setLoading(false);
   }
 
+  // ── Branding helpers ─────────────────────────────────────────────────
   const welcomeTitle = isRtl
     ? (branding?.welcomeTitleAr || branding?.welcomeTitle || t.title)
     : (branding?.welcomeTitle || t.title);
@@ -226,57 +416,102 @@ export default function RegisterPage() {
   function getFieldLabel(field: FormField) {
     return isRtl && field.labelAr ? field.labelAr : field.label;
   }
-
   function getFieldPlaceholder(field: FormField) {
-    return isRtl && field.placeholderAr ? field.placeholderAr : field.placeholder;
+    return isRtl && field.placeholderAr
+      ? field.placeholderAr
+      : field.placeholder;
   }
-
-  function getOptionLabel(option: { value: string; label: string; labelAr?: string }) {
+  function getOptionLabel(option: {
+    value: string;
+    label: string;
+    labelAr?: string;
+  }) {
     return isRtl && option.labelAr ? option.labelAr : option.label;
   }
+  function getStepTitle(step: FormStep) {
+    return isRtl && step.titleAr ? step.titleAr : step.title;
+  }
+  function getStepDescription(step: FormStep) {
+    return isRtl && step.descriptionAr ? step.descriptionAr : step.description;
+  }
+
+  // ── Visible-fields-on-current-step memo (used by renderer) ──────────
+  const visibleFields = useMemo(() => {
+    if (!activeStep) return [];
+    return activeStep.fields.filter((f) =>
+      isFieldVisible(f.conditional, formValues)
+    );
+  }, [activeStep, formValues]);
 
   function renderField(field: FormField) {
     const label = getFieldLabel(field);
     const placeholder = getFieldPlaceholder(field);
-    const value = formValues[field.name] || "";
-    const widthClass = field.width === "HALF" ? "col-span-1" : field.width === "THIRD" ? "col-span-1" : "col-span-2";
+    const value = formValues[field.name] ?? "";
+    const widthClass =
+      field.width === "HALF"
+        ? "col-span-1"
+        : field.width === "THIRD"
+        ? "col-span-1"
+        : "col-span-2";
 
-    // Skip layout fields for now
     if (["HEADING", "DIVIDER", "PARAGRAPH"].includes(field.type)) {
       if (field.type === "HEADING") {
         return (
           <div key={field.id} className="col-span-2 pt-4">
-            <h3 className="text-lg font-semibold" style={{ color: textColor }}>{label}</h3>
+            <h3 className="text-lg font-semibold" style={{ color: textColor }}>
+              {label}
+            </h3>
           </div>
         );
       }
       if (field.type === "DIVIDER") {
-        return <hr key={field.id} className="col-span-2 my-4 border-gray-200" />;
+        return (
+          <hr key={field.id} className="col-span-2 my-4 border-gray-200" />
+        );
       }
       if (field.type === "PARAGRAPH") {
         return (
-          <p key={field.id} className="col-span-2 text-sm text-gray-500">{label}</p>
+          <p key={field.id} className="col-span-2 text-sm text-gray-500">
+            {label}
+          </p>
         );
       }
     }
 
-    // Hidden field
     if (field.type === "HIDDEN") {
-      return <input key={field.id} type="hidden" name={field.name} value={value as string} />;
+      return (
+        <input
+          key={field.id}
+          type="hidden"
+          name={field.name}
+          value={value as string}
+        />
+      );
     }
 
     return (
       <div key={field.id} className={`space-y-1.5 ${widthClass}`}>
-        <Label htmlFor={field.name} className="text-xs font-medium text-gray-500">
-          {label} {field.required && <span className="text-red-400">*</span>}
+        <Label
+          htmlFor={field.name}
+          className="text-xs font-medium text-gray-500"
+        >
+          {label}{" "}
+          {field.required && <span className="text-red-400">*</span>}
         </Label>
 
-        {/* TEXT, EMAIL, PHONE, NUMBER */}
-        {["TEXT", "EMAIL", "PHONE", "NUMBER", "PHONE_COUNTRY"].includes(field.type) && (
+        {["TEXT", "EMAIL", "PHONE", "NUMBER", "PHONE_COUNTRY"].includes(
+          field.type
+        ) && (
           <Input
             id={field.name}
             name={field.name}
-            type={field.type === "EMAIL" ? "email" : field.type === "NUMBER" ? "number" : "text"}
+            type={
+              field.type === "EMAIL"
+                ? "email"
+                : field.type === "NUMBER"
+                ? "number"
+                : "text"
+            }
             value={value as string}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             placeholder={placeholder}
@@ -285,7 +520,6 @@ export default function RegisterPage() {
           />
         )}
 
-        {/* TEXTAREA */}
         {field.type === "TEXTAREA" && (
           <Textarea
             id={field.name}
@@ -299,7 +533,6 @@ export default function RegisterPage() {
           />
         )}
 
-        {/* SELECT */}
         {field.type === "SELECT" && (
           <Select
             value={value as string}
@@ -319,7 +552,6 @@ export default function RegisterPage() {
           </Select>
         )}
 
-        {/* COUNTRY */}
         {field.type === "COUNTRY" && (
           <Select
             value={value as string}
@@ -327,7 +559,12 @@ export default function RegisterPage() {
             required={field.required}
           >
             <SelectTrigger className="h-11 rounded-lg border-gray-200 bg-gray-50/50">
-              <SelectValue placeholder={placeholder || (isRtl ? "اختر الدولة..." : "Select country...")} />
+              <SelectValue
+                placeholder={
+                  placeholder ||
+                  (isRtl ? "اختر الدولة..." : "Select country...")
+                }
+              />
             </SelectTrigger>
             <SelectContent>
               {COUNTRIES.map((country) => (
@@ -339,7 +576,6 @@ export default function RegisterPage() {
           </Select>
         )}
 
-        {/* RADIO */}
         {field.type === "RADIO" && (
           <RadioGroup
             value={value as string}
@@ -348,8 +584,14 @@ export default function RegisterPage() {
           >
             {(field.options || []).map((option) => (
               <div key={option.value} className="flex items-center space-x-2">
-                <RadioGroupItem value={option.value} id={`${field.name}-${option.value}`} />
-                <Label htmlFor={`${field.name}-${option.value}`} className="text-sm">
+                <RadioGroupItem
+                  value={option.value}
+                  id={`${field.name}-${option.value}`}
+                />
+                <Label
+                  htmlFor={`${field.name}-${option.value}`}
+                  className="text-sm"
+                >
                   {getOptionLabel(option)}
                 </Label>
               </div>
@@ -357,13 +599,14 @@ export default function RegisterPage() {
           </RadioGroup>
         )}
 
-        {/* CHECKBOX */}
         {field.type === "CHECKBOX" && (
           <div className="flex items-center space-x-2">
             <Checkbox
               id={field.name}
               checked={value as boolean}
-              onCheckedChange={(checked) => handleFieldChange(field.name, !!checked)}
+              onCheckedChange={(checked) =>
+                handleFieldChange(field.name, !!checked)
+              }
             />
             <Label htmlFor={field.name} className="text-sm">
               {placeholder || label}
@@ -371,7 +614,37 @@ export default function RegisterPage() {
           </div>
         )}
 
-        {/* DATE */}
+        {field.type === "MULTISELECT" && (
+          <div className="flex flex-wrap gap-2">
+            {(field.options || []).map((option) => {
+              const arr = Array.isArray(value) ? (value as string[]) : [];
+              const selected = arr.includes(option.value);
+              return (
+                <button
+                  type="button"
+                  key={option.value}
+                  onClick={() => {
+                    const next = selected
+                      ? arr.filter((v) => v !== option.value)
+                      : [...arr, option.value];
+                    handleFieldChange(field.name, next);
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                    selected
+                      ? "border-transparent text-white"
+                      : "border-gray-200 bg-gray-50/50 text-gray-600 hover:bg-gray-100"
+                  }`}
+                  style={
+                    selected ? { backgroundColor: primaryColor } : undefined
+                  }
+                >
+                  {getOptionLabel(option)}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {field.type === "DATE" && (
           <Input
             id={field.name}
@@ -383,8 +656,6 @@ export default function RegisterPage() {
             className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
           />
         )}
-
-        {/* TIME */}
         {field.type === "TIME" && (
           <Input
             id={field.name}
@@ -396,8 +667,6 @@ export default function RegisterPage() {
             className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
           />
         )}
-
-        {/* DATETIME */}
         {field.type === "DATETIME" && (
           <Input
             id={field.name}
@@ -413,22 +682,29 @@ export default function RegisterPage() {
     );
   }
 
-  // Loading state
   if (pageLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor }}>
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor }}
+      >
         <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" style={{ color: primaryColor }} />
+          <Loader2
+            className="h-8 w-8 animate-spin mx-auto mb-4"
+            style={{ color: primaryColor }}
+          />
           <p style={{ color: textColor }}>{t.loading}</p>
         </div>
       </div>
     );
   }
 
-  // Error state
   if (!eventData) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor }}>
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor }}
+      >
         <div className="text-center">
           <p className="text-red-500 text-lg">{error || t.eventNotFound}</p>
         </div>
@@ -439,15 +715,16 @@ export default function RegisterPage() {
   const customStyles = branding?.customCss ? (
     <style dangerouslySetInnerHTML={{ __html: branding.customCss }} />
   ) : null;
-
   const headerImage = branding?.headerImageUrl || "/gathering-header.jpg";
 
-  // Success screen
   if (success) {
     return (
       <>
         {customStyles}
-        <div className="min-h-screen lg:grid lg:grid-cols-2" dir={isRtl ? "rtl" : "ltr"}>
+        <div
+          className="min-h-screen lg:grid lg:grid-cols-2"
+          dir={isRtl ? "rtl" : "ltr"}
+        >
           <div
             className="hidden lg:flex flex-col items-center justify-center p-12"
             style={{
@@ -457,20 +734,37 @@ export default function RegisterPage() {
             }}
           >
             {branding?.logoUrl && (
-              <img src={branding.logoUrl} alt={eventData.eventName} className="max-h-16 mb-8" />
+              <img
+                src={branding.logoUrl}
+                alt={eventData.eventName}
+                className="max-h-16 mb-8"
+              />
             )}
-            <img src={headerImage} alt={eventData.eventName} className="w-full max-w-md rounded-xl shadow-2xl" />
+            <img
+              src={headerImage}
+              alt={eventData.eventName}
+              className="w-full max-w-md rounded-xl shadow-2xl"
+            />
           </div>
 
-          <div className="flex min-h-screen lg:min-h-0 items-center justify-center p-6 lg:p-12" style={{ backgroundColor }}>
+          <div
+            className="flex min-h-screen lg:min-h-0 items-center justify-center p-6 lg:p-12"
+            style={{ backgroundColor }}
+          >
             <div className="w-full max-w-md text-center">
               <div
                 className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full"
                 style={{ backgroundColor: `${primaryColor}20` }}
               >
-                <CheckCircle className="h-10 w-10" style={{ color: primaryColor }} />
+                <CheckCircle
+                  className="h-10 w-10"
+                  style={{ color: primaryColor }}
+                />
               </div>
-              <h2 className="mb-3 text-2xl font-bold" style={{ color: textColor }}>
+              <h2
+                className="mb-3 text-2xl font-bold"
+                style={{ color: textColor }}
+              >
                 {t.successTitle}
               </h2>
               <p className="text-gray-500 text-base">{t.successMessage}</p>
@@ -481,11 +775,13 @@ export default function RegisterPage() {
     );
   }
 
-  // Form
   return (
     <>
       {customStyles}
-      <div className="min-h-screen lg:grid lg:grid-cols-2" dir={isRtl ? "rtl" : "ltr"}>
+      <div
+        className="min-h-screen lg:grid lg:grid-cols-2"
+        dir={isRtl ? "rtl" : "ltr"}
+      >
         {/* Left branding panel */}
         <div
           className="hidden lg:flex flex-col items-center justify-center p-12 sticky top-0 h-screen"
@@ -496,17 +792,32 @@ export default function RegisterPage() {
           }}
         >
           {branding?.logoUrl && (
-            <img src={branding.logoUrl} alt={eventData.eventName} className="max-h-16 mb-8" />
+            <img
+              src={branding.logoUrl}
+              alt={eventData.eventName}
+              className="max-h-16 mb-8"
+            />
           )}
-          <img src={headerImage} alt={eventData.eventName} className="w-full max-w-lg rounded-xl shadow-2xl" />
+          <img
+            src={headerImage}
+            alt={eventData.eventName}
+            className="w-full max-w-lg rounded-xl shadow-2xl"
+          />
           <div className="mt-10 text-center space-y-4">
             <div className="flex items-center justify-center gap-3 text-gray-300">
-              <CalendarDays className="h-5 w-5" style={{ color: primaryColor }} />
-              <span className="text-base">{formatDate(eventData.startDate)}</span>
+              <CalendarDays
+                className="h-5 w-5"
+                style={{ color: primaryColor }}
+              />
+              <span className="text-base">
+                {formatDate(eventData.startDate)}
+              </span>
             </div>
             <div className="flex items-center justify-center gap-3 text-gray-300">
               <Clock className="h-5 w-5" style={{ color: primaryColor }} />
-              <span className="text-base">{formatTime(eventData.startDate)}</span>
+              <span className="text-base">
+                {formatTime(eventData.startDate)}
+              </span>
             </div>
             {eventData.venue && (
               <div className="flex items-center justify-center gap-3 text-gray-300">
@@ -519,7 +830,6 @@ export default function RegisterPage() {
 
         {/* Right form panel */}
         <div className="flex flex-col" style={{ backgroundColor }}>
-          {/* Mobile banner */}
           <div className="lg:hidden">
             <div
               style={{
@@ -530,19 +840,28 @@ export default function RegisterPage() {
             >
               {branding?.logoUrl && (
                 <div className="p-4 flex justify-center">
-                  <img src={branding.logoUrl} alt={eventData.eventName} className="max-h-12" />
+                  <img
+                    src={branding.logoUrl}
+                    alt={eventData.eventName}
+                    className="max-h-12"
+                  />
                 </div>
               )}
-              <img src={headerImage} alt={eventData.eventName} className="w-full h-auto block" />
+              <img
+                src={headerImage}
+                alt={eventData.eventName}
+                className="w-full h-auto block"
+              />
             </div>
           </div>
 
-          {/* Form content */}
           <div className="flex flex-1 items-center justify-center p-6 lg:p-12">
             <div className="w-full max-w-md">
-              {/* Language toggle + title */}
               <div className="flex items-center justify-between mb-2">
-                <h1 className="text-2xl lg:text-3xl font-bold" style={{ color: textColor }}>
+                <h1
+                  className="text-2xl lg:text-3xl font-bold"
+                  style={{ color: textColor }}
+                >
                   {welcomeTitle}
                 </h1>
                 <button
@@ -554,25 +873,108 @@ export default function RegisterPage() {
                   {t.switchLang}
                 </button>
               </div>
-              <p className="text-sm text-gray-400 mb-8">{welcomeMessage}</p>
+              <p className="text-sm text-gray-400 mb-6">{welcomeMessage}</p>
 
-              {/* Mobile event details */}
               <div className="lg:hidden flex flex-wrap gap-3 mb-6 text-xs text-gray-500">
                 <span className="flex items-center gap-1">
-                  <CalendarDays className="h-3.5 w-3.5" style={{ color: primaryColor }} />
+                  <CalendarDays
+                    className="h-3.5 w-3.5"
+                    style={{ color: primaryColor }}
+                  />
                   {formatDate(eventData.startDate)}
                 </span>
                 <span className="flex items-center gap-1">
-                  <Clock className="h-3.5 w-3.5" style={{ color: primaryColor }} />
+                  <Clock
+                    className="h-3.5 w-3.5"
+                    style={{ color: primaryColor }}
+                  />
                   {formatTime(eventData.startDate)}
                 </span>
                 {eventData.venue && (
                   <span className="flex items-center gap-1">
-                    <MapPin className="h-3.5 w-3.5" style={{ color: primaryColor }} />
+                    <MapPin
+                      className="h-3.5 w-3.5"
+                      style={{ color: primaryColor }}
+                    />
                     {eventData.venue}
                   </span>
                 )}
               </div>
+
+              {/* Stepper header — only when there's more than one step */}
+              {isMultiStep && (
+                <div className="mb-6">
+                  <div className="flex items-center gap-2">
+                    {steps.map((step, idx) => {
+                      const isActive = idx === currentStep;
+                      const isComplete = idx < currentStep;
+                      return (
+                        <div
+                          key={step.id}
+                          className="flex-1 flex items-center gap-2"
+                        >
+                          <div
+                            className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold border transition-colors"
+                            style={{
+                              backgroundColor:
+                                isActive || isComplete
+                                  ? primaryColor
+                                  : "transparent",
+                              borderColor:
+                                isActive || isComplete
+                                  ? primaryColor
+                                  : "#d1d5db",
+                              color:
+                                isActive || isComplete ? "#ffffff" : "#6b7280",
+                            }}
+                          >
+                            {isComplete ? (
+                              <CheckCircle className="h-4 w-4" />
+                            ) : (
+                              idx + 1
+                            )}
+                          </div>
+                          {idx < steps.length - 1 && (
+                            <div
+                              className="flex-1 h-px"
+                              style={{
+                                backgroundColor: isComplete
+                                  ? primaryColor
+                                  : "#e5e7eb",
+                              }}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    {t.stepOf(currentStep + 1, totalSteps)} ·{" "}
+                    <span className="font-medium" style={{ color: textColor }}>
+                      {activeStep ? getStepTitle(activeStep) : ""}
+                    </span>
+                  </p>
+                  {activeStep && getStepDescription(activeStep) && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {getStepDescription(activeStep)}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Resumed-draft banner */}
+              {draftRestored && (
+                <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs flex items-center justify-between gap-2">
+                  <span className="text-gray-600">{t.draftRestored}</span>
+                  <button
+                    type="button"
+                    onClick={handleStartOver}
+                    className="text-gray-500 underline hover:text-gray-700"
+                  >
+                    {t.startOver}
+                  </button>
+                </div>
+              )}
 
               <form onSubmit={onSubmit} className="space-y-5 registration-form">
                 {error && (
@@ -581,25 +983,74 @@ export default function RegisterPage() {
                   </div>
                 )}
 
-                {/* Dynamic form fields */}
                 <div className="grid grid-cols-2 gap-4">
-                  {eventData.formFields.map((field) => renderField(field))}
+                  {visibleFields.map((field) => renderField(field))}
                 </div>
 
-                {/* Submit */}
-                <Button
-                  type="submit"
-                  className="w-full h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer submit-button"
-                  style={{ backgroundColor: primaryColor, color: "#fff" }}
-                  disabled={loading}
-                >
-                  {loading ? t.registering : t.register}
-                </Button>
+                {isMultiStep ? (
+                  <div className="flex items-center gap-3 pt-2">
+                    {!isFirstStep && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={goBack}
+                        className="h-12 rounded-lg flex-1 cursor-pointer"
+                      >
+                        {isRtl ? (
+                          <ArrowRight className="h-4 w-4 mr-1" />
+                        ) : (
+                          <ArrowLeft className="h-4 w-4 mr-1" />
+                        )}
+                        {t.back}
+                      </Button>
+                    )}
+                    {isLastStep ? (
+                      <Button
+                        type="submit"
+                        className="h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer submit-button flex-1"
+                        style={{
+                          backgroundColor: primaryColor,
+                          color: "#fff",
+                        }}
+                        disabled={loading}
+                      >
+                        {loading ? t.registering : t.register}
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        onClick={goNext}
+                        className="h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer flex-1"
+                        style={{
+                          backgroundColor: primaryColor,
+                          color: "#fff",
+                        }}
+                      >
+                        {t.next}
+                        {isRtl ? (
+                          <ArrowLeft className="h-4 w-4 ml-1" />
+                        ) : (
+                          <ArrowRight className="h-4 w-4 ml-1" />
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <Button
+                    type="submit"
+                    className="w-full h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer submit-button"
+                    style={{ backgroundColor: primaryColor, color: "#fff" }}
+                    disabled={loading}
+                  >
+                    {loading ? t.registering : t.register}
+                  </Button>
+                )}
               </form>
 
-              {/* Footer */}
               {footerText && (
-                <p className="text-center text-xs text-gray-400 mt-8">{footerText}</p>
+                <p className="text-center text-xs text-gray-400 mt-8">
+                  {footerText}
+                </p>
               )}
             </div>
           </div>
