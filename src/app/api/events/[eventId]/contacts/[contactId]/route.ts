@@ -67,12 +67,28 @@ export async function PUT(
     data.metadata = metadata === null ? Prisma.DbNull : (metadata as Prisma.InputJsonValue);
   }
 
-  const contact = await prisma.contact.update({
-    where: { id: contactId },
-    data,
-  });
-
-  return NextResponse.json(contact);
+  try {
+    const contact = await prisma.contact.update({
+      where: { id: contactId },
+      data,
+    });
+    return NextResponse.json(contact);
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      // Most likely the @@unique([eventId, email]) constraint.
+      return NextResponse.json(
+        {
+          error:
+            "That email is already used by another attendee on this event.",
+        },
+        { status: 409 }
+      );
+    }
+    throw err;
+  }
 }
 
 export async function DELETE(
