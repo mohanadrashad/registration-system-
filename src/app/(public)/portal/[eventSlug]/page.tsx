@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,9 @@ import {
   Loader2,
   LogOut,
   AlertTriangle,
+  CalendarClock,
+  Lock as LockIcon,
+  ChevronRight,
 } from "lucide-react";
 import { COUNTRIES } from "@/lib/form-builder/countries";
 
@@ -76,6 +80,24 @@ interface RegistrationInfo {
   registeredAt?: string;
   badgeGenerated: boolean;
   badgeUrl?: string;
+}
+
+type PhaseStatus = "LOCKED" | "NOT_OPEN" | "OPEN" | "CLOSED";
+
+interface PhaseInfo {
+  id: string;
+  title: string;
+  titleAr?: string | null;
+  description?: string | null;
+  descriptionAr?: string | null;
+  order: number;
+  opensAt?: string | null;
+  closesAt?: string | null;
+  isRequired: boolean;
+  status: PhaseStatus;
+  isCompleted: boolean;
+  submittedAt?: string | null;
+  updatedAt?: string | null;
 }
 
 interface ContactInfo {
@@ -132,6 +154,7 @@ export default function PortalPage() {
   const [event, setEvent] = useState<EventInfo | null>(null);
   const [registration, setRegistration] = useState<RegistrationInfo | null>(null);
   const [contact, setContact] = useState<ContactInfo | null>(null);
+  const [phases, setPhases] = useState<PhaseInfo[]>([]);
 
   // Edit state
   const [editing, setEditing] = useState(false);
@@ -175,6 +198,7 @@ export default function PortalPage() {
         setEvent(data.event);
         setRegistration(data.registration);
         setContact(data.contact);
+        setPhases(Array.isArray(data.phases) ? data.phases : []);
         seedEditValues(data.contact, data.event.formFields || []);
         setIsLoggedIn(true);
       } else {
@@ -262,6 +286,7 @@ export default function PortalPage() {
     setEvent(null);
     setRegistration(null);
     setContact(null);
+    setPhases([]);
     setEditValues({});
     setEditing(false);
     setEmail("");
@@ -629,6 +654,119 @@ export default function PortalPage() {
             ) : null}
           </CardContent>
         </Card>
+
+        {/* Additional information phases (post-registration) */}
+        {phases.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Additional Information</CardTitle>
+              <CardDescription>
+                We need a few more details from you before the event. Each
+                section opens on its own schedule.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {phases.map((p) => {
+                const opensAt = p.opensAt ? new Date(p.opensAt) : null;
+                const closesAt = p.closesAt ? new Date(p.closesAt) : null;
+                const baseHref = `/portal/${eventSlug}/phases/${p.id}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`;
+
+                let statusBadge: React.ReactNode = null;
+                let action: React.ReactNode = null;
+                let helperText: string | null = null;
+
+                if (p.status === "OPEN") {
+                  statusBadge = (
+                    <Badge variant="default" className="text-xs">
+                      Open
+                    </Badge>
+                  );
+                  action = (
+                    <Button asChild variant={p.isCompleted ? "outline" : "default"} size="sm">
+                      <Link href={baseHref}>
+                        {p.isCompleted ? "Edit" : "Fill in"}
+                        <ChevronRight className="ml-1 h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  );
+                  if (closesAt) {
+                    helperText = `Closes ${closesAt.toLocaleString()}`;
+                  }
+                } else if (p.status === "NOT_OPEN") {
+                  statusBadge = (
+                    <Badge variant="secondary" className="text-xs">
+                      <CalendarClock className="mr-1 h-3 w-3" />
+                      Not open yet
+                    </Badge>
+                  );
+                  if (opensAt) {
+                    helperText = `Opens ${opensAt.toLocaleString()}`;
+                  }
+                } else if (p.status === "CLOSED") {
+                  // Visible only when there's a submission (server already filtered).
+                  statusBadge = (
+                    <Badge variant="outline" className="text-xs">
+                      Closed
+                    </Badge>
+                  );
+                  action = (
+                    <Button asChild variant="ghost" size="sm">
+                      <Link href={baseHref}>
+                        View
+                        <ChevronRight className="ml-1 h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  );
+                  helperText = "This phase is closed — view-only.";
+                } else if (p.status === "LOCKED") {
+                  statusBadge = (
+                    <Badge variant="secondary" className="text-xs">
+                      <LockIcon className="mr-1 h-3 w-3" />
+                      Locked
+                    </Badge>
+                  );
+                  helperText = "Not available for your registration.";
+                }
+
+                return (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border p-4"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium truncate">{p.title}</p>
+                        {statusBadge}
+                        {p.isCompleted && (
+                          <Badge variant="outline" className="text-xs">
+                            <CheckCircle className="mr-1 h-3 w-3 text-green-600" />
+                            Completed
+                          </Badge>
+                        )}
+                        {p.isRequired && (
+                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            required
+                          </span>
+                        )}
+                      </div>
+                      {p.description && (
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {p.description}
+                        </p>
+                      )}
+                      {helperText && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {helperText}
+                        </p>
+                      )}
+                    </div>
+                    {action}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Cancel Registration */}
         {registration?.status !== "CANCELLED" && (

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { computePhaseStatus } from "@/lib/services/phase.service";
 
 interface RouteParams {
   params: Promise<{ eventSlug: string }>;
@@ -36,8 +37,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       include: {
         modules: true,
         branding: true,
+        // Edit-your-details panel scopes to REGISTRATION-phase fields only;
+        // post-reg phase fields live behind their own UI.
         formFields: {
-          where: { isActive: true },
+          where: {
+            isActive: true,
+            step: { phase: { type: "REGISTRATION" } },
+          },
           orderBy: { order: "asc" },
           select: {
             name: true,
@@ -84,6 +90,57 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // Post-registration phases — only surface them when the module is on.
+    // For each phase: include status (LOCKED / NOT_OPEN / OPEN / CLOSED),
+    // any existing submission, and overlay "completed" via submittedAt.
+    let phases: Array<Record<string, unknown>> = [];
+    if (event.modules?.postRegPhases) {
+      const phaseRows = await prisma.phase.findMany({
+        where: {
+          eventId: event.id,
+          type: "POST_REGISTRATION",
+          isActive: true,
+        },
+        orderBy: { order: "asc" },
+        include: {
+          accessOverrides: {
+            where: { registrationId: registration.id },
+            select: { status: true },
+          },
+          submissions: {
+            where: { registrationId: registration.id },
+            select: { id: true, submittedAt: true, updatedAt: true },
+          },
+        },
+      });
+
+      const now = new Date();
+      phases = phaseRows
+        .map((p) => {
+          const override = p.accessOverrides[0]?.status ?? null;
+          const status = computePhaseStatus(p, override, now);
+          const submission = p.submissions[0] ?? null;
+          // Closed-without-submission phases are hidden per spec.
+          if (status === "CLOSED" && !submission) return null;
+          return {
+            id: p.id,
+            title: p.title,
+            titleAr: p.titleAr,
+            description: p.description,
+            descriptionAr: p.descriptionAr,
+            order: p.order,
+            opensAt: p.opensAt,
+            closesAt: p.closesAt,
+            isRequired: p.isRequired,
+            status,
+            submittedAt: submission?.submittedAt ?? null,
+            updatedAt: submission?.updatedAt ?? null,
+            isCompleted: !!submission,
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+    }
+
     return NextResponse.json({
       event: {
         name: event.name,
@@ -111,6 +168,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         designation: registration.contact.designation,
         metadata: registration.contact.metadata,
       },
+      phases,
     });
   } catch (error) {
     console.error("Portal lookup error:", error);
@@ -140,7 +198,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       include: {
         modules: true,
         formFields: {
-          where: { isActive: true },
+          where: {
+            isActive: true,
+            step: { phase: { type: "REGISTRATION" } },
+          },
           select: { name: true, type: true, required: true, label: true },
         },
       },
