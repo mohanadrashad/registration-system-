@@ -149,18 +149,36 @@ function formatFieldValue(field: FormFieldDef, raw: unknown): string {
   return String(raw);
 }
 
+interface PortalEventInfo {
+  name: string;
+  branding?: {
+    primaryColor?: string | null;
+    secondaryColor?: string | null;
+    backgroundColor?: string | null;
+    textColor?: string | null;
+    logoUrl?: string | null;
+    welcomeTitle?: string | null;
+    welcomeMessage?: string | null;
+    customCss?: string | null;
+  } | null;
+}
+
 export default function PortalPage() {
   const params = useParams();
   const eventSlug = params.eventSlug as string;
 
-  // Login state
+  // ── Two-step OTP login state ───────────────────────────────────────
+  const [loginStep, setLoginStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [loggingIn, setLoggingIn] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [requestingOtp, setRequestingOtp] = useState(false);
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
   const [loginError, setLoginError] = useState("");
-  // While we check whether the cookie is valid, hide the login form so it
-  // doesn't flash for already-logged-in attendees. Starts true; flips to
-  // false when the initial GET resolves (whether 200 or 401).
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [eventInfo, setEventInfo] = useState<PortalEventInfo | null>(null);
+
+  // Hide the login form during the initial cookie check so already-logged-in
+  // attendees don't see it flash.
   const [sessionChecking, setSessionChecking] = useState(true);
   const sessionChecked = useRef(false);
 
@@ -219,42 +237,102 @@ export default function PortalPage() {
     }
   }, [eventSlug]);
 
-  // On mount: check the cookie. If it works, show post-login; if not, show
-  // login form. No URL params, no flash.
+  // On mount: check the cookie AND fetch event branding so the login form
+  // can render in the event's colors before the user has typed anything.
   useEffect(() => {
     if (sessionChecked.current) return;
     sessionChecked.current = true;
-    loadPortalData().finally(() => setSessionChecking(false));
-  }, [loadPortalData]);
 
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    setLoggingIn(true);
+    fetch(`/api/portal/${eventSlug}/info`, { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((info) => {
+        if (info) setEventInfo(info);
+      })
+      .catch(() => {});
+
+    loadPortalData().finally(() => setSessionChecking(false));
+  }, [loadPortalData, eventSlug]);
+
+  // Tick the resend cooldown every second.
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+
+  async function requestOtp(opts?: { silent?: boolean }) {
+    if (requestingOtp) return;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setLoginError("Please enter a valid email address.");
+      return;
+    }
+    setRequestingOtp(true);
     setLoginError("");
     try {
-      const res = await fetch(`/api/portal/${eventSlug}/login`, {
+      const res = await fetch(`/api/portal/${eventSlug}/otp/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ email, code }),
+        body: JSON.stringify({ email }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setLoginError(data.error || "Login failed");
+        setLoginError(data.error || "Couldn't send a code. Please try again.");
         return;
       }
-      // Cookie is set by the response. Now load the portal data.
+      setOtpCode("");
+      setLoginStep("code");
+      // 30-second cool-off before "Resend" lights up again.
+      setResendCooldown(30);
+      if (!opts?.silent) {
+        // No toast lib here — we rely on the on-screen messaging.
+      }
+    } catch {
+      setLoginError("Couldn't reach the server. Please try again.");
+    } finally {
+      setRequestingOtp(false);
+    }
+  }
+
+  async function verifyOtp(submittedCode?: string) {
+    const codeToCheck = (submittedCode ?? otpCode).trim();
+    if (verifyingOtp) return;
+    if (!/^\d{6}$/.test(codeToCheck)) {
+      setLoginError("Please enter the 6-digit code from your email.");
+      return;
+    }
+    setVerifyingOtp(true);
+    setLoginError("");
+    try {
+      const res = await fetch(`/api/portal/${eventSlug}/otp/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ email, code: codeToCheck }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || "That code didn't work. Try again.");
+        setOtpCode("");
+        return;
+      }
       const ok = await loadPortalData();
       if (!ok) {
         setLoginError(
-          "Logged in but failed to load your registration. Please try again."
+          "Signed in but couldn't load your registration. Please refresh."
         );
       }
     } catch {
-      setLoginError("Failed to connect. Please try again.");
+      setLoginError("Couldn't reach the server. Please try again.");
     } finally {
-      setLoggingIn(false);
+      setVerifyingOtp(false);
     }
+  }
+
+  function backToEmail() {
+    setLoginStep("email");
+    setOtpCode("");
+    setLoginError("");
   }
 
   async function handleSave() {
@@ -346,7 +424,9 @@ export default function PortalPage() {
     setEditValues({});
     setEditing(false);
     setEmail("");
-    setCode("");
+    setOtpCode("");
+    setLoginStep("email");
+    setLoginError("");
   }
 
   function startEditing() {
@@ -519,71 +599,189 @@ export default function PortalPage() {
 
   // While we check the cookie session, hide the login form so it doesn't
   // flash for already-authenticated attendees.
+  const loginBranding = eventInfo?.branding ?? null;
+  const loginPrimary = loginBranding?.primaryColor || "#7dc242";
+  const loginBackground = loginBranding?.backgroundColor || "#f9fafb";
+  const loginTextColor = loginBranding?.textColor || "#111827";
+  const loginLogo = loginBranding?.logoUrl || null;
+  const loginCustomCss = loginBranding?.customCss ? (
+    <style dangerouslySetInnerHTML={{ __html: loginBranding.customCss }} />
+  ) : null;
+
   if (!isLoggedIn && sessionChecking) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div
+        className="min-h-screen flex items-center justify-center p-4"
+        style={{ backgroundColor: loginBackground }}
+      >
+        <Loader2
+          className="h-6 w-6 animate-spin"
+          style={{ color: loginPrimary }}
+        />
       </div>
     );
   }
 
-  // Login form
+  // Login form — two-step OTP flow.
   if (!isLoggedIn) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <CardTitle className="text-2xl">Attendee Portal</CardTitle>
-            <CardDescription>View and manage your registration</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleLogin} className="space-y-4">
-              {loginError && (
-                <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-600">
-                  {loginError}
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="code">Confirmation Code</Label>
-                <Input
-                  id="code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="Enter your confirmation code"
-                  required
-                />
-                <p className="text-xs text-muted-foreground">
-                  You received this code in your registration confirmation email
-                </p>
-              </div>
-
-              <Button type="submit" className="w-full" disabled={loggingIn}>
-                {loggingIn ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Logging in...
-                  </>
-                ) : (
-                  "Access Portal"
+      <>
+        {loginCustomCss}
+        <div
+          className="min-h-screen flex flex-col"
+          style={{ backgroundColor: loginBackground }}
+        >
+          <div className="h-1.5 w-full" style={{ backgroundColor: loginPrimary }} />
+          <div className="flex-1 flex items-center justify-center p-4">
+            <Card className="w-full max-w-md shadow-sm">
+              <CardHeader className="text-center space-y-3">
+                {loginLogo && (
+                  <div className="flex justify-center">
+                    <img
+                      src={loginLogo}
+                      alt={eventInfo?.name ?? ""}
+                      className="max-h-12"
+                    />
+                  </div>
                 )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </div>
+                <CardTitle
+                  className="text-2xl"
+                  style={{ color: loginTextColor }}
+                >
+                  {eventInfo?.name ?? "Attendee Portal"}
+                </CardTitle>
+                <CardDescription>
+                  {loginStep === "email"
+                    ? "Sign in to view and manage your registration."
+                    : "Check your inbox — we just emailed a 6-digit code."}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loginError && (
+                  <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-600">
+                    {loginError}
+                  </div>
+                )}
+
+                {loginStep === "email" ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void requestOtp();
+                    }}
+                    className="space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email address</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        autoComplete="email"
+                        autoFocus
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="you@example.com"
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Use the email you registered with. We&apos;ll send a
+                        code to sign you in.
+                      </p>
+                    </div>
+                    <Button
+                      type="submit"
+                      className="w-full h-11"
+                      disabled={requestingOtp || !email}
+                      style={{ backgroundColor: loginPrimary, color: "#fff" }}
+                    >
+                      {requestingOtp ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Sending code…
+                        </>
+                      ) : (
+                        "Send me a code"
+                      )}
+                    </Button>
+                  </form>
+                ) : (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void verifyOtp();
+                    }}
+                    className="space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="otp">6-digit code</Label>
+                      <Input
+                        id="otp"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        autoFocus
+                        maxLength={6}
+                        pattern="[0-9]{6}"
+                        value={otpCode}
+                        onChange={(e) => {
+                          const next = e.target.value.replace(/\D/g, "").slice(0, 6);
+                          setOtpCode(next);
+                          if (loginError) setLoginError("");
+                          // Auto-submit when 6 digits arrive (paste or type).
+                          if (next.length === 6) {
+                            void verifyOtp(next);
+                          }
+                        }}
+                        className="text-center text-2xl tracking-[0.4em] font-mono h-14"
+                        placeholder="••••••"
+                      />
+                      <p className="text-xs text-muted-foreground text-center">
+                        Sent to <span className="font-medium">{email}</span>.{" "}
+                        <button
+                          type="button"
+                          onClick={backToEmail}
+                          className="underline hover:text-foreground"
+                        >
+                          Use a different email
+                        </button>
+                      </p>
+                    </div>
+                    <Button
+                      type="submit"
+                      className="w-full h-11"
+                      disabled={verifyingOtp || otpCode.length !== 6}
+                      style={{ backgroundColor: loginPrimary, color: "#fff" }}
+                    >
+                      {verifyingOtp ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Verifying…
+                        </>
+                      ) : (
+                        "Verify and sign in"
+                      )}
+                    </Button>
+                    <div className="text-center">
+                      <button
+                        type="button"
+                        onClick={() => void requestOtp({ silent: true })}
+                        disabled={resendCooldown > 0 || requestingOtp}
+                        className="text-xs text-muted-foreground underline disabled:no-underline disabled:opacity-60"
+                      >
+                        {resendCooldown > 0
+                          ? `Resend code in ${resendCooldown}s`
+                          : requestingOtp
+                          ? "Sending…"
+                          : "Didn't get it? Resend code"}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </>
     );
   }
 

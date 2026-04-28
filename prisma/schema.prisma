@@ -370,6 +370,7 @@ model Registration {
   checkIns         CheckIn[]
   phaseSubmissions PhaseSubmission[]
   phaseAccess      PhaseAccess[]
+  portalOtps       PortalOtp[]
 
   @@index([eventId])
   @@index([status])
@@ -758,4 +759,22 @@ model PhaseAccess {
 enum AccessStatus {
   LOCKED // Admin explicitly locked; ignores dates
   OPEN // Admin explicitly unlocked; ignores dates
+}
+
+// ─── Portal OTP (one-time code emailed for portal login) ───
+
+model PortalOtp {
+  id             String    @id @default(cuid())
+  registrationId String
+  // HMAC-SHA256(code, AUTH_SECRET) — never store the plain code.
+  codeHash       String
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  attempts       Int       @default(0)
+  createdAt      DateTime  @default(now())
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@index([registrationId])
+  @@index([expiresAt])
 }
