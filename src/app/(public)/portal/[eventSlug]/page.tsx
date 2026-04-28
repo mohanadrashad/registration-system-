@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -151,7 +151,6 @@ function formatFieldValue(field: FormFieldDef, raw: unknown): string {
 
 export default function PortalPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const eventSlug = params.eventSlug as string;
 
   // Login state
@@ -159,7 +158,11 @@ export default function PortalPage() {
   const [code, setCode] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState("");
-  const autoLoginAttempted = useRef(false);
+  // While we check whether the cookie is valid, hide the login form so it
+  // doesn't flash for already-logged-in attendees. Starts true; flips to
+  // false when the initial GET resolves (whether 200 or 401).
+  const [sessionChecking, setSessionChecking] = useState(true);
+  const sessionChecked = useRef(false);
 
   // Data state
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -194,51 +197,65 @@ export default function PortalPage() {
     setEditValues(values);
   }
 
-  async function performLogin(loginEmail: string, loginCode: string) {
+  // Fetch the portal data using whatever session cookie the browser has.
+  // Returns true on success, false on 401 (no/invalid session).
+  const loadPortalData = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/portal/${eventSlug}`, {
+        credentials: "same-origin",
+      });
+      if (res.status === 401) return false;
+      if (!res.ok) return false;
+      const data = await res.json();
+      setEvent(data.event);
+      setRegistration(data.registration);
+      setContact(data.contact);
+      setPhases(Array.isArray(data.phases) ? data.phases : []);
+      seedEditValues(data.contact, data.event.formFields || []);
+      setIsLoggedIn(true);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [eventSlug]);
+
+  // On mount: check the cookie. If it works, show post-login; if not, show
+  // login form. No URL params, no flash.
+  useEffect(() => {
+    if (sessionChecked.current) return;
+    sessionChecked.current = true;
+    loadPortalData().finally(() => setSessionChecking(false));
+  }, [loadPortalData]);
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
     setLoggingIn(true);
     setLoginError("");
     try {
-      const res = await fetch(
-        `/api/portal/${eventSlug}?email=${encodeURIComponent(loginEmail)}&code=${encodeURIComponent(loginCode)}`
-      );
+      const res = await fetch(`/api/portal/${eventSlug}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ email, code }),
+      });
       const data = await res.json();
-      if (res.ok) {
-        setEvent(data.event);
-        setRegistration(data.registration);
-        setContact(data.contact);
-        setPhases(Array.isArray(data.phases) ? data.phases : []);
-        seedEditValues(data.contact, data.event.formFields || []);
-        setIsLoggedIn(true);
-        return true;
+      if (!res.ok) {
+        setLoginError(data.error || "Login failed");
+        return;
       }
-      setLoginError(data.error || "Login failed");
-      return false;
+      // Cookie is set by the response. Now load the portal data.
+      const ok = await loadPortalData();
+      if (!ok) {
+        setLoginError(
+          "Logged in but failed to load your registration. Please try again."
+        );
+      }
     } catch {
       setLoginError("Failed to connect. Please try again.");
-      return false;
     } finally {
       setLoggingIn(false);
     }
   }
-
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    await performLogin(email, code);
-  }
-
-  // Auto-login when the portal is opened with ?email=&code= in the URL —
-  // this is what the "Back to portal" link from the phase fill page uses.
-  useEffect(() => {
-    if (autoLoginAttempted.current) return;
-    const qEmail = searchParams.get("email");
-    const qCode = searchParams.get("code");
-    if (!qEmail || !qCode) return;
-    autoLoginAttempted.current = true;
-    setEmail(qEmail);
-    setCode(qCode);
-    void performLogin(qEmail, qCode);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
 
   async function handleSave() {
     if (!event || !contact) return;
@@ -256,7 +273,8 @@ export default function PortalPage() {
       const res = await fetch(`/api/portal/${eventSlug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code, updates }),
+        credentials: "same-origin",
+        body: JSON.stringify({ updates }),
       });
 
       const data = await res.json();
@@ -293,7 +311,8 @@ export default function PortalPage() {
       const res = await fetch(`/api/portal/${eventSlug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code, action: "cancel" }),
+        credentials: "same-origin",
+        body: JSON.stringify({ action: "cancel" }),
       });
 
       if (res.ok) {
@@ -310,7 +329,15 @@ export default function PortalPage() {
     }
   }
 
-  function logout() {
+  async function logout() {
+    try {
+      await fetch(`/api/portal/${eventSlug}/logout`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+    } catch {
+      // best effort — even if the server call fails, clear local state
+    }
     setIsLoggedIn(false);
     setEvent(null);
     setRegistration(null);
@@ -490,6 +517,16 @@ export default function PortalPage() {
     }
   }
 
+  // While we check the cookie session, hide the login form so it doesn't
+  // flash for already-authenticated attendees.
+  if (!isLoggedIn && sessionChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   // Login form
   if (!isLoggedIn) {
     return (
@@ -553,8 +590,8 @@ export default function PortalPage() {
   const visibleFields = (event?.formFields || []).filter((f) => !LAYOUT_TYPES.has(f.type));
 
   const branding = event?.branding ?? null;
-  const primaryColor = branding?.primaryColor || "#6abf4b";
-  const backgroundColor = branding?.backgroundColor || "#f9fafb";
+  const primaryColor = branding?.primaryColor || "#7dc242";
+  const backgroundColor = branding?.backgroundColor || "#ffffff";
   const textColor = branding?.textColor || "#111827";
   const logoUrl = branding?.logoUrl || null;
   const customStyles = branding?.customCss ? (
@@ -564,7 +601,11 @@ export default function PortalPage() {
   return (
     <>
       {customStyles}
-    <div className="min-h-screen py-8 px-4" style={{ backgroundColor }}>
+    <div className="min-h-screen" style={{ backgroundColor }}>
+      {/* Primary-color accent band at the top of the page so the brand is
+          immediately visible even before scrolling to action buttons. */}
+      <div className="h-1.5 w-full" style={{ backgroundColor: primaryColor }} />
+      <div className="py-8 px-4">
       <div className="max-w-2xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -720,7 +761,7 @@ export default function PortalPage() {
               {phases.map((p) => {
                 const opensAt = p.opensAt ? new Date(p.opensAt) : null;
                 const closesAt = p.closesAt ? new Date(p.closesAt) : null;
-                const baseHref = `/portal/${eventSlug}/phases/${p.id}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`;
+                const baseHref = `/portal/${eventSlug}/phases/${p.id}`;
 
                 let statusBadge: React.ReactNode = null;
                 let action: React.ReactNode = null;
@@ -868,6 +909,7 @@ export default function PortalPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+      </div>
       </div>
     </div>
     </>

@@ -3,26 +3,28 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { computePhaseStatus } from "@/lib/services/phase.service";
 import { isFieldRequiredByCondition } from "@/lib/form-conditional";
+import { getPortalSessionFromRequest } from "@/lib/portal/session";
 
 interface RouteParams {
   params: Promise<{ eventSlug: string; phaseId: string }>;
 }
 
 /**
- * Authenticate an attendee against (eventSlug, email, code) and confirm
- * the phase belongs to that event with the postRegPhases module on.
+ * Authenticate via the portal_session cookie and confirm the phase
+ * belongs to the authenticated attendee's event with the postRegPhases
+ * module on.
  */
 async function loadAuthorizedContext(
+  req: NextRequest,
   eventSlug: string,
-  phaseId: string,
-  email: string | null,
-  code: string | null
+  phaseId: string
 ) {
-  if (!email || !code) {
+  const session = await getPortalSessionFromRequest(req, eventSlug);
+  if (!session) {
     return {
       error: NextResponse.json(
-        { error: "Email and confirmation code are required" },
-        { status: 400 }
+        { error: "Not authenticated" },
+        { status: 401 }
       ),
     } as const;
   }
@@ -54,18 +56,14 @@ async function loadAuthorizedContext(
   }
 
   const registration = await prisma.registration.findFirst({
-    where: {
-      eventId: event.id,
-      confirmationCode: code,
-      contact: { email: email.toLowerCase() },
-    },
+    where: { id: session.registrationId, eventId: event.id },
     select: { id: true, status: true },
   });
   if (!registration) {
     return {
       error: NextResponse.json(
-        { error: "Registration not found." },
-        { status: 404 }
+        { error: "Session is no longer valid. Please log in again." },
+        { status: 401 }
       ),
     } as const;
   }
@@ -109,10 +107,8 @@ async function loadAuthorizedContext(
 // GET — fetch the phase structure + any existing submission for this attendee.
 export async function GET(req: NextRequest, { params }: RouteParams) {
   const { eventSlug, phaseId } = await params;
-  const email = req.nextUrl.searchParams.get("email");
-  const code = req.nextUrl.searchParams.get("code");
 
-  const ctx = await loadAuthorizedContext(eventSlug, phaseId, email, code);
+  const ctx = await loadAuthorizedContext(req, eventSlug, phaseId);
   if ("error" in ctx) return ctx.error;
   const { phase, event } = ctx;
 
@@ -177,18 +173,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   const { eventSlug, phaseId } = await params;
   const body = await req.json();
-  const { email, code, data } = body as {
-    email?: string;
-    code?: string;
+  const { data } = body as {
     data?: Record<string, unknown>;
   };
 
-  const ctx = await loadAuthorizedContext(
-    eventSlug,
-    phaseId,
-    email ?? null,
-    code ?? null
-  );
+  const ctx = await loadAuthorizedContext(req, eventSlug, phaseId);
   if ("error" in ctx) return ctx.error;
   const { phase, registration } = ctx;
 

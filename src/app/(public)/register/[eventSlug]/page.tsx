@@ -355,11 +355,8 @@ export default function RegisterPage() {
     setCurrentStep((s) => s - 1);
   }
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    // Hard guard: never submit unless we're on the last step. Catches any
-    // race where a form submit fires from a non-last-step state.
-    if (!isLastStep && isMultiStep) {
+  async function performSubmit() {
+    if (isMultiStep && !isLastStep) {
       goNext();
       return;
     }
@@ -386,6 +383,12 @@ export default function RegisterPage() {
       setError(result.error || "Registration failed");
     }
     setLoading(false);
+  }
+
+  function onFormSubmit(e: React.FormEvent<HTMLFormElement>) {
+    // Defensive — Submit is type=button with onClick, Enter routes through
+    // the onKeyDown handler. Nothing should reach this path.
+    e.preventDefault();
   }
 
   // ── Branding helpers ─────────────────────────────────────────────────
@@ -983,20 +986,18 @@ export default function RegisterPage() {
               )}
 
               <form
-                onSubmit={onSubmit}
+                onSubmit={onFormSubmit}
                 onKeyDown={(e) => {
-                  // Pressing Enter inside a non-textarea field on a non-last
-                  // step should advance, not submit. Without this guard the
-                  // browser fires a synthetic submit because there's a
-                  // type="submit" button somewhere on the page.
                   if (
                     e.key === "Enter" &&
-                    isMultiStep &&
-                    !isLastStep &&
                     (e.target as HTMLElement).tagName !== "TEXTAREA"
                   ) {
                     e.preventDefault();
-                    goNext();
+                    if (isMultiStep && !isLastStep) {
+                      goNext();
+                    } else {
+                      performSubmit();
+                    }
                   }
                 }}
                 noValidate
@@ -1031,7 +1032,8 @@ export default function RegisterPage() {
                     )}
                     {isLastStep ? (
                       <Button
-                        type="submit"
+                        type="button"
+                        onClick={performSubmit}
                         className="h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer submit-button flex-1"
                         style={{
                           backgroundColor: primaryColor,
@@ -1062,7 +1064,8 @@ export default function RegisterPage() {
                   </div>
                 ) : (
                   <Button
-                    type="submit"
+                    type="button"
+                    onClick={performSubmit}
                     className="w-full h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer submit-button"
                     style={{ backgroundColor: primaryColor, color: "#fff" }}
                     disabled={loading}
