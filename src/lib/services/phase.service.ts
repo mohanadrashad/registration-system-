@@ -1,5 +1,25 @@
 import { prisma } from "@/lib/prisma";
-import type { Step, Phase } from "@prisma/client";
+import type { Step, Phase, AccessStatus } from "@prisma/client";
+
+// ─── Status calculation ────────────────────────────────────────────────
+
+export type PhaseStatus = "LOCKED" | "NOT_OPEN" | "OPEN" | "CLOSED";
+
+/**
+ * Decide whether an attendee can fill a post-registration phase right
+ * now. Admin override (PhaseAccess) wins over the date-based default.
+ */
+export function computePhaseStatus(
+  phase: { opensAt: Date | null; closesAt: Date | null },
+  override: AccessStatus | null,
+  now: Date = new Date()
+): PhaseStatus {
+  if (override === "LOCKED") return "LOCKED";
+  if (override === "OPEN") return "OPEN";
+  if (phase.opensAt && now.getTime() < phase.opensAt.getTime()) return "NOT_OPEN";
+  if (phase.closesAt && now.getTime() > phase.closesAt.getTime()) return "CLOSED";
+  return "OPEN";
+}
 
 /**
  * Return the first Step of the event's REGISTRATION phase. Creates the
