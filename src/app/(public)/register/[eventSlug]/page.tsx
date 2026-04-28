@@ -357,6 +357,12 @@ export default function RegisterPage() {
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // Hard guard: never submit unless we're on the last step. Catches any
+    // race where a form submit fires from a non-last-step state.
+    if (!isLastStep && isMultiStep) {
+      goNext();
+      return;
+    }
     if (!validateCurrentStep()) return;
     setLoading(true);
     setError("");

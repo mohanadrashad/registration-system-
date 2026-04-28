@@ -58,6 +58,21 @@ interface FormStep {
 
 type PhaseStatus = "LOCKED" | "NOT_OPEN" | "OPEN" | "CLOSED";
 
+interface Branding {
+  primaryColor?: string | null;
+  secondaryColor?: string | null;
+  backgroundColor?: string | null;
+  textColor?: string | null;
+  logoUrl?: string | null;
+  customCss?: string | null;
+}
+
+interface EventLite {
+  name: string;
+  slug: string;
+  branding?: Branding | null;
+}
+
 interface PhaseData {
   id: string;
   title: string;
@@ -90,6 +105,7 @@ export default function PortalPhaseFillPage() {
 
   const [pageLoading, setPageLoading] = useState(true);
   const [phase, setPhase] = useState<PhaseData | null>(null);
+  const [event, setEvent] = useState<EventLite | null>(null);
   const [submission, setSubmission] = useState<SubmissionData | null>(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -124,6 +140,7 @@ export default function PortalPhaseFillPage() {
         const p: PhaseData = data.phase;
         const sub: SubmissionData | null = data.submission;
         setPhase(p);
+        setEvent(data.event ?? null);
         setSubmission(sub);
 
         // Seed form values: existing submission > field default > empty.
@@ -226,6 +243,13 @@ export default function PortalPhaseFillPage() {
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (readOnly) return;
+    // Hard guard: only the last step should ever submit. If we got here on
+    // an earlier step (race during re-render, accidental Enter, etc.) treat
+    // it as a Next click instead.
+    if (!isLastStep) {
+      goNext();
+      return;
+    }
     if (!validateCurrentStep()) return;
     setSubmitting(true);
     setError("");
@@ -464,9 +488,21 @@ export default function PortalPhaseFillPage() {
     );
   }
 
+  const branding = event?.branding ?? null;
+  const primaryColor = branding?.primaryColor || "#6abf4b";
+  const backgroundColor = branding?.backgroundColor || "#f9fafb";
+  const textColor = branding?.textColor || "#111827";
+  const logoUrl = branding?.logoUrl || null;
+  const customStyles = branding?.customCss ? (
+    <style dangerouslySetInnerHTML={{ __html: branding.customCss }} />
+  ) : null;
+
   if (pageLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor }}
+      >
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
@@ -474,56 +510,94 @@ export default function PortalPhaseFillPage() {
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-        <div className="max-w-md text-center space-y-6">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
-            <CheckCircle className="h-8 w-8 text-green-600" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold">Saved</h1>
-            <p className="text-muted-foreground mt-1">
-              Your response to &ldquo;{phase?.title}&rdquo; has been submitted.
-              You can come back and edit it anytime until the phase closes.
-            </p>
-          </div>
-          <Button asChild>
-            <Link
-              href={`/portal/${eventSlug}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`}
+      <>
+        {customStyles}
+        <div
+          className="min-h-screen flex items-center justify-center px-4"
+          style={{ backgroundColor }}
+        >
+          <div className="max-w-md text-center space-y-6">
+            {logoUrl && (
+              <img
+                src={logoUrl}
+                alt={event?.name ?? ""}
+                className="max-h-12 mx-auto mb-4"
+              />
+            )}
+            <div
+              className="mx-auto flex h-16 w-16 items-center justify-center rounded-full"
+              style={{ backgroundColor: `${primaryColor}20` }}
             >
-              Back to portal
-            </Link>
-          </Button>
+              <CheckCircle className="h-8 w-8" style={{ color: primaryColor }} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold" style={{ color: textColor }}>
+                Saved
+              </h1>
+              <p className="text-muted-foreground mt-1">
+                Your response to &ldquo;{phase?.title}&rdquo; has been submitted.
+                You can come back and edit it anytime until the phase closes.
+              </p>
+            </div>
+            <Button
+              asChild
+              style={{ backgroundColor: primaryColor, color: "#fff" }}
+            >
+              <Link
+                href={`/portal/${eventSlug}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`}
+              >
+                Back to portal
+              </Link>
+            </Button>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (!phase) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-        <div className="max-w-md text-center space-y-4">
-          <p className="text-red-500">{error || "Phase not found"}</p>
-          <Button asChild variant="outline">
-            <Link href={`/portal/${eventSlug}`}>Back to portal</Link>
-          </Button>
+      <>
+        {customStyles}
+        <div
+          className="min-h-screen flex items-center justify-center px-4"
+          style={{ backgroundColor }}
+        >
+          <div className="max-w-md text-center space-y-4">
+            <p className="text-red-500">{error || "Phase not found"}</p>
+            <Button asChild variant="outline">
+              <Link href={`/portal/${eventSlug}`}>Back to portal</Link>
+            </Button>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
-      <div className="max-w-2xl mx-auto space-y-6">
-        <div>
-          <Link
-            href={`/portal/${eventSlug}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`}
-            className="text-sm text-muted-foreground inline-flex items-center hover:text-foreground"
-          >
-            <ArrowLeft className="h-4 w-4 mr-1" /> Back to portal
-          </Link>
-        </div>
+    <>
+      {customStyles}
+      <div className="min-h-screen py-8 px-4" style={{ backgroundColor }}>
+        <div className="max-w-2xl mx-auto space-y-6">
+          {logoUrl && (
+            <div className="flex justify-center">
+              <img
+                src={logoUrl}
+                alt={event?.name ?? ""}
+                className="max-h-12"
+              />
+            </div>
+          )}
+          <div>
+            <Link
+              href={`/portal/${eventSlug}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`}
+              className="text-sm text-muted-foreground inline-flex items-center hover:text-foreground"
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" /> Back to portal
+            </Link>
+          </div>
 
-        <div className="rounded-xl border bg-white p-6 space-y-4">
+          <div className="rounded-xl border bg-white p-6 space-y-4">
           <div className="flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold">{phase.title}</h1>
             {phase.status === "LOCKED" && (
@@ -648,6 +722,7 @@ export default function PortalPhaseFillPage() {
                       type="submit"
                       className="flex-1"
                       disabled={submitting}
+                      style={{ backgroundColor: primaryColor, color: "#fff" }}
                     >
                       {submitting ? "Saving…" : submission ? "Update" : "Submit"}
                     </Button>
@@ -656,20 +731,27 @@ export default function PortalPhaseFillPage() {
                       type="button"
                       onClick={goNext}
                       className="flex-1"
+                      style={{ backgroundColor: primaryColor, color: "#fff" }}
                     >
                       Next <ArrowRight className="h-4 w-4 ml-1" />
                     </Button>
                   )}
                 </div>
               ) : (
-                <Button type="submit" className="w-full" disabled={submitting}>
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={submitting}
+                  style={{ backgroundColor: primaryColor, color: "#fff" }}
+                >
                   {submitting ? "Saving…" : submission ? "Update" : "Submit"}
                 </Button>
               )
             )}
           </form>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
