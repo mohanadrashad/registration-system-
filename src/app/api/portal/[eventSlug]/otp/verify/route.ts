@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
-  signPortalSession,
-  setPortalSessionCookie,
-} from "@/lib/portal/session";
-import {
   isLoginBlocked,
   recordLoginFailure,
   recordLoginSuccess,
 } from "@/lib/portal/login-rate-limit";
+import { verifyOtpForEvent } from "@/lib/portal/otp.service";
+import {
+  setPortalSessionCookie,
+  signPortalSession,
+} from "@/lib/portal/session";
 
 interface RouteParams {
   params: Promise<{ eventSlug: string }>;
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
   if (!email || !code) {
     return NextResponse.json(
-      { error: "Email and confirmation code are required" },
+      { error: "Email and code are required." },
       { status: 400 }
     );
   }
@@ -49,31 +50,40 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
   const event = await prisma.event.findUnique({
     where: { slug: eventSlug },
-    include: { modules: true },
+    select: { id: true, isActive: true, modules: { select: { selfServicePortal: true } } },
   });
 
   if (!event || !event.isActive || !event.modules?.selfServicePortal) {
-    // Generic message — don't leak whether the event exists or not.
+    recordLoginFailure(eventSlug, email);
     return NextResponse.json(
-      { error: "Invalid email or confirmation code" },
+      { error: "Invalid code or it has expired." },
       { status: 401 }
     );
   }
 
-  const registration = await prisma.registration.findFirst({
-    where: {
-      eventId: event.id,
-      confirmationCode: code,
-      contact: { email },
-    },
-    select: { id: true },
-  });
-
-  if (!registration) {
+  const result = await verifyOtpForEvent(event.id, email, code);
+  if (!result.ok) {
     recordLoginFailure(eventSlug, email);
-    // Generic message — don't tell the attacker which half was wrong.
+    if (result.reason === "expired") {
+      return NextResponse.json(
+        {
+          error:
+            "That code has expired. Please request a new one.",
+        },
+        { status: 401 }
+      );
+    }
+    if (result.reason === "exhausted") {
+      return NextResponse.json(
+        {
+          error:
+            "Too many wrong attempts on this code. Please request a new one.",
+        },
+        { status: 401 }
+      );
+    }
     return NextResponse.json(
-      { error: "Invalid email or confirmation code" },
+      { error: "Invalid code or it has expired." },
       { status: 401 }
     );
   }
@@ -81,11 +91,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   recordLoginSuccess(eventSlug, email);
 
   const token = await signPortalSession({
-    registrationId: registration.id,
+    registrationId: result.registrationId,
     eventId: event.id,
     eventSlug,
   });
-
   const res = NextResponse.json({ success: true });
   setPortalSessionCookie(res, token);
   return res;
