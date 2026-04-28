@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { computePhaseStatus } from "@/lib/services/phase.service";
+import { getPortalSessionFromRequest } from "@/lib/portal/session";
 
 interface RouteParams {
   params: Promise<{ eventSlug: string }>;
@@ -18,17 +19,17 @@ const COLUMN_FIELDS = new Set([
 
 const LAYOUT_TYPES = new Set(["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"]);
 
-// GET - Get registration details by email and confirmation code
+// GET - Get the authenticated attendee's registration. Requires a valid
+// portal_session cookie (set by POST /api/portal/[eventSlug]/login).
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const { eventSlug } = await params;
-    const email = req.nextUrl.searchParams.get("email");
-    const code = req.nextUrl.searchParams.get("code");
 
-    if (!email || !code) {
+    const session = await getPortalSessionFromRequest(req, eventSlug);
+    if (!session) {
       return NextResponse.json(
-        { error: "Email and confirmation code are required" },
-        { status: 400 }
+        { error: "Not authenticated" },
+        { status: 401 }
       );
     }
 
@@ -70,23 +71,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     const registration = await prisma.registration.findFirst({
-      where: {
-        eventId: event.id,
-        confirmationCode: code,
-        contact: {
-          email: email.toLowerCase(),
-        },
-      },
-      include: {
-        contact: true,
-        badge: true,
-      },
+      where: { id: session.registrationId, eventId: event.id },
+      include: { contact: true, badge: true },
     });
 
     if (!registration) {
+      // Session points at a registration that's been deleted, or the
+      // session is stale. Treat as logged-out.
       return NextResponse.json(
-        { error: "Registration not found. Please check your email and confirmation code." },
-        { status: 404 }
+        { error: "Session is no longer valid. Please log in again." },
+        { status: 401 }
       );
     }
 
@@ -179,19 +173,22 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   }
 }
 
-// POST - Update registration details or cancel
+// POST - Update the authenticated attendee's registration (edit details or
+// cancel). Identity comes from the portal_session cookie.
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { eventSlug } = await params;
-    const body = await req.json();
-    const { email, code, updates, action } = body;
 
-    if (!email || !code) {
+    const session = await getPortalSessionFromRequest(req, eventSlug);
+    if (!session) {
       return NextResponse.json(
-        { error: "Email and confirmation code are required" },
-        { status: 400 }
+        { error: "Not authenticated" },
+        { status: 401 }
       );
     }
+
+    const body = await req.json();
+    const { updates, action } = body;
 
     const event = await prisma.event.findUnique({
       where: { slug: eventSlug },
@@ -219,20 +216,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     const registration = await prisma.registration.findFirst({
-      where: {
-        eventId: event.id,
-        confirmationCode: code,
-        contact: {
-          email: email.toLowerCase(),
-        },
-      },
+      where: { id: session.registrationId, eventId: event.id },
       include: { contact: true },
     });
 
     if (!registration) {
       return NextResponse.json(
-        { error: "Registration not found" },
-        { status: 404 }
+        { error: "Session is no longer valid. Please log in again." },
+        { status: 401 }
       );
     }
 

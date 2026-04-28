@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -100,8 +101,6 @@ export default function PortalPhaseFillPage() {
   const searchParams = useSearchParams();
   const eventSlug = params.eventSlug as string;
   const phaseId = params.phaseId as string;
-  const email = searchParams.get("email") ?? "";
-  const code = searchParams.get("code") ?? "";
 
   const [pageLoading, setPageLoading] = useState(true);
   const [phase, setPhase] = useState<PhaseData | null>(null);
@@ -123,14 +122,14 @@ export default function PortalPhaseFillPage() {
 
   useEffect(() => {
     async function fetchPhase() {
-      if (!email || !code) {
-        setError("Missing portal credentials. Please log in again.");
-        setPageLoading(false);
-        return;
-      }
       try {
-        const url = `/api/portal/${eventSlug}/phases/${phaseId}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`;
-        const res = await fetch(url);
+        const url = `/api/portal/${eventSlug}/phases/${phaseId}`;
+        const res = await fetch(url, { credentials: "same-origin" });
+        if (res.status === 401) {
+          // No valid session — bounce to portal so the user can log in.
+          router.replace(`/portal/${eventSlug}`);
+          return;
+        }
         const data = await res.json();
         if (!res.ok) {
           setError(data.error || "Failed to load phase");
@@ -168,7 +167,7 @@ export default function PortalPhaseFillPage() {
       }
     }
     fetchPhase();
-  }, [eventSlug, phaseId, email, code]);
+  }, [eventSlug, phaseId, router]);
 
   const visibleFields = useMemo(() => {
     if (!activeStep) return [];
@@ -240,12 +239,8 @@ export default function PortalPhaseFillPage() {
     setCurrentStep((s) => s - 1);
   }
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function performSubmit() {
     if (readOnly) return;
-    // Hard guard: only the last step should ever submit. If we got here on
-    // an earlier step (race during re-render, accidental Enter, etc.) treat
-    // it as a Next click instead.
     if (!isLastStep) {
       goNext();
       return;
@@ -257,8 +252,13 @@ export default function PortalPhaseFillPage() {
       const res = await fetch(`/api/portal/${eventSlug}/phases/${phaseId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code, data: formValues }),
+        credentials: "same-origin",
+        body: JSON.stringify({ data: formValues }),
       });
+      if (res.status === 401) {
+        router.replace(`/portal/${eventSlug}`);
+        return;
+      }
       const result = await res.json();
       if (res.ok) {
         setSuccess(true);
@@ -270,6 +270,24 @@ export default function PortalPhaseFillPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function onFormSubmit(e: React.FormEvent<HTMLFormElement>) {
+    // Defensive: nothing should submit through here anymore (Submit button
+    // is type=button with explicit onClick, Enter is handled in onKeyDown).
+    e.preventDefault();
+  }
+
+  async function logout() {
+    try {
+      await fetch(`/api/portal/${eventSlug}/logout`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+    } catch {
+      // best effort
+    }
+    router.replace(`/portal/${eventSlug}`);
   }
 
   function renderField(field: FormField) {
@@ -489,8 +507,8 @@ export default function PortalPhaseFillPage() {
   }
 
   const branding = event?.branding ?? null;
-  const primaryColor = branding?.primaryColor || "#6abf4b";
-  const backgroundColor = branding?.backgroundColor || "#f9fafb";
+  const primaryColor = branding?.primaryColor || "#7dc242";
+  const backgroundColor = branding?.backgroundColor || "#ffffff";
   const textColor = branding?.textColor || "#111827";
   const logoUrl = branding?.logoUrl || null;
   const customStyles = branding?.customCss ? (
@@ -544,7 +562,7 @@ export default function PortalPhaseFillPage() {
               style={{ backgroundColor: primaryColor, color: "#fff" }}
             >
               <Link
-                href={`/portal/${eventSlug}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`}
+                href={`/portal/${eventSlug}`}
               >
                 Back to portal
               </Link>
@@ -577,7 +595,9 @@ export default function PortalPhaseFillPage() {
   return (
     <>
       {customStyles}
-      <div className="min-h-screen py-8 px-4" style={{ backgroundColor }}>
+      <div className="min-h-screen" style={{ backgroundColor }}>
+        <div className="h-1.5 w-full" style={{ backgroundColor: primaryColor }} />
+        <div className="py-8 px-4">
         <div className="max-w-2xl mx-auto space-y-6">
           {logoUrl && (
             <div className="flex justify-center">
@@ -588,13 +608,21 @@ export default function PortalPhaseFillPage() {
               />
             </div>
           )}
-          <div>
+          <div className="flex items-center justify-between">
             <Link
-              href={`/portal/${eventSlug}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`}
+              href={`/portal/${eventSlug}`}
               className="text-sm text-muted-foreground inline-flex items-center hover:text-foreground"
             >
               <ArrowLeft className="h-4 w-4 mr-1" /> Back to portal
             </Link>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={logout}
+            >
+              <LogOut className="h-3.5 w-3.5 mr-1" /> Log out
+            </Button>
           </div>
 
           <div className="rounded-xl border bg-white p-6 space-y-4">
@@ -679,16 +707,18 @@ export default function PortalPhaseFillPage() {
           )}
 
           <form
-            onSubmit={onSubmit}
+            onSubmit={onFormSubmit}
             onKeyDown={(e) => {
               if (
                 e.key === "Enter" &&
-                isMultiStep &&
-                !isLastStep &&
                 (e.target as HTMLElement).tagName !== "TEXTAREA"
               ) {
                 e.preventDefault();
-                goNext();
+                if (isMultiStep && !isLastStep) {
+                  goNext();
+                } else {
+                  performSubmit();
+                }
               }
             }}
             noValidate
@@ -719,7 +749,8 @@ export default function PortalPhaseFillPage() {
                   )}
                   {isLastStep ? (
                     <Button
-                      type="submit"
+                      type="button"
+                      onClick={performSubmit}
                       className="flex-1"
                       disabled={submitting}
                       style={{ backgroundColor: primaryColor, color: "#fff" }}
@@ -739,7 +770,8 @@ export default function PortalPhaseFillPage() {
                 </div>
               ) : (
                 <Button
-                  type="submit"
+                  type="button"
+                  onClick={performSubmit}
                   className="w-full"
                   disabled={submitting}
                   style={{ backgroundColor: primaryColor, color: "#fff" }}
@@ -750,6 +782,7 @@ export default function PortalPhaseFillPage() {
             )}
           </form>
           </div>
+        </div>
         </div>
       </div>
     </>
