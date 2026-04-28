@@ -29,7 +29,7 @@ async function loadAuthorizedContext(
 
   const event = await prisma.event.findUnique({
     where: { slug: eventSlug },
-    include: { modules: true },
+    include: { modules: true, branding: true },
   });
   if (!event || !event.isActive) {
     return {
@@ -114,12 +114,17 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
   const ctx = await loadAuthorizedContext(eventSlug, phaseId, email, code);
   if ("error" in ctx) return ctx.error;
-  const { phase } = ctx;
+  const { phase, event } = ctx;
 
   const override = phase.accessOverrides[0]?.status ?? null;
   const status = computePhaseStatus(phase, override, new Date());
 
   return NextResponse.json({
+    event: {
+      name: event.name,
+      slug: eventSlug,
+      branding: event.branding ?? null,
+    },
     phase: {
       id: phase.id,
       title: phase.title,

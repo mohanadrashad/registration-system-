@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,6 +64,15 @@ interface FormFieldDef {
   isSystem: boolean;
 }
 
+interface Branding {
+  primaryColor?: string | null;
+  secondaryColor?: string | null;
+  backgroundColor?: string | null;
+  textColor?: string | null;
+  logoUrl?: string | null;
+  customCss?: string | null;
+}
+
 interface EventInfo {
   name: string;
   description?: string;
@@ -71,6 +80,7 @@ interface EventInfo {
   startDate: string;
   endDate: string;
   formFields: FormFieldDef[];
+  branding?: Branding | null;
 }
 
 interface RegistrationInfo {
@@ -141,6 +151,7 @@ function formatFieldValue(field: FormFieldDef, raw: unknown): string {
 
 export default function PortalPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const eventSlug = params.eventSlug as string;
 
   // Login state
@@ -148,6 +159,7 @@ export default function PortalPage() {
   const [code, setCode] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const autoLoginAttempted = useRef(false);
 
   // Data state
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -182,18 +194,14 @@ export default function PortalPage() {
     setEditValues(values);
   }
 
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
+  async function performLogin(loginEmail: string, loginCode: string) {
     setLoggingIn(true);
     setLoginError("");
-
     try {
       const res = await fetch(
-        `/api/portal/${eventSlug}?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`
+        `/api/portal/${eventSlug}?email=${encodeURIComponent(loginEmail)}&code=${encodeURIComponent(loginCode)}`
       );
-
       const data = await res.json();
-
       if (res.ok) {
         setEvent(data.event);
         setRegistration(data.registration);
@@ -201,15 +209,36 @@ export default function PortalPage() {
         setPhases(Array.isArray(data.phases) ? data.phases : []);
         seedEditValues(data.contact, data.event.formFields || []);
         setIsLoggedIn(true);
-      } else {
-        setLoginError(data.error || "Login failed");
+        return true;
       }
+      setLoginError(data.error || "Login failed");
+      return false;
     } catch {
       setLoginError("Failed to connect. Please try again.");
+      return false;
     } finally {
       setLoggingIn(false);
     }
   }
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    await performLogin(email, code);
+  }
+
+  // Auto-login when the portal is opened with ?email=&code= in the URL —
+  // this is what the "Back to portal" link from the phase fill page uses.
+  useEffect(() => {
+    if (autoLoginAttempted.current) return;
+    const qEmail = searchParams.get("email");
+    const qCode = searchParams.get("code");
+    if (!qEmail || !qCode) return;
+    autoLoginAttempted.current = true;
+    setEmail(qEmail);
+    setCode(qCode);
+    void performLogin(qEmail, qCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   async function handleSave() {
     if (!event || !contact) return;
@@ -523,14 +552,36 @@ export default function PortalPage() {
 
   const visibleFields = (event?.formFields || []).filter((f) => !LAYOUT_TYPES.has(f.type));
 
+  const branding = event?.branding ?? null;
+  const primaryColor = branding?.primaryColor || "#6abf4b";
+  const backgroundColor = branding?.backgroundColor || "#f9fafb";
+  const textColor = branding?.textColor || "#111827";
+  const logoUrl = branding?.logoUrl || null;
+  const customStyles = branding?.customCss ? (
+    <style dangerouslySetInnerHTML={{ __html: branding.customCss }} />
+  ) : null;
+
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
+    <>
+      {customStyles}
+    <div className="min-h-screen py-8 px-4" style={{ backgroundColor }}>
       <div className="max-w-2xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">{event?.name}</h1>
-            <p className="text-muted-foreground">Attendee Portal</p>
+          <div className="flex items-center gap-3">
+            {logoUrl && (
+              <img
+                src={logoUrl}
+                alt={event?.name ?? ""}
+                className="max-h-10"
+              />
+            )}
+            <div>
+              <h1 className="text-2xl font-bold" style={{ color: textColor }}>
+                {event?.name}
+              </h1>
+              <p className="text-muted-foreground">Attendee Portal</p>
+            </div>
           </div>
           <Button variant="outline" size="sm" onClick={logout}>
             <LogOut className="h-4 w-4 mr-2" />
@@ -682,7 +733,16 @@ export default function PortalPage() {
                     </Badge>
                   );
                   action = (
-                    <Button asChild variant={p.isCompleted ? "outline" : "default"} size="sm">
+                    <Button
+                      asChild
+                      variant={p.isCompleted ? "outline" : "default"}
+                      size="sm"
+                      style={
+                        p.isCompleted
+                          ? undefined
+                          : { backgroundColor: primaryColor, color: "#fff" }
+                      }
+                    >
                       <Link href={baseHref}>
                         {p.isCompleted ? "Edit" : "Fill in"}
                         <ChevronRight className="ml-1 h-3.5 w-3.5" />
@@ -810,5 +870,6 @@ export default function PortalPage() {
         </Dialog>
       </div>
     </div>
+    </>
   );
 }
