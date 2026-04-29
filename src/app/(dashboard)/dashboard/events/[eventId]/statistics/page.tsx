@@ -253,6 +253,9 @@ export default function StatisticsPage() {
             <Layers className="h-5 w-5" />
             Post-Registration Phases
           </h3>
+          <p className="text-xs text-muted-foreground -mt-3">
+            Click a count below to see the matching attendees.
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {phaseStats.map((p) => (
               <Card key={p.phaseId}>
@@ -291,18 +294,24 @@ export default function StatisticsPage() {
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-center text-xs pt-1">
-                      <div>
-                        <div className="rounded-md bg-green-50 py-1.5 mb-1">
+                      <Link
+                        href={`/dashboard/events/${eventId}/attendees?phase=${p.phaseId}&phaseStatus=submitted`}
+                        className="block hover:opacity-80 transition-opacity"
+                      >
+                        <div className="rounded-md bg-green-50 py-1.5 mb-1 cursor-pointer hover:bg-green-100">
                           <p className="text-base font-bold text-green-600">{p.submitted}</p>
                         </div>
                         <p className="text-muted-foreground">Submitted</p>
-                      </div>
-                      <div>
-                        <div className="rounded-md bg-yellow-50 py-1.5 mb-1">
+                      </Link>
+                      <Link
+                        href={`/dashboard/events/${eventId}/attendees?phase=${p.phaseId}&phaseStatus=notSubmitted`}
+                        className="block hover:opacity-80 transition-opacity"
+                      >
+                        <div className="rounded-md bg-yellow-50 py-1.5 mb-1 cursor-pointer hover:bg-yellow-100">
                           <p className="text-base font-bold text-yellow-600">{p.notSubmitted}</p>
                         </div>
                         <p className="text-muted-foreground">Pending</p>
-                      </div>
+                      </Link>
                     </div>
                   </div>
                 </CardContent>
