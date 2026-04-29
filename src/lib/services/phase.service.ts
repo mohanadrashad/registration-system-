@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { Step, Phase, AccessStatus } from "@prisma/client";
+import type { Step, Phase, AccessStatus, PhaseAccess } from "@prisma/client";
 
 // ─── Status calculation ────────────────────────────────────────────────
 
@@ -318,6 +318,102 @@ export async function deleteStep(stepId: string): Promise<void> {
     throw new Error("A phase must have at least one step.");
   }
   await prisma.step.delete({ where: { id: stepId } });
+}
+
+// ─── Per-attendee phase access overrides ──────────────────────────────
+
+/**
+ * List every post-registration phase on the event paired with this
+ * registration's override (if any) and the resulting computed status.
+ * Drives the admin "Phase Access" UI on the attendee detail page.
+ */
+export async function listPhaseAccessForRegistration(
+  eventId: string,
+  registrationId: string
+) {
+  const phases = await prisma.phase.findMany({
+    where: { eventId, type: "POST_REGISTRATION" },
+    orderBy: { order: "asc" },
+    select: {
+      id: true,
+      title: true,
+      titleAr: true,
+      opensAt: true,
+      closesAt: true,
+      isRequired: true,
+      accessOverrides: {
+        where: { registrationId },
+        select: {
+          status: true,
+          reason: true,
+          unlockedAt: true,
+          unlockedBy: true,
+        },
+      },
+    },
+  });
+
+  const now = new Date();
+  return phases.map((p) => {
+    const override = p.accessOverrides[0] ?? null;
+    return {
+      id: p.id,
+      title: p.title,
+      titleAr: p.titleAr,
+      opensAt: p.opensAt,
+      closesAt: p.closesAt,
+      isRequired: p.isRequired,
+      override: override?.status ?? null,
+      reason: override?.reason ?? null,
+      overriddenAt: override?.unlockedAt ?? null,
+      overriddenBy: override?.unlockedBy ?? null,
+      status: computePhaseStatus(p, override?.status ?? null, now),
+    };
+  });
+}
+
+/**
+ * Upsert a per-attendee override on a phase. The override wins over the
+ * date-based default in `computePhaseStatus`, which is what the portal
+ * GET / PUT routes already key off.
+ */
+export async function setPhaseAccess(
+  phaseId: string,
+  registrationId: string,
+  status: AccessStatus,
+  reason: string | null,
+  unlockedBy: string
+): Promise<PhaseAccess> {
+  return prisma.phaseAccess.upsert({
+    where: { phaseId_registrationId: { phaseId, registrationId } },
+    create: {
+      phaseId,
+      registrationId,
+      status,
+      reason,
+      unlockedAt: new Date(),
+      unlockedBy,
+    },
+    update: {
+      status,
+      reason,
+      unlockedAt: new Date(),
+      unlockedBy,
+    },
+  });
+}
+
+/**
+ * Drop a per-attendee override. Phase status falls back to whatever the
+ * date-based default produces (NOT_OPEN / OPEN / CLOSED).
+ */
+export async function clearPhaseAccess(
+  phaseId: string,
+  registrationId: string
+): Promise<void> {
+  await prisma.phaseAccess.deleteMany({
+    where: { phaseId, registrationId },
+  });
 }
 
 // ─── Field move ─────────────────────────────────────────────────────────

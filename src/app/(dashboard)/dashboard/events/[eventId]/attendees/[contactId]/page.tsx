@@ -32,7 +32,18 @@ import {
   Award,
   Tag,
   User,
+  Lock,
+  Unlock,
+  ShieldCheck,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { COUNTRIES } from "@/lib/form-builder/countries";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
@@ -83,6 +94,32 @@ const statusConfig: Record<ContactStatus, { label: string; variant: "default" | 
   INVITED: { label: "Invited", variant: "outline" },
   REGISTERED: { label: "Registered", variant: "default" },
   CANCELLED: { label: "Cancelled", variant: "destructive" },
+};
+
+type PhaseStatus = "LOCKED" | "NOT_OPEN" | "OPEN" | "CLOSED";
+type AccessOverride = "OPEN" | "LOCKED" | null;
+
+interface PhaseAccessItem {
+  id: string;
+  title: string;
+  titleAr: string | null;
+  opensAt: string | null;
+  closesAt: string | null;
+  isRequired: boolean;
+  override: AccessOverride;
+  reason: string | null;
+  overriddenAt: string | null;
+  status: PhaseStatus;
+}
+
+const phaseStatusConfig: Record<
+  PhaseStatus,
+  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
+> = {
+  OPEN: { label: "Open", variant: "default" },
+  NOT_OPEN: { label: "Not open yet", variant: "secondary" },
+  CLOSED: { label: "Closed", variant: "outline" },
+  LOCKED: { label: "Locked", variant: "destructive" },
 };
 
 function getFieldValue(contact: ContactDetail, field: FormFieldDef): unknown {
@@ -162,6 +199,15 @@ export default function AttendeeDetailPage() {
   const [editCategory, setEditCategory] = useState("");
   const [editStatus, setEditStatus] = useState<ContactStatus>("IMPORTED");
 
+  const [phaseAccess, setPhaseAccess] = useState<PhaseAccessItem[] | null>(null);
+  const [phaseAccessDialog, setPhaseAccessDialog] = useState<{
+    phaseId: string;
+    phaseTitle: string;
+    nextStatus: "OPEN" | "LOCKED";
+    reason: string;
+  } | null>(null);
+  const [phaseAccessSaving, setPhaseAccessSaving] = useState(false);
+
   const fetchContact = useCallback(async () => {
     try {
       const res = await fetch(`/api/events/${eventId}/contacts/${contactId}`);
@@ -195,6 +241,60 @@ export default function AttendeeDetailPage() {
   useEffect(() => {
     fetchContact();
   }, [fetchContact]);
+
+  const fetchPhaseAccess = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/events/${eventId}/contacts/${contactId}/phase-access`
+      );
+      if (!res.ok) return;
+      const data: { phases: PhaseAccessItem[] } = await res.json();
+      setPhaseAccess(data.phases);
+    } catch {
+      // Non-fatal — the card just won't render.
+    }
+  }, [eventId, contactId]);
+
+  useEffect(() => {
+    fetchPhaseAccess();
+  }, [fetchPhaseAccess]);
+
+  async function submitPhaseAccess(
+    phaseId: string,
+    status: "OPEN" | "LOCKED" | null,
+    reason: string | null
+  ) {
+    setPhaseAccessSaving(true);
+    try {
+      const res = await fetch(
+        `/api/events/${eventId}/contacts/${contactId}/phase-access`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phaseId, status, reason }),
+        }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error || "Failed to update phase access");
+        return;
+      }
+      const data: { phases: PhaseAccessItem[] } = await res.json();
+      setPhaseAccess(data.phases);
+      setPhaseAccessDialog(null);
+      toast.success(
+        status === null
+          ? "Phase override cleared"
+          : status === "OPEN"
+          ? "Phase forced open for this attendee"
+          : "Phase locked for this attendee"
+      );
+    } catch {
+      toast.error("Failed to update phase access");
+    } finally {
+      setPhaseAccessSaving(false);
+    }
+  }
 
   const appUrl = typeof window !== "undefined" ? window.location.origin : "";
   const registrationLink = contact
@@ -556,6 +656,99 @@ export default function AttendeeDetailPage() {
             </Card>
           )}
 
+          {/* Phase Access — per-attendee override of post-reg phase visibility */}
+          {contact.registration && phaseAccess && phaseAccess.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4" />
+                  Phase Access
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs text-muted-foreground">
+                  Override the date-based open/close on a per-attendee basis. Useful when someone needs the form opened early or kept locked.
+                </p>
+                {phaseAccess.map((p) => {
+                  const cfg = phaseStatusConfig[p.status];
+                  return (
+                    <div key={p.id} className="rounded-lg border p-3 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm truncate">{p.title}</p>
+                          {(p.opensAt || p.closesAt) && (
+                            <p className="text-xs text-muted-foreground">
+                              {p.opensAt
+                                ? `Opens ${new Date(p.opensAt).toLocaleString()}`
+                                : "Always open"}
+                              {p.closesAt
+                                ? ` · Closes ${new Date(p.closesAt).toLocaleString()}`
+                                : ""}
+                            </p>
+                          )}
+                        </div>
+                        <Badge variant={cfg.variant} className="shrink-0">
+                          {cfg.label}
+                        </Badge>
+                      </div>
+
+                      {p.override && p.reason && (
+                        <p className="text-xs text-muted-foreground italic">
+                          Reason: {p.reason}
+                        </p>
+                      )}
+
+                      {userCanEdit && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          <Button
+                            variant={p.override === null ? "default" : "outline"}
+                            size="sm"
+                            disabled={p.override === null || phaseAccessSaving}
+                            onClick={() => submitPhaseAccess(p.id, null, null)}
+                          >
+                            Default
+                          </Button>
+                          <Button
+                            variant={p.override === "OPEN" ? "default" : "outline"}
+                            size="sm"
+                            disabled={p.override === "OPEN" || phaseAccessSaving}
+                            onClick={() =>
+                              setPhaseAccessDialog({
+                                phaseId: p.id,
+                                phaseTitle: p.title,
+                                nextStatus: "OPEN",
+                                reason: p.reason ?? "",
+                              })
+                            }
+                          >
+                            <Unlock className="mr-1 h-3.5 w-3.5" />
+                            Force Open
+                          </Button>
+                          <Button
+                            variant={p.override === "LOCKED" ? "destructive" : "outline"}
+                            size="sm"
+                            disabled={p.override === "LOCKED" || phaseAccessSaving}
+                            onClick={() =>
+                              setPhaseAccessDialog({
+                                phaseId: p.id,
+                                phaseTitle: p.title,
+                                nextStatus: "LOCKED",
+                                reason: p.reason ?? "",
+                              })
+                            }
+                          >
+                            <Lock className="mr-1 h-3.5 w-3.5" />
+                            Force Lock
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Badge */}
           {contact.registration?.status === "CONFIRMED" && (
             <Card>
@@ -618,6 +811,73 @@ export default function AttendeeDetailPage() {
           </Card>
         </div>
       </div>
+
+      {/* Phase access override dialog */}
+      <Dialog
+        open={phaseAccessDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setPhaseAccessDialog(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {phaseAccessDialog?.nextStatus === "OPEN"
+                ? "Force open this phase"
+                : "Lock this phase"}
+            </DialogTitle>
+            <DialogDescription>
+              {phaseAccessDialog?.nextStatus === "OPEN"
+                ? `Override the schedule and let this attendee fill "${phaseAccessDialog?.phaseTitle}" right now.`
+                : `Prevent this attendee from filling "${phaseAccessDialog?.phaseTitle}", regardless of the schedule.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="phase-access-reason">Reason (optional)</Label>
+            <Textarea
+              id="phase-access-reason"
+              rows={3}
+              placeholder="e.g. Travelling early, attending a different track, etc."
+              value={phaseAccessDialog?.reason ?? ""}
+              onChange={(e) =>
+                setPhaseAccessDialog((prev) =>
+                  prev ? { ...prev, reason: e.target.value } : prev
+                )
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Visible to admins on this attendee's record. Not shown to the attendee.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPhaseAccessDialog(null)}
+              disabled={phaseAccessSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!phaseAccessDialog) return;
+                submitPhaseAccess(
+                  phaseAccessDialog.phaseId,
+                  phaseAccessDialog.nextStatus,
+                  phaseAccessDialog.reason.trim() || null
+                );
+              }}
+              disabled={phaseAccessSaving}
+              variant={phaseAccessDialog?.nextStatus === "LOCKED" ? "destructive" : "default"}
+            >
+              {phaseAccessSaving
+                ? "Saving..."
+                : phaseAccessDialog?.nextStatus === "OPEN"
+                ? "Force open"
+                : "Lock phase"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

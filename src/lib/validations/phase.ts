@@ -43,3 +43,11 @@ export const reorderStepSchema = z.object({
 export const moveFieldSchema = z.object({
   stepId: z.string().min(1),
 });
+
+// Per-attendee phase access override.
+// `status: null` means "clear the override" (revert to date-based default).
+export const setPhaseAccessSchema = z.object({
+  phaseId: z.string().min(1),
+  status: z.union([z.enum(["OPEN", "LOCKED"]), z.null()]),
+  reason: z.string().max(500).nullable().optional(),
+});
