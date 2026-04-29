@@ -14,6 +14,8 @@ import {
   ArrowLeft,
   XCircle,
   Hourglass,
+  Layers,
+  Send,
 } from "lucide-react";
 
 interface StatusCounts {
@@ -45,6 +47,19 @@ interface EventInfo {
   categories: string[];
 }
 
+interface PhaseStat {
+  phaseId: string;
+  phaseTitle: string;
+  opensAt: string | null;
+  closesAt: string | null;
+  isRequired: boolean;
+  reminderSent: boolean;
+  totalRegistrations: number;
+  submitted: number;
+  notSubmitted: number;
+  submissionRate: number;
+}
+
 export default function StatisticsPage() {
   const params = useParams();
   const eventId = params.eventId as string;
@@ -54,6 +69,7 @@ export default function StatisticsPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryRow[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
+  const [phaseStats, setPhaseStats] = useState<PhaseStat[]>([]);
 
   useEffect(() => {
     fetch(`/api/events/${eventId}/statistics`)
@@ -62,6 +78,7 @@ export default function StatisticsPage() {
         setEvent(data.event);
         setSummary(data.summary);
         setCategoryBreakdown(data.categoryBreakdown || []);
+        setPhaseStats(data.phaseStats || []);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -228,6 +245,72 @@ export default function StatisticsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Post-Registration Phase Completion */}
+      {phaseStats.length > 0 && categoryFilter === "ALL" && (
+        <>
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <Layers className="h-5 w-5" />
+            Post-Registration Phases
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {phaseStats.map((p) => (
+              <Card key={p.phaseId}>
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between mb-3 gap-2">
+                    <div className="min-w-0">
+                      <h4 className="font-semibold text-base truncate">{p.phaseTitle}</h4>
+                      {p.opensAt && (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Opens {new Date(p.opensAt).toLocaleDateString()}
+                          {p.closesAt && ` · Closes ${new Date(p.closesAt).toLocaleDateString()}`}
+                        </p>
+                      )}
+                    </div>
+                    {p.reminderSent && (
+                      <span
+                        className="flex items-center gap-1 text-xs text-muted-foreground shrink-0"
+                        title="Auto-reminder email has been dispatched for this phase"
+                      >
+                        <Send className="h-3 w-3" />
+                        Reminded
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        {p.submitted} / {p.totalRegistrations} submitted
+                      </span>
+                      <span className="font-semibold">{p.submissionRate}%</span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-green-500 transition-all"
+                        style={{ width: `${p.submissionRate}%` }}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-center text-xs pt-1">
+                      <div>
+                        <div className="rounded-md bg-green-50 py-1.5 mb-1">
+                          <p className="text-base font-bold text-green-600">{p.submitted}</p>
+                        </div>
+                        <p className="text-muted-foreground">Submitted</p>
+                      </div>
+                      <div>
+                        <div className="rounded-md bg-yellow-50 py-1.5 mb-1">
+                          <p className="text-base font-bold text-yellow-600">{p.notSubmitted}</p>
+                        </div>
+                        <p className="text-muted-foreground">Pending</p>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Per-Category Cards (only in "All" view) */}
       {categoryFilter === "ALL" && categoryBreakdown.length > 0 && (

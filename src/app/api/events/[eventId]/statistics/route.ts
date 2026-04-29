@@ -12,25 +12,46 @@ export async function GET(
   const { eventId } = await params;
 
   try {
-    const [event, contacts, emailLogs, campaigns] = await prisma.$transaction([
-      prisma.event.findUnique({
-        where: { id: eventId },
-        select: { id: true, name: true, categories: true, startDate: true, endDate: true, venue: true },
-      }),
-      prisma.contact.findMany({
-        where: { eventId },
-        select: { status: true, category: true, createdAt: true },
-      }),
-      prisma.emailLog.findMany({
-        where: { campaign: { eventId } },
-        select: { status: true, sentAt: true },
-      }),
-      prisma.emailCampaign.findMany({
-        where: { eventId },
-        select: { id: true, name: true, status: true, sentCount: true, failedCount: true, totalRecipients: true, sentAt: true },
-        orderBy: { createdAt: "desc" },
-      }),
-    ]);
+    const [event, contacts, emailLogs, campaigns, modules, phases, registeredRegCount] =
+      await prisma.$transaction([
+        prisma.event.findUnique({
+          where: { id: eventId },
+          select: { id: true, name: true, categories: true, startDate: true, endDate: true, venue: true },
+        }),
+        prisma.contact.findMany({
+          where: { eventId },
+          select: { status: true, category: true, createdAt: true },
+        }),
+        prisma.emailLog.findMany({
+          where: { campaign: { eventId } },
+          select: { status: true, sentAt: true },
+        }),
+        prisma.emailCampaign.findMany({
+          where: { eventId },
+          select: { id: true, name: true, status: true, sentCount: true, failedCount: true, totalRecipients: true, sentAt: true },
+          orderBy: { createdAt: "desc" },
+        }),
+        prisma.eventModules.findUnique({
+          where: { eventId },
+          select: { postRegPhases: true },
+        }),
+        prisma.phase.findMany({
+          where: { eventId, type: "POST_REGISTRATION", isActive: true },
+          orderBy: { order: "asc" },
+          select: {
+            id: true,
+            title: true,
+            opensAt: true,
+            closesAt: true,
+            isRequired: true,
+            reminderSent: true,
+            _count: { select: { submissions: true } },
+          },
+        }),
+        prisma.registration.count({
+          where: { eventId, status: "CONFIRMED" },
+        }),
+      ]);
 
     if (!event) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
@@ -67,6 +88,29 @@ export async function GET(
     const registrationRate = totalContacts > 0 ? Math.round((registeredCount / totalContacts) * 100) : 0;
     const inviteRate = totalContacts > 0 ? Math.round(((invitedCount + registeredCount) / totalContacts) * 100) : 0;
 
+    // Per-phase completion stats (post-registration only). Hidden if the
+    // postRegPhases module is off — there'd be nothing to show.
+    const phaseStats = (modules?.postRegPhases ? phases : []).map((p) => {
+      const submitted = p._count.submissions;
+      const notSubmitted = Math.max(0, registeredRegCount - submitted);
+      const submissionRate =
+        registeredRegCount > 0
+          ? Math.round((submitted / registeredRegCount) * 100)
+          : 0;
+      return {
+        phaseId: p.id,
+        phaseTitle: p.title,
+        opensAt: p.opensAt,
+        closesAt: p.closesAt,
+        isRequired: p.isRequired,
+        reminderSent: p.reminderSent,
+        totalRegistrations: registeredRegCount,
+        submitted,
+        notSubmitted,
+        submissionRate,
+      };
+    });
+
     return NextResponse.json({
       event,
       summary: {
@@ -81,6 +125,7 @@ export async function GET(
         .map(([category, counts]) => ({ category, ...counts }))
         .sort((a, b) => b.total - a.total),
       campaigns: campaigns.slice(0, 10),
+      phaseStats,
     });
   } catch (e) {
     console.error("Failed to fetch statistics:", e);
