@@ -35,6 +35,9 @@ import {
   Lock,
   Unlock,
   ShieldCheck,
+  ClipboardList,
+  CheckCircle2,
+  CircleDashed,
 } from "lucide-react";
 import {
   Dialog,
@@ -110,6 +113,31 @@ interface PhaseAccessItem {
   reason: string | null;
   overriddenAt: string | null;
   status: PhaseStatus;
+}
+
+interface PhaseSubmissionField {
+  name: string;
+  label: string;
+  labelAr: string | null;
+  type: string;
+  options: { value: string; label: string; labelAr?: string }[] | null;
+}
+
+interface PhaseSubmissionStep {
+  id: string;
+  title: string;
+  fields: PhaseSubmissionField[];
+}
+
+interface PhaseSubmissionItem {
+  id: string;
+  title: string;
+  titleAr: string | null;
+  status: "SUBMITTED" | "NOT_SUBMITTED";
+  submittedAt: string | null;
+  updatedAt: string | null;
+  steps: PhaseSubmissionStep[];
+  data: Record<string, unknown> | null;
 }
 
 const phaseStatusConfig: Record<
@@ -199,6 +227,8 @@ export default function AttendeeDetailPage() {
   const [editCategory, setEditCategory] = useState("");
   const [editStatus, setEditStatus] = useState<ContactStatus>("IMPORTED");
 
+  const [phaseSubmissions, setPhaseSubmissions] = useState<PhaseSubmissionItem[] | null>(null);
+
   const [phaseAccess, setPhaseAccess] = useState<PhaseAccessItem[] | null>(null);
   const [phaseAccessDialog, setPhaseAccessDialog] = useState<{
     phaseId: string;
@@ -258,6 +288,23 @@ export default function AttendeeDetailPage() {
   useEffect(() => {
     fetchPhaseAccess();
   }, [fetchPhaseAccess]);
+
+  const fetchPhaseSubmissions = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/events/${eventId}/contacts/${contactId}/phase-submissions`
+      );
+      if (!res.ok) return;
+      const data: { phases: PhaseSubmissionItem[] } = await res.json();
+      setPhaseSubmissions(data.phases);
+    } catch {
+      // Non-fatal — card just won't show.
+    }
+  }, [eventId, contactId]);
+
+  useEffect(() => {
+    fetchPhaseSubmissions();
+  }, [fetchPhaseSubmissions]);
 
   async function submitPhaseAccess(
     phaseId: string,
@@ -811,6 +858,90 @@ export default function AttendeeDetailPage() {
           </Card>
         </div>
       </div>
+
+      {/* Phase Submissions — what the attendee typed into each post-reg phase */}
+      {contact.registration && phaseSubmissions && phaseSubmissions.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <ClipboardList className="h-5 w-5" />
+              Phase Submissions
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {phaseSubmissions.map((p) => {
+              const submitted = p.status === "SUBMITTED";
+              const submittedFields: { label: string; value: string }[] = [];
+              if (submitted && p.data) {
+                for (const step of p.steps) {
+                  for (const field of step.fields) {
+                    if (LAYOUT_TYPES.has(field.type)) continue;
+                    submittedFields.push({
+                      label: field.label,
+                      value: formatFieldValue(
+                        { ...field, isSystem: false },
+                        p.data[field.name]
+                      ),
+                    });
+                  }
+                }
+              }
+
+              return (
+                <div key={p.id} className="rounded-lg border">
+                  <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {submitted ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                      ) : (
+                        <CircleDashed className="h-4 w-4 text-muted-foreground shrink-0" />
+                      )}
+                      <p className="font-medium text-sm truncate">{p.title}</p>
+                    </div>
+                    {submitted ? (
+                      <span className="text-xs text-muted-foreground shrink-0">
+                        Submitted{" "}
+                        {p.submittedAt &&
+                          new Date(p.submittedAt).toLocaleString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                      </span>
+                    ) : (
+                      <Badge variant="outline" className="text-xs">
+                        Not submitted
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="p-4">
+                    {!submitted ? (
+                      <p className="text-sm text-muted-foreground">
+                        This attendee hasn&apos;t filled this phase yet.
+                      </p>
+                    ) : submittedFields.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        Submission recorded but no field values found.
+                      </p>
+                    ) : (
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {submittedFields.map((f, i) => (
+                          <div key={i} className="flex items-start gap-3 text-sm">
+                            <span className="text-muted-foreground w-32 shrink-0">{f.label}</span>
+                            <span className="font-medium break-words">{f.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Phase access override dialog */}
       <Dialog

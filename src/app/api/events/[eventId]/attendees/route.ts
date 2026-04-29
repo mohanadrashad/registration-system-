@@ -15,6 +15,8 @@ export async function GET(
   const category = searchParams.get("category") || "";
   const status = searchParams.get("status") || "";
   const badgeEmail = searchParams.get("badgeEmail") || "";
+  const phaseId = searchParams.get("phase") || "";
+  const phaseStatus = searchParams.get("phaseStatus") || ""; // submitted | notSubmitted
 
   const where: Record<string, unknown> = { eventId };
   const andConditions: Record<string, unknown>[] = [];
@@ -49,13 +51,32 @@ export async function GET(
     });
   }
 
+  // Phase status filter: only meaningful for attendees who have a
+  // registration (a Contact without one can't submit a phase). For
+  // "submitted" we require a matching PhaseSubmission row; for
+  // "notSubmitted" we require either no registration or a registration
+  // with no submission for that phase yet.
+  if (phaseId && phaseStatus === "submitted") {
+    andConditions.push({
+      registration: {
+        is: { phaseSubmissions: { some: { phaseId } } },
+      },
+    });
+  } else if (phaseId && phaseStatus === "notSubmitted") {
+    andConditions.push({
+      registration: {
+        is: { phaseSubmissions: { none: { phaseId } } },
+      },
+    });
+  }
+
   if (andConditions.length > 0) {
     where.AND = andConditions;
   }
 
   try {
     // Batch all queries in a single transaction to minimize connection usage
-    const [event, contacts, allContacts, templates] = await prisma.$transaction([
+    const [event, contacts, allContacts, templates, postRegPhases] = await prisma.$transaction([
       prisma.event.findUnique({
         where: { id: eventId },
         select: { id: true, name: true, slug: true, categories: true },
@@ -77,6 +98,12 @@ export async function GET(
         where: { eventId },
         select: { id: true, name: true, type: true, subject: true },
         orderBy: { createdAt: "desc" },
+      }),
+      // Post-registration phases — feeds the "Phase status" filter dropdown
+      prisma.phase.findMany({
+        where: { eventId, type: "POST_REGISTRATION", isActive: true },
+        orderBy: { order: "asc" },
+        select: { id: true, title: true },
       }),
     ]);
 
@@ -116,6 +143,7 @@ export async function GET(
       total: contacts.length,
       overallCounts,
       overallTotal: allContacts.length,
+      postRegPhases,
     });
   } catch (e) {
     console.error("Failed to fetch attendees data:", e);

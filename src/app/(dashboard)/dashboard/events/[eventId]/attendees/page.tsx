@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { getRole, canEdit, canDelete, type AppRole } from "@/lib/permissions";
@@ -86,6 +86,11 @@ interface EmailTemplate {
   subject: string;
 }
 
+interface PostRegPhase {
+  id: string;
+  title: string;
+}
+
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; }> = {
   IMPORTED: { label: "Imported", variant: "secondary" },
   INVITED: { label: "Invited", variant: "outline" },
@@ -95,6 +100,7 @@ const statusConfig: Record<ContactStatus, { label: string; variant: "default" | 
 
 export default function AttendeesPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const eventId = params.eventId as string;
   const { data: session } = useSession();
   const role: AppRole = getRole(session as { user?: { role?: string } } | null);
@@ -109,10 +115,18 @@ export default function AttendeesPage() {
   const [loading, setLoading] = useState(true);
   const [event, setEvent] = useState<Event | null>(null);
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
+  const [postRegPhases, setPostRegPhases] = useState<PostRegPhase[]>([]);
 
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [badgeEmailFilter, setBadgeEmailFilter] = useState<string>("ALL");
+  // Combined phase filter: "ALL" or "<phaseId>:<submitted|notSubmitted>".
+  // One control instead of two dropdowns keeps the toolbar tight.
+  const [phaseFilter, setPhaseFilter] = useState<string>(() => {
+    const phase = searchParams.get("phase");
+    const phaseStatus = searchParams.get("phaseStatus");
+    return phase && phaseStatus ? `${phase}:${phaseStatus}` : "ALL";
+  });
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -132,7 +146,7 @@ export default function AttendeesPage() {
   const [editStatusValue, setEditStatusValue] = useState<string>("");
 
   // Reset page when filters change
-  useEffect(() => { setPage(1); }, [statusFilter, categoryFilter, badgeEmailFilter, debouncedSearch]);
+  useEffect(() => { setPage(1); }, [statusFilter, categoryFilter, badgeEmailFilter, phaseFilter, debouncedSearch]);
 
   // Debounce search
   useEffect(() => {
@@ -147,6 +161,13 @@ export default function AttendeesPage() {
       if (categoryFilter !== "ALL") p.set("category", categoryFilter);
       if (badgeEmailFilter !== "ALL") p.set("badgeEmail", badgeEmailFilter);
       if (debouncedSearch) p.set("search", debouncedSearch);
+      if (phaseFilter !== "ALL") {
+        const [phaseId, phaseStatus] = phaseFilter.split(":");
+        if (phaseId && phaseStatus) {
+          p.set("phase", phaseId);
+          p.set("phaseStatus", phaseStatus);
+        }
+      }
 
       const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
       if (!res.ok) throw new Error("Failed");
@@ -158,12 +179,13 @@ export default function AttendeesPage() {
       setOverallTotal(data.overallTotal || data.total || 0);
       setEvent(data.event || null);
       setTemplates(data.templates || []);
+      setPostRegPhases(data.postRegPhases || []);
     } catch {
       setGroups([]);
     } finally {
       setLoading(false);
     }
-  }, [eventId, statusFilter, categoryFilter, badgeEmailFilter, debouncedSearch]);
+  }, [eventId, statusFilter, categoryFilter, badgeEmailFilter, phaseFilter, debouncedSearch]);
 
   useEffect(() => {
     fetchData();
@@ -574,6 +596,28 @@ export default function AttendeesPage() {
             <SelectItem value="not_sent">Badge Not Sent</SelectItem>
           </SelectContent>
         </Select>
+
+        {postRegPhases.length > 0 && (
+          <Select
+            value={phaseFilter}
+            onValueChange={(v) => { setPhaseFilter(v); setSelectedIds(new Set()); }}
+          >
+            <SelectTrigger className="w-[220px]">
+              <SelectValue placeholder="Phase status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Phases</SelectItem>
+              {postRegPhases.map((p) => [
+                <SelectItem key={`${p.id}-sub`} value={`${p.id}:submitted`}>
+                  {p.title} — Submitted
+                </SelectItem>,
+                <SelectItem key={`${p.id}-pen`} value={`${p.id}:notSubmitted`}>
+                  {p.title} — Pending
+                </SelectItem>,
+              ])}
+            </SelectContent>
+          </Select>
+        )}
 
         <Input
           placeholder="Search by name, email, organization..."
