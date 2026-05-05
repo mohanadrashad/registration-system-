@@ -100,3 +100,20 @@ Tailwind CSS 4 (via `@tailwindcss/postcss`), shadcn/ui components in `src/compon
 - **Bilingual content**: many models carry `*Ar` siblings (`labelAr`, `welcomeTitleAr`, etc.) for Arabic. When adding user-facing text fields that belong on the registration page or branding, consider whether an Arabic counterpart is needed (the `multiLanguage` module toggles this UI).
 - **`Registration.formData`** is a free-form Json blob matching active `FormField.name`s in the `REGISTRATION` phase — do not assume a fixed shape. Post-registration data lives in `PhaseSubmission.data`, not in `formData`.
 - **Form fields always belong to a step**: `FormField.stepId` is non-nullable. There is no event-level field list — create or look up the right `Step` (under the right `Phase`) first.
+
+## Workflow rules for staged feature work
+
+Every stage in a multi-stage spec ends with these four steps, in order:
+
+1. Commit all changes from this stage to git with a clear message describing what was added or changed. Use a stage prefix like `feat(stage2): ...` so the history is easy to scan.
+2. Push to `origin/<branch>`.
+3. Verify the Vercel Preview build for this branch goes green. If it fails, fix the issue before declaring the stage done.
+4. Report stage status to the user — what was shipped, any deviations from the spec, and confirmation that build is green.
+
+Do not start the next stage until those four are done. The user will explicitly green-light each stage based on the report.
+
+Schema changes deserve extra care:
+
+- Always verify the local database state matches the schema in code before committing. If you ran `prisma db push` to apply schema, make sure the schema file is also committed.
+- Never leave the deployed code and the deployed database out of sync.
+- For destructive schema changes (dropping columns, removing tables), do not silently use `--accept-data-loss`. Surface the change to the user first.
