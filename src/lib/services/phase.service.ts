@@ -1,5 +1,12 @@
 import { prisma } from "@/lib/prisma";
-import type { Step, Phase, AccessStatus, PhaseAccess } from "@prisma/client";
+import type {
+  Step,
+  Phase,
+  AccessStatus,
+  PhaseAccess,
+  PhaseSelectionMode,
+} from "@prisma/client";
+import { assertSelectionModeAllowed } from "@/lib/validations/selection";
 
 // ─── Status calculation ────────────────────────────────────────────────
 
@@ -79,6 +86,12 @@ export async function listPhasesForEvent(eventId: string) {
         },
       },
       reminderTemplate: { select: { id: true, name: true } },
+      // Stage 2: include selectable options. _count.selections lets the
+      // form-builder show the delete-guard count without a separate fetch.
+      options: {
+        orderBy: { order: "asc" },
+        include: { _count: { select: { selections: true } } },
+      },
     },
   });
 }
@@ -131,12 +144,30 @@ export async function createPostRegistrationPhase(
 
 export type UpdatePhaseInput = Partial<CreatePhaseInput> & {
   isActive?: boolean;
+  // Stage 2 selection fields. Patched alongside the base fields in one call.
+  // REGISTRATION phases are not allowed to enable selection — guarded below.
+  selectionMode?: PhaseSelectionMode;
+  maxSelections?: number;
+  allowChangeAfterSubmit?: boolean;
+  requiresReceiptUpload?: boolean;
 };
 
 export async function updatePhase(
   phaseId: string,
   input: UpdatePhaseInput
 ): Promise<Phase> {
+  // Look up the phase type once so we can enforce the REGISTRATION guard
+  // before issuing the write. assertSelectionModeAllowed throws a typed
+  // error that the route maps to a 400 response.
+  if (input.selectionMode !== undefined) {
+    const existing = await prisma.phase.findUnique({
+      where: { id: phaseId },
+      select: { type: true },
+    });
+    if (!existing) throw new Error("Phase not found");
+    assertSelectionModeAllowed(existing.type, input.selectionMode);
+  }
+
   return prisma.phase.update({
     where: { id: phaseId },
     data: {
@@ -153,6 +184,18 @@ export async function updatePhase(
         reminderTemplateId: input.reminderTemplateId,
       }),
       ...(input.isActive !== undefined && { isActive: input.isActive }),
+      ...(input.selectionMode !== undefined && {
+        selectionMode: input.selectionMode,
+      }),
+      ...(input.maxSelections !== undefined && {
+        maxSelections: input.maxSelections,
+      }),
+      ...(input.allowChangeAfterSubmit !== undefined && {
+        allowChangeAfterSubmit: input.allowChangeAfterSubmit,
+      }),
+      ...(input.requiresReceiptUpload !== undefined && {
+        requiresReceiptUpload: input.requiresReceiptUpload,
+      }),
     },
   });
 }

@@ -10,6 +10,24 @@ import {
   reorderPhaseSchema,
   updatePhaseSchema,
 } from "@/lib/validations/phase";
+import { SelectionModeNotAllowedError } from "@/lib/validations/selection";
+import { requireModule } from "@/lib/guards/module-guard";
+
+// Selection-related fields on the phase patch are gated by the postRegPhases
+// module — same flag the rest of post-reg phases run under. We don't gate the
+// whole route because the existing fields (title, description, dates, …) are
+// always editable on any phase the user already has access to.
+const SELECTION_FIELDS = [
+  "selectionMode",
+  "maxSelections",
+  "allowChangeAfterSubmit",
+  "requiresReceiptUpload",
+] as const;
+
+function patchTouchesSelectionFields(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  return SELECTION_FIELDS.some((k) => k in (body as Record<string, unknown>));
+}
 
 async function requirePhaseOnEvent(eventId: string, phaseId: string) {
   const phase = await prisma.phase.findUnique({
@@ -54,22 +72,35 @@ export async function PATCH(
     return apiError(JSON.stringify(parsed.error.flatten()), 400);
   }
 
-  const updated = await updatePhase(phaseId, {
-    ...parsed.data,
-    opensAt:
-      parsed.data.opensAt === undefined
-        ? undefined
-        : parsed.data.opensAt
-        ? new Date(parsed.data.opensAt)
-        : null,
-    closesAt:
-      parsed.data.closesAt === undefined
-        ? undefined
-        : parsed.data.closesAt
-        ? new Date(parsed.data.closesAt)
-        : null,
-  });
-  return NextResponse.json(updated);
+  // Gate Stage 2 selection-field writes on the postRegPhases module.
+  if (patchTouchesSelectionFields(parsed.data)) {
+    const moduleErr = await requireModule(eventId, "postRegPhases");
+    if (moduleErr) return moduleErr;
+  }
+
+  try {
+    const updated = await updatePhase(phaseId, {
+      ...parsed.data,
+      opensAt:
+        parsed.data.opensAt === undefined
+          ? undefined
+          : parsed.data.opensAt
+          ? new Date(parsed.data.opensAt)
+          : null,
+      closesAt:
+        parsed.data.closesAt === undefined
+          ? undefined
+          : parsed.data.closesAt
+          ? new Date(parsed.data.closesAt)
+          : null,
+    });
+    return NextResponse.json(updated);
+  } catch (e) {
+    if (e instanceof SelectionModeNotAllowedError) {
+      return apiError(e.message, 400, e.code);
+    }
+    throw e;
+  }
 }
 
 export async function DELETE(
