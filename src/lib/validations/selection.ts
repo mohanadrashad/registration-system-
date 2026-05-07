@@ -104,3 +104,26 @@ export const updateOptionSchema = createOptionSchema
 export const reorderOptionSchema = z.object({
   direction: z.enum(["up", "down"]),
 });
+
+// ─── Stage 3: portal phase submit ───────────────────────────────────
+
+/**
+ * Body schema for `PUT /api/portal/[eventSlug]/phases/[phaseId]`.
+ *
+ * Backwards-compatible: existing field-only submits keep working without
+ * sending optionIds. When optionIds is present, the route runs the
+ * selections write + the field upsert inside one prisma.$transaction so
+ * the user gets a single atomic outcome on Submit.
+ *
+ * `expectedSelectionsUpdatedAt` is the concurrency token: the latest
+ * `updatedAt` across this attendee's existing selections on this phase
+ * (or null on first-time submit). Server compares to live MAX(updatedAt)
+ * inside a SELECT FOR UPDATE; mismatch → 409 SELECTIONS_CONCURRENCY.
+ */
+export const submitPhasePortalSchema = z.object({
+  data: z.record(z.string(), z.unknown()).optional(),
+  optionIds: z.array(z.string().min(1)).max(50).optional(),
+  expectedSelectionsUpdatedAt: z
+    .union([z.string().datetime(), z.null()])
+    .optional(),
+});

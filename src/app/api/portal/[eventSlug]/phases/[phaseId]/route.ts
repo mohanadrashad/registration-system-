@@ -4,6 +4,21 @@ import { prisma } from "@/lib/prisma";
 import { computePhaseStatus } from "@/lib/services/phase.service";
 import { isFieldRequiredByCondition } from "@/lib/form-conditional";
 import { getPortalSessionFromRequest } from "@/lib/portal/session";
+import { submitPhasePortalSchema } from "@/lib/validations/selection";
+import {
+  OptionFullError,
+  OptionInactiveError,
+  OptionsCrossPhaseError,
+  PhaseNotFoundForSelectionError,
+  readOptionCountSummary,
+  SelectionDuplicateError,
+  SelectionModeNotWritableError,
+  SelectionsAdminLockedError,
+  SelectionsConcurrencyError,
+  SelectionsLockedError,
+  submitAttendeeSelectionsInTx,
+  TooManySelectionsError,
+} from "@/lib/services/selection.service";
 
 interface RouteParams {
   params: Promise<{ eventSlug: string; phaseId: string }>;
@@ -93,6 +108,39 @@ async function loadAuthorizedContext(
         where: { registrationId: registration.id },
         select: { id: true, data: true, submittedAt: true, updatedAt: true },
       },
+      // Stage 3: include options with capacity counts and the attendee's
+      // current selections. We strip notes from the selections in the
+      // response — they're admin-only.
+      options: {
+        orderBy: { order: "asc" },
+        select: {
+          id: true,
+          label: true,
+          labelAr: true,
+          description: true,
+          descriptionAr: true,
+          externalUrl: true,
+          capacity: true,
+          metadata: true,
+          requiresReceipt: true,
+          isActive: true,
+          order: true,
+          updatedAt: true,
+          _count: { select: { selections: true } },
+        },
+      },
+      selections: {
+        where: { registrationId: registration.id },
+        select: {
+          id: true,
+          optionId: true,
+          source: true,
+          assignedAt: true,
+          updatedAt: true,
+          // notes: deliberately omitted — admin-only.
+          receiptFileId: true,
+        },
+      },
     },
   });
   if (!phase) {
@@ -101,10 +149,10 @@ async function loadAuthorizedContext(
     } as const;
   }
 
-  return { event, registration, phase } as const;
+  return { event, registration, phase, eventSlug } as const;
 }
 
-// GET — fetch the phase structure + any existing submission for this attendee.
+// GET — fetch the phase structure + any existing submission + selection state.
 export async function GET(req: NextRequest, { params }: RouteParams) {
   const { eventSlug, phaseId } = await params;
 
@@ -114,6 +162,18 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
   const override = phase.accessOverrides[0]?.status ?? null;
   const status = computePhaseStatus(phase, override, new Date());
+
+  // Compute the concurrency token: max(updatedAt) across this attendee's
+  // existing selections, or null on first-time. Client echoes this back
+  // on submit so the server can detect concurrent edits.
+  const selectionsUpdatedAt =
+    phase.selections.length === 0
+      ? null
+      : new Date(
+          Math.max(
+            ...phase.selections.map((s) => s.updatedAt.getTime())
+          )
+        ).toISOString();
 
   return NextResponse.json({
     event: {
@@ -131,6 +191,27 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       closesAt: phase.closesAt,
       isRequired: phase.isRequired,
       status,
+      // Stage 3 fields
+      selectionMode: phase.selectionMode,
+      maxSelections: phase.maxSelections,
+      allowChangeAfterSubmit: phase.allowChangeAfterSubmit,
+      requiresReceiptUpload: phase.requiresReceiptUpload,
+      options: phase.options.map((o) => ({
+        id: o.id,
+        label: o.label,
+        labelAr: o.labelAr,
+        description: o.description,
+        descriptionAr: o.descriptionAr,
+        externalUrl: o.externalUrl,
+        capacity: o.capacity,
+        metadata: o.metadata,
+        requiresReceipt: o.requiresReceipt,
+        isActive: o.isActive,
+        order: o.order,
+        taken: o._count.selections,
+        full:
+          o.capacity != null && o._count.selections >= o.capacity,
+      })),
       steps: phase.steps.map((s) => ({
         id: s.id,
         title: s.title,
@@ -159,6 +240,15 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         })),
       })),
     },
+    selections: phase.selections.map((s) => ({
+      id: s.id,
+      optionId: s.optionId,
+      source: s.source,
+      assignedAt: s.assignedAt,
+      updatedAt: s.updatedAt,
+      hasReceipt: !!s.receiptFileId,
+    })),
+    selectionsUpdatedAt,
     submission: phase.submissions[0]
       ? {
           data: phase.submissions[0].data,
@@ -169,68 +259,228 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   });
 }
 
-// PUT — create or update the phase submission for this attendee.
+// PUT — single combined endpoint for the attendee's Submit action.
+// Accepts { data?, optionIds?, expectedSelectionsUpdatedAt? }. When both
+// data and optionIds are present, BOTH writes happen inside one
+// prisma.$transaction so the user gets a single atomic outcome.
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   const { eventSlug, phaseId } = await params;
-  const body = await req.json();
-  const { data } = body as {
-    data?: Record<string, unknown>;
-  };
 
   const ctx = await loadAuthorizedContext(req, eventSlug, phaseId);
   if ("error" in ctx) return ctx.error;
-  const { phase, registration } = ctx;
+  const { phase, registration, event } = ctx;
 
-  if (!data || typeof data !== "object") {
+  const parsed = submitPhasePortalSchema.safeParse(await req.json());
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "Submission data missing" },
+      { error: "Invalid submission body", fieldErrors: parsed.error.flatten().fieldErrors },
       { status: 400 }
     );
   }
 
+  const { data, optionIds, expectedSelectionsUpdatedAt } = parsed.data;
+
+  // Phase access gate. Admin overrides win; otherwise the date-based
+  // window applies.
   const override = phase.accessOverrides[0]?.status ?? null;
   const status = computePhaseStatus(phase, override, new Date());
   if (status !== "OPEN") {
     return NextResponse.json(
-      { error: `This phase is ${status.toLowerCase().replace("_", " ")}.` },
+      {
+        error: `This phase is ${status.toLowerCase().replace("_", " ")}.`,
+        code: "PHASE_NOT_OPEN",
+      },
       { status: 403 }
     );
   }
 
-  const allFields = phase.steps.flatMap((s) => s.fields);
-  for (const f of allFields) {
-    if (!f.required) continue;
-    if (!isFieldRequiredByCondition(f.conditional, data)) continue;
-    const v = data[f.name];
-    if (v === undefined || v === null || v === "") {
-      return NextResponse.json(
-        { error: `${f.label} is required` },
-        { status: 400 }
-      );
+  // Validate required fields on the field path. Same logic as before;
+  // skipped when no field data is provided.
+  if (data) {
+    const allFields = phase.steps.flatMap((s) => s.fields);
+    for (const f of allFields) {
+      if (!f.required) continue;
+      if (!isFieldRequiredByCondition(f.conditional, data)) continue;
+      const v = data[f.name];
+      if (v === undefined || v === null || v === "") {
+        return NextResponse.json(
+          { error: `${f.label} is required` },
+          { status: 400 }
+        );
+      }
     }
   }
 
-  const upserted = await prisma.phaseSubmission.upsert({
-    where: {
-      phaseId_registrationId: {
-        phaseId: phase.id,
-        registrationId: registration.id,
-      },
-    },
-    update: { data: data as Prisma.InputJsonValue },
-    create: {
-      phaseId: phase.id,
-      registrationId: registration.id,
-      data: data as Prisma.InputJsonValue,
-    },
-  });
+  // ── Compose selections + submission writes inside one transaction.
+  // Either or both may be present in the request; the legacy field-only
+  // path is preserved when optionIds is absent.
+  try {
+    // 20s timeout matches the standalone submitAttendeeSelections wrapper.
+    // The combined route transaction does the same per-option FOR UPDATE
+    // work plus a submission upsert, so it can queue under the same
+    // contention; we want OPTION_FULL responses, not opaque transaction
+    // timeouts, when many attendees race a capacity-1 option.
+    const result = await prisma.$transaction(async (tx) => {
+      let selectionsResult: Awaited<
+        ReturnType<typeof submitAttendeeSelectionsInTx>
+      > | null = null;
 
-  return NextResponse.json({
-    success: true,
-    submission: {
-      id: upserted.id,
-      submittedAt: upserted.submittedAt,
-      updatedAt: upserted.updatedAt,
-    },
-  });
+      if (optionIds !== undefined) {
+        selectionsResult = await submitAttendeeSelectionsInTx(tx, {
+          phaseId: phase.id,
+          registrationId: registration.id,
+          optionIds,
+          expectedSelectionsUpdatedAt,
+          eventId: event.id,
+        });
+      }
+
+      let submission: Awaited<
+        ReturnType<typeof tx.phaseSubmission.upsert>
+      > | null = null;
+      if (data) {
+        submission = await tx.phaseSubmission.upsert({
+          where: {
+            phaseId_registrationId: {
+              phaseId: phase.id,
+              registrationId: registration.id,
+            },
+          },
+          update: { data: data as Prisma.InputJsonValue },
+          create: {
+            phaseId: phase.id,
+            registrationId: registration.id,
+            data: data as Prisma.InputJsonValue,
+          },
+        });
+      }
+
+      return { selectionsResult, submission };
+    }, { timeout: 20_000, maxWait: 10_000 });
+
+    return NextResponse.json({
+      success: true,
+      submission: result.submission
+        ? {
+            id: result.submission.id,
+            submittedAt: result.submission.submittedAt,
+            updatedAt: result.submission.updatedAt,
+          }
+        : null,
+      selections: result.selectionsResult
+        ? result.selectionsResult.selections.map((s) => ({
+            id: s.id,
+            optionId: s.optionId,
+            source: s.source,
+            assignedAt: s.assignedAt,
+            updatedAt: s.updatedAt,
+            hasReceipt: !!s.receiptFileId,
+            // notes: omitted — admin-only.
+          }))
+        : null,
+      selectionsUpdatedAt:
+        result.selectionsResult?.selectionsUpdatedAt ?? null,
+      // Refreshed counts for UI capacity badges. Only present when
+      // selections were written; field-only submits don't affect counts.
+      options: result.selectionsResult?.options ?? null,
+    });
+  } catch (e) {
+    return mapServiceError(e, phase.id);
+  }
+}
+
+/**
+ * Map service-layer typed errors to HTTP responses. On OPTION_FULL we
+ * include refreshed counts for every option on the phase so the client
+ * can recover in one round-trip — no follow-up GET needed.
+ */
+async function mapServiceError(
+  e: unknown,
+  phaseId: string
+): Promise<NextResponse> {
+  if (e instanceof OptionFullError) {
+    // Read fresh counts AFTER the failed (rolled-back) transaction so
+    // the client sees the post-rollback state. This is a deliberate
+    // out-of-transaction read; values may shift slightly under load,
+    // but they're informative for UI recovery.
+    let options;
+    try {
+      options = await readOptionCountSummary(prisma, phaseId);
+    } catch {
+      options = null;
+    }
+    return NextResponse.json(
+      {
+        error: e.message,
+        code: e.code,
+        optionId: e.optionId,
+        options,
+      },
+      { status: 409 }
+    );
+  }
+  if (e instanceof SelectionsConcurrencyError) {
+    return NextResponse.json(
+      {
+        error: e.message,
+        code: e.code,
+        currentSelectionsUpdatedAt: e.currentSelectionsUpdatedAt,
+      },
+      { status: 409 }
+    );
+  }
+  if (e instanceof SelectionsLockedError) {
+    return NextResponse.json(
+      { error: e.message, code: e.code },
+      { status: 409 }
+    );
+  }
+  if (e instanceof SelectionsAdminLockedError) {
+    return NextResponse.json(
+      { error: e.message, code: e.code },
+      { status: 403 }
+    );
+  }
+  if (e instanceof SelectionModeNotWritableError) {
+    return NextResponse.json(
+      { error: e.message, code: e.code },
+      { status: 400 }
+    );
+  }
+  if (e instanceof TooManySelectionsError) {
+    return NextResponse.json(
+      { error: e.message, code: e.code },
+      { status: 400 }
+    );
+  }
+  if (e instanceof OptionsCrossPhaseError) {
+    return NextResponse.json(
+      { error: e.message, code: e.code, optionId: e.optionId },
+      { status: 400 }
+    );
+  }
+  if (e instanceof OptionInactiveError) {
+    return NextResponse.json(
+      { error: e.message, code: e.code, optionId: e.optionId },
+      { status: 400 }
+    );
+  }
+  if (e instanceof SelectionDuplicateError) {
+    return NextResponse.json(
+      { error: e.message, code: e.code },
+      { status: 400 }
+    );
+  }
+  if (e instanceof PhaseNotFoundForSelectionError) {
+    return NextResponse.json(
+      { error: e.message, code: e.code },
+      { status: 404 }
+    );
+  }
+  // Unexpected error — log and return generic 500.
+  console.error("[portal phase PUT] unexpected error:", e);
+  return NextResponse.json(
+    { error: "Submission failed. Please try again." },
+    { status: 500 }
+  );
 }

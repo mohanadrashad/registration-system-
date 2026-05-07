@@ -26,6 +26,12 @@ import {
 } from "lucide-react";
 import { COUNTRIES } from "@/lib/form-builder/countries";
 import { isFieldVisible } from "@/lib/form-conditional";
+import type { PhaseSelectionMode } from "@prisma/client";
+import {
+  PhaseOptionsCard,
+  type PortalPhaseOption,
+  type PortalPhaseSelection,
+} from "./phase-options-card";
 
 interface FormField {
   id: string;
@@ -85,6 +91,14 @@ interface PhaseData {
   isRequired: boolean;
   status: PhaseStatus;
   steps: FormStep[];
+  // Stage 3: selection-related fields. Always present on the wire even
+  // when the phase has no options panel — defaults to NONE/1/false/false
+  // server-side, so legacy phases keep working unchanged.
+  selectionMode: PhaseSelectionMode;
+  maxSelections: number;
+  allowChangeAfterSubmit: boolean;
+  requiresReceiptUpload: boolean;
+  options: PortalPhaseOption[];
 }
 
 interface SubmissionData {
@@ -113,6 +127,21 @@ export default function PortalPhaseFillPage() {
   const [formValues, setFormValues] = useState<FormValueMap>({});
   const [currentStep, setCurrentStep] = useState(0);
 
+  // Stage 3 selection state.
+  const [selections, setSelections] = useState<PortalPhaseSelection[]>([]);
+  const [selectionsUpdatedAt, setSelectionsUpdatedAt] = useState<string | null>(
+    null
+  );
+  const [selectedOptionIds, setSelectedOptionIds] = useState<string[]>([]);
+  // True when the picker is actively shown. Defaults to true when there
+  // are no prior attendee selections; flips to false after a successful
+  // submit, and back to true if the user clicks "Change my selection".
+  const [isEditingSelections, setIsEditingSelections] = useState(true);
+
+  // Anchor to scroll the page back to the options card when a capacity
+  // race forces a re-pick.
+  const optionsCardRef = useRef<HTMLDivElement | null>(null);
+
   const totalSteps = phase?.steps.length ?? 0;
   const isMultiStep = totalSteps > 1;
   const activeStep = phase?.steps[currentStep] ?? null;
@@ -138,9 +167,26 @@ export default function PortalPhaseFillPage() {
         }
         const p: PhaseData = data.phase;
         const sub: SubmissionData | null = data.submission;
+        const sels: PortalPhaseSelection[] = data.selections ?? [];
+        const selUpdatedAt: string | null = data.selectionsUpdatedAt ?? null;
         setPhase(p);
         setEvent(data.event ?? null);
         setSubmission(sub);
+        setSelections(sels);
+        setSelectionsUpdatedAt(selUpdatedAt);
+
+        // Seed selectedOptionIds from existing attendee selections so the
+        // picker re-opens pre-filled when the user clicks "Change my
+        // selection". Admin-assigned rows aren't editable from here, so
+        // they don't seed the picker draft.
+        const attendeeSelectedIds = sels
+          .filter((s) => s.source === "ATTENDEE_PICKED")
+          .map((s) => s.optionId);
+        setSelectedOptionIds(attendeeSelectedIds);
+        // Picker is shown by default for first-time attendees; the
+        // "submitted" view appears once they have any attendee-picked
+        // selections and they're not actively editing.
+        setIsEditingSelections(attendeeSelectedIds.length === 0);
 
         // Seed form values: existing submission > field default > empty.
         const allFields = p.steps.flatMap((s) => s.fields);
@@ -248,25 +294,170 @@ export default function PortalPhaseFillPage() {
     if (!validateCurrentStep()) return;
     setSubmitting(true);
     setError("");
+
+    // Build the request body. We send optionIds whenever the phase has a
+    // writable selection mode AND the picker is actively editable —
+    // otherwise we skip the field entirely so the server doesn't run the
+    // selection write path. The expectedSelectionsUpdatedAt token comes
+    // from the most recent GET / submit response.
+    const isWritableMode =
+      phase?.selectionMode === "ATTENDEE_PICKS" ||
+      phase?.selectionMode === "MIXED";
+    const adminPreAssigned = selections.some(
+      (s) => s.source === "ADMIN_ASSIGNED"
+    );
+    const includeOptions =
+      isWritableMode && !adminPreAssigned && isEditingSelections;
+
+    const body: {
+      data: FormValueMap;
+      optionIds?: string[];
+      expectedSelectionsUpdatedAt?: string | null;
+    } = { data: formValues };
+    if (includeOptions) {
+      body.optionIds = selectedOptionIds;
+      body.expectedSelectionsUpdatedAt = selectionsUpdatedAt;
+    }
+
     try {
       const res = await fetch(`/api/portal/${eventSlug}/phases/${phaseId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ data: formValues }),
+        body: JSON.stringify(body),
       });
       if (res.status === 401) {
         router.replace(`/portal/${eventSlug}`);
         return;
       }
       const result = await res.json();
+
       if (res.ok) {
+        // Reconcile local state from the server response so the next
+        // edit cycle uses the fresh updatedAt token.
+        if (result.selections) {
+          setSelections(result.selections);
+        }
+        if (result.selectionsUpdatedAt !== undefined) {
+          setSelectionsUpdatedAt(result.selectionsUpdatedAt);
+        }
+        if (result.options && phase) {
+          // Merge refreshed counts into the page's options without
+          // dropping any other local state.
+          setPhase({
+            ...phase,
+            options: phase.options.map((o) => {
+              const fresh = (
+                result.options as Array<{
+                  id: string;
+                  capacity: number | null;
+                  taken: number;
+                  full: boolean;
+                }>
+              ).find((r) => r.id === o.id);
+              if (!fresh) return o;
+              return { ...o, taken: fresh.taken, full: fresh.full };
+            }),
+          });
+        }
+        // Successful submit closes the picker. The user lands on the
+        // submitted-view card; they can re-open via "Change my selection".
+        setIsEditingSelections(false);
         setSuccess(true);
-      } else {
-        setError(result.error || "Submission failed");
+        return;
       }
+
+      // ── Non-OK response handling ────────────────────────────────────
+      // 409 OPTION_FULL: refresh capacity counts in-place, deselect the
+      // dead option, scroll to options card. The user fixes the pick and
+      // re-clicks Submit.
+      if (res.status === 409 && result.code === "OPTION_FULL") {
+        const failingOptionId: string | undefined = result.optionId;
+        if (Array.isArray(result.options) && phase) {
+          setPhase({
+            ...phase,
+            options: phase.options.map((o) => {
+              const fresh = (
+                result.options as Array<{
+                  id: string;
+                  capacity: number | null;
+                  taken: number;
+                  full: boolean;
+                }>
+              ).find((r) => r.id === o.id);
+              if (!fresh) return o;
+              return { ...o, taken: fresh.taken, full: fresh.full };
+            }),
+          });
+        }
+        if (failingOptionId) {
+          setSelectedOptionIds((ids) =>
+            ids.filter((id) => id !== failingOptionId)
+          );
+        }
+        setError(
+          result.error ||
+            "An option you picked just filled up. Please pick another and resubmit."
+        );
+        // Scroll to options so the user sees the badge update.
+        optionsCardRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+        return;
+      }
+
+      // 409 SELECTIONS_CONCURRENCY: another tab / device already saved
+      // a newer version. Refetch the phase so the user sees the fresh
+      // state, then re-applies their edit.
+      if (res.status === 409 && result.code === "SELECTIONS_CONCURRENCY") {
+        setError(
+          "Your selection was updated elsewhere. Reloading the latest…"
+        );
+        // Trigger a page-data refresh.
+        router.refresh();
+        // Re-fetch the phase state directly so local state catches up
+        // without waiting for navigation.
+        try {
+          const r = await fetch(
+            `/api/portal/${eventSlug}/phases/${phaseId}`,
+            { credentials: "same-origin" }
+          );
+          if (r.ok) {
+            const fresh = await r.json();
+            setPhase(fresh.phase);
+            setSubmission(fresh.submission);
+            setSelections(fresh.selections ?? []);
+            setSelectionsUpdatedAt(fresh.selectionsUpdatedAt ?? null);
+            const attendeeIds = (fresh.selections ?? [])
+              .filter(
+                (s: PortalPhaseSelection) => s.source === "ATTENDEE_PICKED"
+              )
+              .map((s: PortalPhaseSelection) => s.optionId);
+            setSelectedOptionIds(attendeeIds);
+            setIsEditingSelections(true);
+          }
+        } catch {
+          // Refetch failed; user can manually reload.
+        }
+        return;
+      }
+
+      // 409 SELECTIONS_LOCKED / 403 SELECTIONS_ADMIN_LOCKED: the phase
+      // doesn't allow attendee changes. Surface the friendly message.
+      if (
+        result.code === "SELECTIONS_LOCKED" ||
+        result.code === "SELECTIONS_ADMIN_LOCKED"
+      ) {
+        setError(result.error || "This phase doesn't allow changes.");
+        setIsEditingSelections(false);
+        return;
+      }
+
+      // Generic non-OK: surface the server's message.
+      setError(result.error || "Submission failed");
     } catch {
-      setError("Submission failed");
+      setError("Submission failed. Check your connection and try again.");
     } finally {
       setSubmitting(false);
     }
@@ -659,6 +850,28 @@ export default function PortalPhaseFillPage() {
             </p>
           )}
 
+          {/* Stage 3: options card sits above the stepper, mode-dependent. */}
+          {phase.selectionMode !== "NONE" && (
+            <div ref={optionsCardRef}>
+              <PhaseOptionsCard
+                selectionMode={phase.selectionMode}
+                maxSelections={phase.maxSelections}
+                allowChangeAfterSubmit={phase.allowChangeAfterSubmit}
+                phaseRequiresReceiptUpload={phase.requiresReceiptUpload}
+                options={phase.options}
+                selections={selections}
+                selectedOptionIds={selectedOptionIds}
+                onChange={setSelectedOptionIds}
+                isEditing={isEditingSelections}
+                onStartEditing={() => {
+                  setIsEditingSelections(true);
+                  setError("");
+                }}
+                readOnly={readOnly}
+              />
+            </div>
+          )}
+
           {isMultiStep && (
             <div className="pt-2">
               <div className="flex items-center gap-2">
@@ -755,7 +968,16 @@ export default function PortalPhaseFillPage() {
                       disabled={submitting}
                       style={{ backgroundColor: primaryColor, color: "#fff" }}
                     >
-                      {submitting ? "Saving…" : submission ? "Update" : "Submit"}
+                      {submitting ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving…
+                        </>
+                      ) : submission ? (
+                        "Update"
+                      ) : (
+                        "Submit"
+                      )}
                     </Button>
                   ) : (
                     <Button
