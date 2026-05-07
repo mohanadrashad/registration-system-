@@ -64,7 +64,8 @@ export async function createOption(
 
 export async function updateOption(
   optionId: string,
-  input: Partial<OptionInput>
+  input: Partial<OptionInput>,
+  expectedUpdatedAt: Date | null = null
 ): Promise<PhaseOption> {
   // `metadata` and `requiresReceipt` are 3-state: presence with `null` should
   // clear the column, while `undefined` should leave it alone. The spread
@@ -89,6 +90,29 @@ export async function updateOption(
     }),
     ...(input.isActive !== undefined && { isActive: input.isActive }),
   };
+
+  // Optimistic concurrency control: if the caller supplied the updatedAt it
+  // last saw, we run the read+write in a transaction and refuse the write
+  // when the row has moved on (another tab / admin / job edited it). This
+  // prevents the classic last-writer-wins data loss when two admins edit
+  // the same option in parallel.
+  if (expectedUpdatedAt) {
+    return prisma.$transaction(async (tx) => {
+      const current = await tx.phaseOption.findUnique({
+        where: { id: optionId },
+        select: { updatedAt: true },
+      });
+      if (!current) throw new OptionNotFoundError();
+      // Compare at the millisecond. We treat "current is strictly newer" as
+      // a conflict; equal timestamps mean we're patching the version we saw,
+      // which is fine.
+      if (current.updatedAt.getTime() > expectedUpdatedAt.getTime()) {
+        throw new OptionConcurrencyError(current.updatedAt);
+      }
+      return tx.phaseOption.update({ where: { id: optionId }, data });
+    });
+  }
+
   return prisma.phaseOption.update({ where: { id: optionId }, data });
 }
 
@@ -152,6 +176,22 @@ export class OptionInUseError extends Error {
     super(
       `Cannot delete an option that has been selected by ${selectionCount} attendee(s). ` +
         "Deactivate the option instead, or reassign the attendees first."
+    );
+  }
+}
+
+/**
+ * Thrown by updateOption when the caller's expectedUpdatedAt is older than
+ * the row's current updatedAt — i.e., someone else has saved a newer
+ * version since the caller last loaded it. The route maps this to a 409
+ * with the current updatedAt so the client can refetch and reconcile.
+ */
+export class OptionConcurrencyError extends Error {
+  readonly code = "OPTION_CONCURRENCY";
+  constructor(public readonly currentUpdatedAt: Date) {
+    super(
+      "This option was changed by someone else since you last loaded it. " +
+        "Reload to see the latest version, then re-apply your edit."
     );
   }
 }

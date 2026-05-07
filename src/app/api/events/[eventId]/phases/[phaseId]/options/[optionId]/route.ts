@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authorizeEvent, apiError } from "@/lib/api-auth";
 import {
   deleteOption,
+  OptionConcurrencyError,
   OptionInUseError,
   OptionNotFoundError,
   reorderOption,
@@ -72,8 +73,32 @@ export async function PATCH(
     return apiError(JSON.stringify(parsed.error.flatten()), 400);
   }
 
-  const updated = await updateOption(optionId, parsed.data);
-  return NextResponse.json(updated);
+  try {
+    // Strip expectedUpdatedAt from the patch — it's a control field, not a
+    // column write. The service compares it inside a transaction.
+    const { expectedUpdatedAt, ...patch } = parsed.data;
+    const updated = await updateOption(
+      optionId,
+      patch,
+      expectedUpdatedAt ? new Date(expectedUpdatedAt) : null
+    );
+    return NextResponse.json(updated);
+  } catch (e) {
+    if (e instanceof OptionConcurrencyError) {
+      return NextResponse.json(
+        {
+          error: e.message,
+          code: e.code,
+          currentUpdatedAt: e.currentUpdatedAt.toISOString(),
+        },
+        { status: 409 }
+      );
+    }
+    if (e instanceof OptionNotFoundError) {
+      return apiError(e.message, 404, e.code);
+    }
+    throw e;
+  }
 }
 
 export async function DELETE(

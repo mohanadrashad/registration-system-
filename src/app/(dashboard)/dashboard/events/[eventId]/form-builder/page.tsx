@@ -122,6 +122,9 @@ interface Phase {
   maxSelections: number;
   allowChangeAfterSubmit: boolean;
   requiresReceiptUpload: boolean;
+  // Concurrency token for the phase row. Used by the Options panel as
+  // expectedUpdatedAt on its phase-level PATCH calls.
+  updatedAt: string;
   options: PhaseOption[];
 }
 
@@ -366,7 +369,7 @@ function PhaseSettingsCard({
   multiLanguageEnabled: boolean;
   emailTemplates: EmailTemplateOption[];
   onUpdate: (patch: Partial<Phase>) => void;
-  onRefetch: () => void;
+  onRefetch: () => Promise<void> | void;
 }) {
   const [title, setTitle] = useState(phase.title);
   const [titleAr, setTitleAr] = useState(phase.titleAr ?? "");
@@ -545,7 +548,9 @@ function PhaseSettingsCard({
         </div>
 
         {/* Stage 2: selectable-options panel. Purely additive — collapsed by */}
-        {/* default unless the phase already has selectionMode != NONE. */}
+        {/* default unless the phase already has selectionMode != NONE. The */}
+        {/* panel manages its own optimistic state; onRefetch is only called  */}
+        {/* on 409 conflicts to recover from concurrent edits in another tab. */}
         <PhaseOptionsPanel
           eventId={eventId}
           phase={{
@@ -554,9 +559,10 @@ function PhaseSettingsCard({
             maxSelections: phase.maxSelections,
             allowChangeAfterSubmit: phase.allowChangeAfterSubmit,
             requiresReceiptUpload: phase.requiresReceiptUpload,
+            updatedAt: phase.updatedAt,
             options: phase.options,
           }}
-          onChange={onRefetch}
+          onRefetch={onRefetch}
         />
       </CardContent>
     </Card>

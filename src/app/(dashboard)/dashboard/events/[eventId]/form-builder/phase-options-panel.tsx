@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,9 +32,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  AlertCircle,
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -43,8 +45,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { PhaseSelectionMode } from "@prisma/client";
+import { fetchJson, type FriendlyError } from "@/lib/api-errors-client";
 
-// ─── Types — kept local to the panel so page.tsx doesn't bloat. ──────
+// ─── Types — kept local so page.tsx doesn't bloat. ──────────────────
 
 export interface PhaseOption {
   id: string;
@@ -58,6 +61,9 @@ export interface PhaseOption {
   requiresReceipt: boolean | null;
   isActive: boolean;
   order: number;
+  // updatedAt is the optimistic-concurrency token. Kept in ISO-string form
+  // because that's how it arrives over the wire and how we send it back.
+  updatedAt: string;
   _count?: { selections: number };
 }
 
@@ -67,6 +73,9 @@ export interface PhaseOptionsPanelData {
   maxSelections: number;
   allowChangeAfterSubmit: boolean;
   requiresReceiptUpload: boolean;
+  // Phase row's updatedAt — used as the concurrency token for phase patches
+  // (selectionMode toggle, maxSelections, allowChange, requireReceipt).
+  updatedAt: string;
   options: PhaseOption[];
 }
 
@@ -98,16 +107,49 @@ const MODES_WITH_MAX_SELECTIONS: PhaseSelectionMode[] = [
 interface PhaseOptionsPanelProps {
   eventId: string;
   phase: PhaseOptionsPanelData;
-  onChange: () => void; // triggers a parent refetch
+  /**
+   * Recovery-only refetch. The panel calls this on 409-concurrency failures
+   * so the parent can pull fresh data from the server. The panel re-seeds
+   * its local state from the next prop snapshot. Never called on the happy
+   * path — optimistic updates handle that.
+   */
+  onRefetch: () => Promise<void> | void;
 }
 
+/**
+ * The panel maintains its own optimistic state for selection-mode toggles,
+ * the four phase-level switches, and the entire options list. Mutations
+ * apply locally first, then send to the server. On success: reconcile with
+ * the server's returned row (server wins past that point). On failure:
+ * roll local state back to the snapshot taken before the optimistic write,
+ * surface a clear toast, and keep a red error indicator on the affected
+ * row until the next successful mutation clears it.
+ *
+ * Concurrency: each option's PATCH carries `expectedUpdatedAt`. If another
+ * tab / admin saved a newer version, the server returns 409. We then call
+ * `onRefetch` and force-reseed from the next prop snapshot. Phase-level
+ * patches use the same mechanism for the phase row.
+ */
 export function PhaseOptionsPanel({
   eventId,
   phase,
-  onChange,
+  onRefetch,
 }: PhaseOptionsPanelProps) {
-  // Panel auto-expands when this phase already has options enabled, so an
-  // admin re-opening the page lands directly on the configuration.
+  // ── Local optimistic state. Source of truth for the rendered UI. ──
+  const [localPhase, setLocalPhase] = useState(() => extractPhaseState(phase));
+  const [localOptions, setLocalOptions] = useState<PhaseOption[]>(
+    () => phase.options
+  );
+
+  // Pending / error visuals — keyed by "phase" or option.id.
+  const [pendingPhase, setPendingPhase] = useState(false);
+  const [pendingOptions, setPendingOptions] = useState<Set<string>>(new Set());
+  const [errorPhase, setErrorPhase] = useState<string | null>(null);
+  const [errorOptions, setErrorOptions] = useState<
+    Record<string, string | null>
+  >({});
+
+  // ── Pure UI state — never triggers network. ──
   const [expanded, setExpanded] = useState(phase.selectionMode !== "NONE");
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
   const [deleteGuard, setDeleteGuard] = useState<{
@@ -116,150 +158,454 @@ export function PhaseOptionsPanel({
     selectionCount: number;
   } | null>(null);
 
-  // Local state mirrors the phase-level selection knobs so the inputs feel
-  // responsive — committed to the server on change/blur.
-  const [maxSelectionsDraft, setMaxSelectionsDraft] = useState(
-    String(phase.maxSelections)
-  );
+  // ── Re-seed local state on phase navigation OR explicit force-reseed. ──
+  // forceReseed is used by 409 handlers: after onRefetch resolves, the parent
+  // re-renders the panel with fresh props; this flag tells the effect to
+  // accept those props as the new ground truth even though phase.id hasn't
+  // changed. Without the flag we'd ignore prop updates after mount.
+  const [forceReseed, setForceReseed] = useState(0);
+  const seededIdRef = useRef<string>(phase.id);
   useEffect(() => {
-    setMaxSelectionsDraft(String(phase.maxSelections));
-  }, [phase.id, phase.maxSelections]);
+    if (seededIdRef.current !== phase.id || forceReseed > 0) {
+      setLocalPhase(extractPhaseState(phase));
+      setLocalOptions(phase.options);
+      setPendingPhase(false);
+      setPendingOptions(new Set());
+      setErrorPhase(null);
+      setErrorOptions({});
+      setEditingOptionId(null);
+      setExpanded(phase.selectionMode !== "NONE");
+      seededIdRef.current = phase.id;
+    }
+  }, [phase, forceReseed]);
 
-  // Re-sync expansion state when switching to a different phase.
-  useEffect(() => {
-    setExpanded(phase.selectionMode !== "NONE");
-    setEditingOptionId(null);
-  }, [phase.id, phase.selectionMode]);
+  // ── Per-option request lock. Serialises mutations on the same option so
+  // ── two rapid blurs don't race. The phase row uses a separate single lock.
+  const optionLocks = useRef(new Map<string, Promise<unknown>>());
+  const phaseLockRef = useRef<Promise<unknown> | null>(null);
 
-  const enabled = phase.selectionMode !== "NONE";
-  const showMaxSelections = MODES_WITH_MAX_SELECTIONS.includes(
-    phase.selectionMode
-  );
-
-  async function patchPhase(patch: Partial<PhaseOptionsPanelData>) {
-    const res = await fetch(`/api/events/${eventId}/phases/${phase.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
+  // ── Helpers to mutate the pending/error visuals. ──
+  const setOptionPending = useCallback((id: string, pending: boolean) => {
+    setPendingOptions((prev) => {
+      const next = new Set(prev);
+      if (pending) next.add(id);
+      else next.delete(id);
+      return next;
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      toast.error(err?.error || "Failed to update phase");
-      return;
-    }
-    onChange();
-  }
+  }, []);
+  const setOptionError = useCallback((id: string, message: string | null) => {
+    setErrorOptions((prev) => ({ ...prev, [id]: message }));
+  }, []);
 
-  async function toggleEnabled(checked: boolean) {
-    if (checked) {
-      // Default mode on first enable per Stage 2 mockup decision.
-      await patchPhase({ selectionMode: "ATTENDEE_PICKS" });
-      setExpanded(true);
-    } else {
-      await patchPhase({ selectionMode: "NONE" });
-      setExpanded(false);
-    }
-  }
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase-level mutations
+  // ─────────────────────────────────────────────────────────────────────
 
-  async function changeMode(mode: PhaseSelectionMode) {
-    await patchPhase({ selectionMode: mode });
-  }
+  const patchPhase = useCallback(
+    async (
+      patch: Partial<{
+        selectionMode: PhaseSelectionMode;
+        maxSelections: number;
+        allowChangeAfterSubmit: boolean;
+        requiresReceiptUpload: boolean;
+      }>,
+      optimistic: Partial<typeof localPhase>
+    ) => {
+      // Serialise phase patches behind a single per-panel lock — sequential
+      // toggles must apply in order, otherwise the server's expectedUpdatedAt
+      // check trips them up.
+      const prior = phaseLockRef.current;
+      const run = (async () => {
+        if (prior) await prior.catch(() => {});
 
-  async function commitMaxSelections() {
-    const n = parseInt(maxSelectionsDraft, 10);
-    if (!Number.isFinite(n) || n < 1) {
-      // Reset to the persisted value rather than write garbage.
-      setMaxSelectionsDraft(String(phase.maxSelections));
-      return;
-    }
-    if (n === phase.maxSelections) return;
-    await patchPhase({ maxSelections: n });
-  }
+        // Snapshot current state so we can roll back on failure.
+        const snapshot = localPhase;
+        // Optimistic update — UI updates instantly.
+        setLocalPhase((p) => ({ ...p, ...optimistic }));
+        setPendingPhase(true);
+        setErrorPhase(null);
 
-  async function addOption() {
-    const res = await fetch(
+        const result = await fetchJson<{
+          id: string;
+          selectionMode: PhaseSelectionMode;
+          maxSelections: number;
+          allowChangeAfterSubmit: boolean;
+          requiresReceiptUpload: boolean;
+          updatedAt: string;
+        }>(
+          `/api/events/${eventId}/phases/${phase.id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...patch,
+              expectedUpdatedAt: snapshot.updatedAt,
+            }),
+          },
+          "phase settings"
+        );
+
+        setPendingPhase(false);
+
+        if (result.ok) {
+          // Server wins past this point: reconcile to its returned row.
+          setLocalPhase((p) => ({
+            ...p,
+            selectionMode: result.data.selectionMode,
+            maxSelections: result.data.maxSelections,
+            allowChangeAfterSubmit: result.data.allowChangeAfterSubmit,
+            requiresReceiptUpload: result.data.requiresReceiptUpload,
+            updatedAt: result.data.updatedAt,
+          }));
+          return;
+        }
+
+        // Failure path: rollback + surface error.
+        setLocalPhase(snapshot);
+        if (result.error.code === "PHASE_CONCURRENCY") {
+          await handleConcurrencyConflict(result.error);
+        } else {
+          setErrorPhase(result.error.message);
+          toast.error(result.error.message);
+        }
+      })();
+
+      phaseLockRef.current = run.catch(() => {});
+      return run;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventId, phase.id, localPhase]
+  );
+
+  // ── 409 conflict path: tell parent to refetch, re-seed on next render. ──
+  const handleConcurrencyConflict = useCallback(
+    async (err: FriendlyError) => {
+      toast.warning(err.message);
+      try {
+        await onRefetch();
+      } catch {
+        // onRefetch's parent already toasts on failure; nothing to do here.
+      }
+      // Bump the reseed counter so the effect picks up the next props snapshot.
+      setForceReseed((n) => n + 1);
+    },
+    [onRefetch]
+  );
+
+  const toggleEnabled = useCallback(
+    async (checked: boolean) => {
+      const nextMode: PhaseSelectionMode = checked ? "ATTENDEE_PICKS" : "NONE";
+      // Expansion is pure UI state — no network, no rollback needed.
+      setExpanded(checked);
+      await patchPhase(
+        { selectionMode: nextMode },
+        { selectionMode: nextMode }
+      );
+    },
+    [patchPhase]
+  );
+
+  const changeMode = useCallback(
+    (mode: PhaseSelectionMode) =>
+      patchPhase({ selectionMode: mode }, { selectionMode: mode }),
+    [patchPhase]
+  );
+
+  const setMaxSelections = useCallback(
+    (n: number) =>
+      patchPhase({ maxSelections: n }, { maxSelections: n }),
+    [patchPhase]
+  );
+  const setAllowChange = useCallback(
+    (b: boolean) =>
+      patchPhase(
+        { allowChangeAfterSubmit: b },
+        { allowChangeAfterSubmit: b }
+      ),
+    [patchPhase]
+  );
+  const setRequiresReceiptUpload = useCallback(
+    (b: boolean) =>
+      patchPhase(
+        { requiresReceiptUpload: b },
+        { requiresReceiptUpload: b }
+      ),
+    [patchPhase]
+  );
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Option-level mutations
+  // ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * Run an option mutation behind that option's serialisation lock so
+   * rapid commits (e.g., blur on label, then blur on description) apply
+   * in order rather than racing.
+   */
+  const withOptionLock = useCallback(
+    async <T,>(optionId: string, fn: () => Promise<T>): Promise<T> => {
+      const prior = optionLocks.current.get(optionId);
+      if (prior) await prior.catch(() => {});
+      const next = fn();
+      optionLocks.current.set(
+        optionId,
+        next.catch(() => {})
+      );
+      try {
+        return await next;
+      } finally {
+        if (optionLocks.current.get(optionId) === next.catch(() => {})) {
+          optionLocks.current.delete(optionId);
+        }
+      }
+    },
+    []
+  );
+
+  const subjectFor = useCallback((label: string) => `"${label}"`, []);
+
+  const patchOption = useCallback(
+    async (
+      optionId: string,
+      patch: Partial<PhaseOption>,
+      optimistic: Partial<PhaseOption>
+    ) => {
+      return withOptionLock(optionId, async () => {
+        // Snapshot for rollback. We re-read from latest state inside the
+        // updater to avoid stale-closure bugs when patches queue up.
+        let snapshot: PhaseOption | undefined;
+        setLocalOptions((opts) => {
+          const idx = opts.findIndex((o) => o.id === optionId);
+          if (idx === -1) return opts;
+          snapshot = opts[idx];
+          const next = [...opts];
+          next[idx] = { ...opts[idx], ...optimistic };
+          return next;
+        });
+        if (!snapshot) return; // option vanished mid-flight (shouldn't happen)
+        const subject = subjectFor(snapshot.label);
+
+        setOptionPending(optionId, true);
+        setOptionError(optionId, null);
+
+        const result = await fetchJson<PhaseOption>(
+          `/api/events/${eventId}/phases/${phase.id}/options/${optionId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...patch,
+              expectedUpdatedAt: snapshot.updatedAt,
+            }),
+          },
+          subject
+        );
+
+        setOptionPending(optionId, false);
+
+        if (result.ok) {
+          // Server response wins. Preserve the locally-known _count since
+          // the PATCH endpoint doesn't return it.
+          setLocalOptions((opts) =>
+            opts.map((o) =>
+              o.id === optionId
+                ? { ...result.data, _count: o._count }
+                : o
+            )
+          );
+          // Clear any previous error indicator for this row.
+          setOptionError(optionId, null);
+          return;
+        }
+
+        // Roll back to the pre-mutation snapshot.
+        setLocalOptions((opts) =>
+          opts.map((o) => (o.id === optionId ? snapshot! : o))
+        );
+        if (result.error.code === "OPTION_CONCURRENCY") {
+          await handleConcurrencyConflict(result.error);
+        } else {
+          setOptionError(optionId, result.error.message);
+          toast.error(result.error.message);
+        }
+      });
+    },
+    [
+      eventId,
+      phase.id,
+      setOptionPending,
+      setOptionError,
+      withOptionLock,
+      handleConcurrencyConflict,
+      subjectFor,
+    ]
+  );
+
+  const addOption = useCallback(async () => {
+    // Optimistic placeholder with a temp id. While pending the row renders
+    // muted; on success we swap the temp for the real server-assigned row.
+    const tempId = `temp_${Math.random().toString(36).slice(2, 10)}`;
+    const placeholder: PhaseOption = {
+      id: tempId,
+      label: `Option ${localOptions.length + 1}`,
+      labelAr: null,
+      description: null,
+      descriptionAr: null,
+      externalUrl: null,
+      capacity: null,
+      metadata: null,
+      requiresReceipt: null,
+      isActive: true,
+      order: localOptions.length,
+      updatedAt: new Date().toISOString(),
+      _count: { selections: 0 },
+    };
+    setLocalOptions((opts) => [...opts, placeholder]);
+    setOptionPending(tempId, true);
+
+    const result = await fetchJson<PhaseOption>(
       `/api/events/${eventId}/phases/${phase.id}/options`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          label: `Option ${phase.options.length + 1}`,
-        }),
-      }
+        body: JSON.stringify({ label: placeholder.label }),
+      },
+      "new option"
     );
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      toast.error(err?.error || "Failed to add option");
-      return;
-    }
-    const created = (await res.json()) as PhaseOption;
-    toast.success("Option added");
-    onChange();
-    // Drop straight into edit mode on the new row.
-    setEditingOptionId(created.id);
-  }
 
-  async function reorderOption(optionId: string, direction: "up" | "down") {
-    const res = await fetch(
-      `/api/events/${eventId}/phases/${phase.id}/options/${optionId}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ direction }),
-      }
-    );
-    if (!res.ok) {
-      toast.error("Failed to reorder option");
-      return;
-    }
-    onChange();
-  }
+    setOptionPending(tempId, false);
 
-  async function deleteOption(optionId: string) {
-    const res = await fetch(
-      `/api/events/${eventId}/phases/${phase.id}/options/${optionId}`,
-      { method: "DELETE" }
-    );
-    if (res.status === 409) {
-      // Server returns the live selection count; surface the deactivate-instead
-      // dialog with that number so the admin can decide.
-      const body = (await res
-        .json()
-        .catch(() => null)) as { selectionCount?: number } | null;
-      const opt = phase.options.find((o) => o.id === optionId);
-      setDeleteGuard({
-        optionId,
-        label: opt?.label ?? "this option",
-        selectionCount: body?.selectionCount ?? 0,
+    if (result.ok) {
+      // Replace the temp row with the server's row, preserving order index.
+      setLocalOptions((opts) =>
+        opts.map((o) =>
+          o.id === tempId
+            ? { ...result.data, _count: { selections: 0 } }
+            : o
+        )
+      );
+      setEditingOptionId(result.data.id);
+    } else {
+      // Remove placeholder on failure.
+      setLocalOptions((opts) => opts.filter((o) => o.id !== tempId));
+      toast.error(result.error.message);
+    }
+  }, [eventId, phase.id, localOptions.length, setOptionPending]);
+
+  const reorderOption = useCallback(
+    async (optionId: string, direction: "up" | "down") => {
+      // Optimistic swap of two adjacent rows. Reorder doesn't carry a
+      // concurrency token (the server's swap is idempotent for our purposes)
+      // but rollback still applies on a hard failure.
+      let snapshot: PhaseOption[] | null = null;
+      setLocalOptions((opts) => {
+        const idx = opts.findIndex((o) => o.id === optionId);
+        if (idx === -1) return opts;
+        const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+        if (swapIdx < 0 || swapIdx >= opts.length) return opts;
+        snapshot = opts;
+        const next = [...opts];
+        [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+        return next.map((o, i) => ({ ...o, order: i }));
       });
-      return;
-    }
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      toast.error(err?.error || "Failed to delete option");
-      return;
-    }
-    toast.success("Option deleted");
-    onChange();
-  }
+      if (!snapshot) return;
 
-  async function deactivateOption(optionId: string) {
-    const res = await fetch(
-      `/api/events/${eventId}/phases/${phase.id}/options/${optionId}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: false }),
+      setOptionPending(optionId, true);
+      setOptionError(optionId, null);
+
+      const result = await fetchJson<{ success: boolean }>(
+        `/api/events/${eventId}/phases/${phase.id}/options/${optionId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ direction }),
+        },
+        "option order"
+      );
+
+      setOptionPending(optionId, false);
+
+      if (!result.ok) {
+        setLocalOptions(snapshot);
+        toast.error(result.error.message);
       }
-    );
-    if (!res.ok) {
-      toast.error("Failed to deactivate option");
-      return;
-    }
-    toast.success("Option deactivated");
-    setDeleteGuard(null);
-    onChange();
-  }
+    },
+    [eventId, phase.id, setOptionError, setOptionPending]
+  );
+
+  const deleteOption = useCallback(
+    async (optionId: string) => {
+      const target = localOptions.find((o) => o.id === optionId);
+      if (!target) return;
+      const subject = subjectFor(target.label);
+
+      // Optimistic remove. We snapshot the full list so we can restore the
+      // row at its original index on failure.
+      const snapshot = localOptions;
+      setLocalOptions((opts) => opts.filter((o) => o.id !== optionId));
+      setOptionPending(optionId, true);
+
+      const result = await fetchJson<{ success: boolean }>(
+        `/api/events/${eventId}/phases/${phase.id}/options/${optionId}`,
+        { method: "DELETE" },
+        subject
+      );
+
+      setOptionPending(optionId, false);
+
+      if (!result.ok) {
+        // Restore.
+        setLocalOptions(snapshot);
+        if (result.error.code === "OPTION_HAS_SELECTIONS") {
+          // Open the deactivate-instead dialog rather than toast.
+          setDeleteGuard({
+            optionId,
+            label: target.label,
+            selectionCount: result.error.extras.selectionCount ?? 0,
+          });
+          return;
+        }
+        setOptionError(optionId, result.error.message);
+        toast.error(result.error.message);
+      }
+    },
+    [
+      eventId,
+      phase.id,
+      localOptions,
+      setOptionPending,
+      setOptionError,
+      subjectFor,
+    ]
+  );
+
+  const deactivateOption = useCallback(
+    async (optionId: string) => {
+      setDeleteGuard(null);
+      const target = localOptions.find((o) => o.id === optionId);
+      if (!target) return;
+      await patchOption(
+        optionId,
+        { isActive: false },
+        { isActive: false }
+      );
+    },
+    [localOptions, patchOption]
+  );
+
+  // ── Derived flags ──
+  const enabled = localPhase.selectionMode !== "NONE";
+  const showMaxSelections = MODES_WITH_MAX_SELECTIONS.includes(
+    localPhase.selectionMode
+  );
+
+  // Local draft for the maxSelections input — we want responsive typing.
+  const [maxSelectionsDraft, setMaxSelectionsDraft] = useState(
+    String(localPhase.maxSelections)
+  );
+  useEffect(() => {
+    setMaxSelectionsDraft(String(localPhase.maxSelections));
+  }, [localPhase.maxSelections]);
 
   return (
     <div className="rounded-lg border bg-muted/20">
@@ -275,8 +621,17 @@ export function PhaseOptionsPanel({
             <span className="font-medium">Options</span>
             {enabled && (
               <Badge variant="secondary" className="text-xs">
-                {SELECTION_MODE_LABELS[phase.selectionMode]}
+                {SELECTION_MODE_LABELS[localPhase.selectionMode]}
               </Badge>
+            )}
+            {pendingPhase && (
+              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+            )}
+            {errorPhase && !pendingPhase && (
+              <AlertCircle
+                className="h-3 w-3 text-destructive"
+                aria-label={errorPhase}
+              />
             )}
           </div>
           <p className="text-xs text-muted-foreground">
@@ -306,7 +661,7 @@ export function PhaseOptionsPanel({
             <div className="space-y-2">
               <Label>Selection mode</Label>
               <Select
-                value={phase.selectionMode}
+                value={localPhase.selectionMode}
                 onValueChange={(v) => changeMode(v as PhaseSelectionMode)}
               >
                 <SelectTrigger>
@@ -328,7 +683,7 @@ export function PhaseOptionsPanel({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {SELECTION_MODE_DESCRIPTIONS[phase.selectionMode]}
+                {SELECTION_MODE_DESCRIPTIONS[localPhase.selectionMode]}
               </p>
             </div>
 
@@ -341,7 +696,14 @@ export function PhaseOptionsPanel({
                   max={50}
                   value={maxSelectionsDraft}
                   onChange={(e) => setMaxSelectionsDraft(e.target.value)}
-                  onBlur={commitMaxSelections}
+                  onBlur={() => {
+                    const n = parseInt(maxSelectionsDraft, 10);
+                    if (!Number.isFinite(n) || n < 1) {
+                      setMaxSelectionsDraft(String(localPhase.maxSelections));
+                      return;
+                    }
+                    if (n !== localPhase.maxSelections) setMaxSelections(n);
+                  }}
                 />
                 <p className="text-xs text-muted-foreground">
                   Use 1 for single-pick (default). Greater values allow
@@ -355,10 +717,8 @@ export function PhaseOptionsPanel({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex items-start gap-3 rounded-md border p-3">
               <Switch
-                checked={phase.allowChangeAfterSubmit}
-                onCheckedChange={(c) =>
-                  patchPhase({ allowChangeAfterSubmit: c })
-                }
+                checked={localPhase.allowChangeAfterSubmit}
+                onCheckedChange={setAllowChange}
               />
               <div>
                 <Label className="font-medium">Allow change after submit</Label>
@@ -370,10 +730,8 @@ export function PhaseOptionsPanel({
             </div>
             <div className="flex items-start gap-3 rounded-md border p-3">
               <Switch
-                checked={phase.requiresReceiptUpload}
-                onCheckedChange={(c) =>
-                  patchPhase({ requiresReceiptUpload: c })
-                }
+                checked={localPhase.requiresReceiptUpload}
+                onCheckedChange={setRequiresReceiptUpload}
               />
               <div>
                 <Label className="font-medium">Require receipt upload</Label>
@@ -385,6 +743,23 @@ export function PhaseOptionsPanel({
             </div>
           </div>
 
+          {errorPhase && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+              <div className="flex-1">
+                <p>{errorPhase}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6"
+                onClick={() => setErrorPhase(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          )}
+
           {/* Options list */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -394,22 +769,22 @@ export function PhaseOptionsPanel({
               </Button>
             </div>
 
-            {phase.options.length === 0 ? (
+            {localOptions.length === 0 ? (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                 No options yet. Add one to get started.
               </div>
             ) : (
               <div className="space-y-2">
-                {phase.options.map((option, idx) => (
+                {localOptions.map((option, idx) => (
                   <OptionRow
                     key={option.id}
-                    eventId={eventId}
-                    phaseId={phase.id}
                     option={option}
                     isFirst={idx === 0}
-                    isLast={idx === phase.options.length - 1}
+                    isLast={idx === localOptions.length - 1}
                     isEditing={editingOptionId === option.id}
-                    phaseRequiresReceipt={phase.requiresReceiptUpload}
+                    isPending={pendingOptions.has(option.id)}
+                    error={errorOptions[option.id] ?? null}
+                    phaseRequiresReceipt={localPhase.requiresReceiptUpload}
                     onToggleEdit={() =>
                       setEditingOptionId((current) =>
                         current === option.id ? null : option.id
@@ -417,7 +792,10 @@ export function PhaseOptionsPanel({
                     }
                     onMove={(d) => reorderOption(option.id, d)}
                     onDelete={() => deleteOption(option.id)}
-                    onChanged={onChange}
+                    onClearError={() => setOptionError(option.id, null)}
+                    onPatch={(patch, optimistic) =>
+                      patchOption(option.id, patch, optimistic)
+                    }
                   />
                 ))}
               </div>
@@ -462,34 +840,49 @@ export function PhaseOptionsPanel({
   );
 }
 
+function extractPhaseState(phase: PhaseOptionsPanelData) {
+  return {
+    selectionMode: phase.selectionMode,
+    maxSelections: phase.maxSelections,
+    allowChangeAfterSubmit: phase.allowChangeAfterSubmit,
+    requiresReceiptUpload: phase.requiresReceiptUpload,
+    updatedAt: phase.updatedAt,
+  };
+}
+
 // ─── OptionRow: collapsed summary + ⋯ menu, expands to full editor. ──
 
 interface OptionRowProps {
-  eventId: string;
-  phaseId: string;
   option: PhaseOption;
   isFirst: boolean;
   isLast: boolean;
   isEditing: boolean;
+  isPending: boolean;
+  error: string | null;
   phaseRequiresReceipt: boolean;
   onToggleEdit: () => void;
   onMove: (direction: "up" | "down") => void;
   onDelete: () => void;
-  onChanged: () => void;
+  onClearError: () => void;
+  onPatch: (
+    patch: Partial<PhaseOption>,
+    optimistic: Partial<PhaseOption>
+  ) => Promise<void>;
 }
 
 function OptionRow({
-  eventId,
-  phaseId,
   option,
   isFirst,
   isLast,
   isEditing,
+  isPending,
+  error,
   phaseRequiresReceipt,
   onToggleEdit,
   onMove,
   onDelete,
-  onChanged,
+  onClearError,
+  onPatch,
 }: OptionRowProps) {
   const selectionCount = option._count?.selections ?? 0;
   const capacityBadge = useMemo(() => {
@@ -503,11 +896,17 @@ function OptionRow({
     return `Receipt: inherit (${phaseRequiresReceipt ? "required" : "off"})`;
   }, [option.requiresReceipt, phaseRequiresReceipt]);
 
+  // Visual surface: muted + spinner on pending; red border on error.
+  const stateClass = error
+    ? "border-destructive/60"
+    : !option.isActive
+    ? "opacity-60"
+    : "";
+
   return (
     <div
-      className={`rounded-md border bg-background ${
-        !option.isActive ? "opacity-60" : ""
-      }`}
+      className={`rounded-md border bg-background ${stateClass}`}
+      aria-busy={isPending}
     >
       {/* Collapsed summary row */}
       <div className="flex items-center gap-3 px-3 py-2">
@@ -521,6 +920,15 @@ function OptionRow({
             )}
             {option.externalUrl && (
               <ExternalLink className="h-3 w-3 text-muted-foreground" />
+            )}
+            {isPending && (
+              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+            )}
+            {error && !isPending && (
+              <AlertCircle
+                className="h-3 w-3 text-destructive"
+                aria-label={error}
+              />
             )}
           </div>
           {option.labelAr && (
@@ -548,13 +956,13 @@ function OptionRow({
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               onClick={() => onMove("up")}
-              disabled={isFirst}
+              disabled={isFirst || isPending}
             >
               Move up
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => onMove("down")}
-              disabled={isLast}
+              disabled={isLast || isPending}
             >
               Move down
             </DropdownMenuItem>
@@ -564,6 +972,7 @@ function OptionRow({
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={onDelete}
+              disabled={isPending}
               className="text-destructive focus:text-destructive"
             >
               <Trash2 className="mr-2 h-4 w-4" /> Delete
@@ -572,13 +981,27 @@ function OptionRow({
         </DropdownMenu>
       </div>
 
+      {error && (
+        <div className="flex items-start gap-2 border-t border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <p className="flex-1">{error}</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6"
+            onClick={onClearError}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
+
       {isEditing && (
         <OptionEditor
-          eventId={eventId}
-          phaseId={phaseId}
           option={option}
+          isPending={isPending}
           phaseRequiresReceipt={phaseRequiresReceipt}
-          onChanged={onChanged}
+          onPatch={onPatch}
           onDelete={onDelete}
         />
       )}
@@ -590,20 +1013,21 @@ function OptionRow({
 // ─── 3-state requiresReceipt, metadata key/value, active toggle. ─────
 
 interface OptionEditorProps {
-  eventId: string;
-  phaseId: string;
   option: PhaseOption;
+  isPending: boolean;
   phaseRequiresReceipt: boolean;
-  onChanged: () => void;
+  onPatch: (
+    patch: Partial<PhaseOption>,
+    optimistic: Partial<PhaseOption>
+  ) => Promise<void>;
   onDelete: () => void;
 }
 
 function OptionEditor({
-  eventId,
-  phaseId,
   option,
+  isPending,
   phaseRequiresReceipt,
-  onChanged,
+  onPatch,
   onDelete,
 }: OptionEditorProps) {
   const [label, setLabel] = useState(option.label);
@@ -617,7 +1041,10 @@ function OptionEditor({
     option.capacity == null ? "" : String(option.capacity)
   );
 
-  // Re-sync local state when the option object changes (e.g., after a move).
+  // Re-sync drafts only when the option identity changes (open editor on a
+  // different row). We deliberately don't re-sync on every prop change so a
+  // mid-typing optimistic update doesn't yank the cursor; the user's drafts
+  // remain authoritative until they blur.
   useEffect(() => {
     setLabel(option.label);
     setLabelAr(option.labelAr ?? "");
@@ -625,15 +1052,8 @@ function OptionEditor({
     setDescriptionAr(option.descriptionAr ?? "");
     setExternalUrl(option.externalUrl ?? "");
     setCapacity(option.capacity == null ? "" : String(option.capacity));
-  }, [
-    option.id,
-    option.label,
-    option.labelAr,
-    option.description,
-    option.descriptionAr,
-    option.externalUrl,
-    option.capacity,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [option.id]);
 
   // Metadata UI keeps an ordered array of {key, value} so adding new rows
   // doesn't reorder the others. Translated to a Record<string, string> on
@@ -656,7 +1076,8 @@ function OptionEditor({
           }))
         : []
     );
-  }, [option.id, option.metadata]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [option.id]);
 
   // 3-state requiresReceipt → string for the radio group (which only takes
   // strings). Maps null=inherit, true=always, false=never.
@@ -665,24 +1086,6 @@ function OptionEditor({
     return option.requiresReceipt ? "always" : "never";
   }, [option.requiresReceipt]);
 
-  async function patchOption(patch: Record<string, unknown>) {
-    const res = await fetch(
-      `/api/events/${eventId}/phases/${phaseId}/options/${option.id}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      }
-    );
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      toast.error(err?.error || "Failed to update option");
-      return false;
-    }
-    onChanged();
-    return true;
-  }
-
   function commitMetadata(rows: { key: string; value: string }[]) {
     const cleaned: Record<string, string> = {};
     for (const r of rows) {
@@ -690,32 +1093,31 @@ function OptionEditor({
       if (!k) continue;
       cleaned[k] = r.value;
     }
-    patchOption({
-      metadata: Object.keys(cleaned).length === 0 ? null : cleaned,
-    });
+    const next = Object.keys(cleaned).length === 0 ? null : cleaned;
+    onPatch({ metadata: next }, { metadata: next });
   }
 
-  async function commitRequiresReceipt(value: string) {
+  function commitRequiresReceipt(value: string) {
     let next: boolean | null;
     if (value === "always") next = true;
     else if (value === "never") next = false;
-    else next = null; // "inherit"
-    await patchOption({ requiresReceipt: next });
+    else next = null;
+    onPatch({ requiresReceipt: next }, { requiresReceipt: next });
   }
 
-  async function commitCapacity() {
+  function commitCapacity() {
     const trimmed = capacity.trim();
     if (trimmed === "") {
-      if (option.capacity !== null) await patchOption({ capacity: null });
+      if (option.capacity !== null)
+        onPatch({ capacity: null }, { capacity: null });
       return;
     }
     const n = parseInt(trimmed, 10);
     if (!Number.isFinite(n) || n < 0) {
-      // Reset to last persisted value rather than write garbage.
       setCapacity(option.capacity == null ? "" : String(option.capacity));
       return;
     }
-    if (n !== option.capacity) await patchOption({ capacity: n });
+    if (n !== option.capacity) onPatch({ capacity: n }, { capacity: n });
   }
 
   const selectionCount = option._count?.selections ?? 0;
@@ -731,7 +1133,7 @@ function OptionEditor({
             onBlur={() => {
               const trimmed = label.trim();
               if (trimmed && trimmed !== option.label) {
-                patchOption({ label: trimmed });
+                onPatch({ label: trimmed }, { label: trimmed });
               } else if (!trimmed) {
                 setLabel(option.label);
               }
@@ -747,7 +1149,7 @@ function OptionEditor({
             onBlur={() => {
               const next = labelAr.trim() || null;
               if (next !== (option.labelAr ?? null)) {
-                patchOption({ labelAr: next });
+                onPatch({ labelAr: next }, { labelAr: next });
               }
             }}
           />
@@ -764,7 +1166,7 @@ function OptionEditor({
             onBlur={() => {
               const next = description.trim() || null;
               if (next !== (option.description ?? null)) {
-                patchOption({ description: next });
+                onPatch({ description: next }, { description: next });
               }
             }}
           />
@@ -779,7 +1181,7 @@ function OptionEditor({
             onBlur={() => {
               const next = descriptionAr.trim() || null;
               if (next !== (option.descriptionAr ?? null)) {
-                patchOption({ descriptionAr: next });
+                onPatch({ descriptionAr: next }, { descriptionAr: next });
               }
             }}
           />
@@ -796,7 +1198,7 @@ function OptionEditor({
           onBlur={() => {
             const next = externalUrl.trim() || null;
             if (next !== (option.externalUrl ?? null)) {
-              patchOption({ externalUrl: next });
+              onPatch({ externalUrl: next }, { externalUrl: next });
             }
           }}
         />
@@ -938,7 +1340,9 @@ function OptionEditor({
         <div className="flex items-center gap-3">
           <Switch
             checked={option.isActive}
-            onCheckedChange={(c) => patchOption({ isActive: c })}
+            onCheckedChange={(c) =>
+              onPatch({ isActive: c }, { isActive: c })
+            }
           />
           <div>
             <Label className="font-medium">Active</Label>
@@ -952,6 +1356,7 @@ function OptionEditor({
           variant="outline"
           size="sm"
           onClick={onDelete}
+          disabled={isPending}
           className="text-destructive hover:text-destructive"
         >
           <Trash2 className="mr-2 h-4 w-4" /> Delete option

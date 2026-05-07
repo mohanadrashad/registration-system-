@@ -54,6 +54,14 @@ export const updatePhaseSelectionSchema = z.object({
   requiresReceiptUpload: z.boolean().optional(),
 });
 
+// Optimistic-concurrency token sent on any PATCH that wants conflict
+// detection. Clients pass the row's updatedAt as ISO; the service refuses
+// the write if the row has moved on. Optional so existing callers keep
+// working unchanged.
+export const expectedUpdatedAtSchema = z.object({
+  expectedUpdatedAt: z.string().datetime().optional(),
+});
+
 // Option metadata is a flat string-to-string map ({ price: "180", ... }).
 // Stored as JSON in PhaseOption.metadata. The UI renders it as a key-value
 // editor; ordering inside the JSON object is not preserved (don't rely on it).
@@ -89,7 +97,9 @@ export const createOptionSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-export const updateOptionSchema = createOptionSchema.partial();
+export const updateOptionSchema = createOptionSchema
+  .partial()
+  .merge(expectedUpdatedAtSchema);
 
 export const reorderOptionSchema = z.object({
   direction: z.enum(["up", "down"]),

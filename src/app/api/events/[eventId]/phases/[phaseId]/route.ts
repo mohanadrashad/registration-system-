@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { authorizeEvent, apiError } from "@/lib/api-auth";
 import {
   deletePhase,
+  PhaseConcurrencyError,
+  PhaseNotFoundError,
   reorderPhase,
   updatePhase,
 } from "@/lib/services/phase.service";
@@ -79,25 +81,46 @@ export async function PATCH(
   }
 
   try {
-    const updated = await updatePhase(phaseId, {
-      ...parsed.data,
-      opensAt:
-        parsed.data.opensAt === undefined
-          ? undefined
-          : parsed.data.opensAt
-          ? new Date(parsed.data.opensAt)
-          : null,
-      closesAt:
-        parsed.data.closesAt === undefined
-          ? undefined
-          : parsed.data.closesAt
-          ? new Date(parsed.data.closesAt)
-          : null,
-    });
+    // expectedUpdatedAt is parsed off the body alongside the patch fields;
+    // strip it before passing to the service so it doesn't get treated as a
+    // column write.
+    const { expectedUpdatedAt, ...patch } = parsed.data;
+    const updated = await updatePhase(
+      phaseId,
+      {
+        ...patch,
+        opensAt:
+          patch.opensAt === undefined
+            ? undefined
+            : patch.opensAt
+            ? new Date(patch.opensAt)
+            : null,
+        closesAt:
+          patch.closesAt === undefined
+            ? undefined
+            : patch.closesAt
+            ? new Date(patch.closesAt)
+            : null,
+      },
+      expectedUpdatedAt ? new Date(expectedUpdatedAt) : null
+    );
     return NextResponse.json(updated);
   } catch (e) {
     if (e instanceof SelectionModeNotAllowedError) {
       return apiError(e.message, 400, e.code);
+    }
+    if (e instanceof PhaseNotFoundError) {
+      return apiError(e.message, 404, e.code);
+    }
+    if (e instanceof PhaseConcurrencyError) {
+      return NextResponse.json(
+        {
+          error: e.message,
+          code: e.code,
+          currentUpdatedAt: e.currentUpdatedAt.toISOString(),
+        },
+        { status: 409 }
+      );
     }
     throw e;
   }
