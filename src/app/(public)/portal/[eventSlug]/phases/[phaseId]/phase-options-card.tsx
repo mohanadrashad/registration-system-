@@ -37,6 +37,8 @@ export interface PortalPhaseSelection {
   hasReceipt: boolean;
 }
 
+export type PortalLang = "ar" | "en";
+
 interface PhaseOptionsCardProps {
   selectionMode: PhaseSelectionMode;
   maxSelections: number;
@@ -53,7 +55,104 @@ interface PhaseOptionsCardProps {
    * LOCKED — covers the date window or admin-locked override.
    */
   readOnly: boolean;
-  rtl?: boolean;
+  /**
+   * Active language for the portal. When "ar" the card flips to RTL,
+   * picks Arabic primary text where available (falling back to English
+   * when an option author left a labelAr blank), and renders all
+   * static UI strings in Arabic. The page is responsible for setting
+   * this — it should match the rest of the page's language choice.
+   */
+  lang: PortalLang;
+}
+
+// ─── Static UI strings, kept in one place. ──────────────────────────
+
+const STRINGS = {
+  en: {
+    yourAssignment: "Your assignment",
+    yourSelection: "Your selection",
+    yourSelectionLocked: "Your selection (locked)",
+    chooseOne: "Choose one",
+    pendingAssignment: "Pending assignment",
+    pendingAssignmentBody1: "Your organizer is finalising arrangements for you.",
+    pendingAssignmentBody2:
+      "Check back here, or watch for an email when it's ready.",
+    assignedByYourOrganizer: "Assigned by your organizer.",
+    managedNote:
+      "Selections for this phase are managed by your organizer. Contact them if you need a change.",
+    mixedNote:
+      "This assignment was set by your organizer. Contact them if you need a change.",
+    bookingOptions: "Booking options",
+    bookingIntro: "Book directly with one of the partners below.",
+    bookCta: "Book",
+    receiptStage4Notice:
+      "Receipt upload arrives in the next release. For now, please book externally — we'll wire up the upload flow soon.",
+    full: "Full",
+    leftOf: (left: number, total: number) => `${left} of ${total} left`,
+    chooseUpTo: (max: number, picked: number) =>
+      `Choose up to ${max} — ${picked} of ${max} selected`,
+    receiptRequiredHint:
+      "Receipt upload required after submitting (coming next release).",
+    morePicks: (n: number) =>
+      n === 1 ? "1 more pick available." : `${n} more picks available.`,
+    submittedAt: (s: string) => `Submitted ${s}`,
+    canChange: "You can change your selection until the phase closes.",
+    locked:
+      "This phase doesn't allow changes once submitted. Contact your organizer if you need a change.",
+    changeBtn: "Change my selection",
+  },
+  ar: {
+    yourAssignment: "اختيارك",
+    yourSelection: "اختيارك",
+    yourSelectionLocked: "اختيارك (مقفل)",
+    chooseOne: "اختر واحدًا",
+    pendingAssignment: "بانتظار التخصيص",
+    pendingAssignmentBody1:
+      "يقوم منظم الفعالية بإتمام الترتيبات الخاصة بك.",
+    pendingAssignmentBody2:
+      "تابع هذه الصفحة أو انتظر إشعارًا بالبريد الإلكتروني عند جهوزيتها.",
+    assignedByYourOrganizer: "مخصّص من قِبل منظم الفعالية.",
+    managedNote:
+      "هذه الاختيارات يديرها منظم الفعالية. تواصل معه إذا احتجت إلى تغيير.",
+    mixedNote:
+      "تم تخصيص هذا الاختيار من قِبل منظم الفعالية. تواصل معه إذا احتجت إلى تغيير.",
+    bookingOptions: "خيارات الحجز",
+    bookingIntro: "احجز مباشرة مع أحد الشركاء أدناه.",
+    bookCta: "احجز",
+    receiptStage4Notice:
+      "رفع الإيصال سيتوفر في الإصدار التالي. في الوقت الراهن، يُرجى الحجز خارجيًا.",
+    full: "مكتمل",
+    leftOf: (left: number, total: number) =>
+      `متبقي ${left} من ${total}`,
+    chooseUpTo: (max: number, picked: number) =>
+      `اختر حتى ${max} — تم اختيار ${picked} من ${max}`,
+    receiptRequiredHint:
+      "يلزم رفع الإيصال بعد الإرسال (سيتوفر في الإصدار التالي).",
+    morePicks: (n: number) =>
+      n === 1
+        ? "يمكنك اختيار خيار إضافي واحد."
+        : `يمكنك اختيار ${n} خيارات إضافية.`,
+    submittedAt: (s: string) => `أُرسل في ${s}`,
+    canChange: "يمكنك تغيير اختيارك حتى إغلاق المرحلة.",
+    locked:
+      "لا تسمح هذه المرحلة بالتعديل بعد الإرسال. تواصل مع منظم الفعالية إذا احتجت إلى تغيير.",
+    changeBtn: "تغيير الاختيار",
+  },
+} as const;
+
+// Pick the Arabic value when lang=ar AND it's non-empty, otherwise
+// fall back to English. Authors can leave Arabic blank without breaking
+// the rendering.
+function pick(
+  lang: PortalLang,
+  en: string | null | undefined,
+  ar: string | null | undefined
+): string | null {
+  if (lang === "ar") {
+    const v = (ar ?? "").trim();
+    if (v) return v;
+  }
+  return en ?? null;
 }
 
 /**
@@ -86,7 +185,7 @@ export function PhaseOptionsCard({
   isEditing,
   onStartEditing,
   readOnly,
-  rtl,
+  lang,
 }: PhaseOptionsCardProps) {
   if (selectionMode === "NONE") return null;
 
@@ -98,25 +197,23 @@ export function PhaseOptionsCard({
 
   // Read-only / informational modes first.
   if (selectionMode === "EXTERNAL_BOOKING") {
-    return (
-      <ExternalBookingCard options={options} rtl={rtl} />
-    );
+    return <ExternalBookingCard options={options} lang={lang} />;
   }
 
   if (selectionMode === "ADMIN_ASSIGNED") {
     if (adminAssigned) {
       const opt = optionById.get(adminAssigned.optionId);
       if (!opt) return null;
-      return <AssignedCard option={opt} mixedNote={false} rtl={rtl} />;
+      return <AssignedCard option={opt} mixedNote={false} lang={lang} />;
     }
-    return <PendingAssignmentCard rtl={rtl} />;
+    return <PendingAssignmentCard lang={lang} />;
   }
 
   // MIXED mode: pre-assigned attendees see read-only; everyone else picks.
   if (selectionMode === "MIXED" && adminAssigned) {
     const opt = optionById.get(adminAssigned.optionId);
     if (!opt) return null;
-    return <AssignedCard option={opt} mixedNote rtl={rtl} />;
+    return <AssignedCard option={opt} mixedNote lang={lang} />;
   }
 
   // ATTENDEE_PICKS or MIXED-without-pre-assignment from here down.
@@ -133,7 +230,7 @@ export function PhaseOptionsCard({
         selections={selections.filter((s) => s.source === "ATTENDEE_PICKED")}
         canChange={allowChangeAfterSubmit && !readOnly}
         onChange={onStartEditing}
-        rtl={rtl}
+        lang={lang}
       />
     );
   }
@@ -146,7 +243,7 @@ export function PhaseOptionsCard({
       onChange={onChange}
       readOnly={readOnly}
       phaseRequiresReceiptUpload={phaseRequiresReceiptUpload}
-      rtl={rtl}
+      lang={lang}
     />
   );
 }
@@ -156,16 +253,16 @@ export function PhaseOptionsCard({
 function CardShell({
   title,
   children,
-  rtl,
+  lang,
 }: {
   title: string;
   children: React.ReactNode;
-  rtl?: boolean;
+  lang: PortalLang;
 }) {
   return (
     <section
       className="rounded-lg border bg-card p-4 sm:p-6"
-      dir={rtl ? "rtl" : undefined}
+      dir={lang === "ar" ? "rtl" : "ltr"}
     >
       <h3 className="mb-4 text-base font-semibold">{title}</h3>
       {children}
@@ -173,16 +270,15 @@ function CardShell({
   );
 }
 
-function PendingAssignmentCard({ rtl }: { rtl?: boolean }) {
+function PendingAssignmentCard({ lang }: { lang: PortalLang }) {
+  const t = STRINGS[lang];
   return (
-    <CardShell title="Pending assignment" rtl={rtl}>
+    <CardShell title={t.pendingAssignment} lang={lang}>
       <div className="flex items-start gap-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
         <Clock className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
-          <p>Your organizer is finalising arrangements for you.</p>
-          <p className="mt-1">
-            Check back here, or watch for an email when it&apos;s ready.
-          </p>
+          <p>{t.pendingAssignmentBody1}</p>
+          <p className="mt-1">{t.pendingAssignmentBody2}</p>
         </div>
       </div>
     </CardShell>
@@ -192,40 +288,56 @@ function PendingAssignmentCard({ rtl }: { rtl?: boolean }) {
 function AssignedCard({
   option,
   mixedNote,
-  rtl,
+  lang,
 }: {
   option: PortalPhaseOption;
   mixedNote: boolean;
-  rtl?: boolean;
+  lang: PortalLang;
 }) {
+  const t = STRINGS[lang];
+  const label = pick(lang, option.label, option.labelAr);
+  const description = pick(lang, option.description, option.descriptionAr);
+  // Secondary line: show the OTHER language's label as a small subtitle
+  // so attendees who skim past the headline can still recognise the
+  // option by its more familiar name. Only renders if both variants
+  // exist and they differ.
+  const secondary =
+    lang === "ar"
+      ? option.label && option.labelAr && option.label !== option.labelAr
+        ? option.label
+        : null
+      : option.labelAr && option.label && option.labelAr !== option.label
+      ? option.labelAr
+      : null;
   return (
-    <CardShell title="Your assignment" rtl={rtl}>
+    <CardShell title={t.yourAssignment} lang={lang}>
       <article className="rounded-md border p-4">
         <div className="flex items-start gap-3">
           <Check className="mt-1 h-4 w-4 shrink-0 text-primary" />
           <div className="flex-1">
-            <h4 className="font-medium">{option.label}</h4>
-            {option.labelAr && (
-              <p className="text-xs text-muted-foreground" dir="rtl">
-                {option.labelAr}
+            <h4 className="font-medium">{label}</h4>
+            {secondary && (
+              <p
+                className="text-xs text-muted-foreground"
+                dir={lang === "ar" ? "ltr" : "rtl"}
+              >
+                {secondary}
               </p>
             )}
-            {option.description && (
+            {description && (
               <p className="mt-2 text-sm text-muted-foreground">
-                {option.description}
+                {description}
               </p>
             )}
             <MetadataList metadata={option.metadata} />
             <p className="mt-3 text-xs text-muted-foreground">
-              Assigned by your organizer.
+              {t.assignedByYourOrganizer}
             </p>
           </div>
         </div>
       </article>
       <p className="mt-3 text-xs text-muted-foreground">
-        {mixedNote
-          ? "This assignment was set by your organizer. Contact them if you need a change."
-          : "Selections for this phase are managed by your organizer. Contact them if you need a change."}
+        {mixedNote ? t.mixedNote : t.managedNote}
       </p>
     </CardShell>
   );
@@ -236,67 +348,85 @@ function SubmittedSelectionCard({
   selections,
   canChange,
   onChange,
-  rtl,
+  lang,
 }: {
   options: PortalPhaseOption[];
   selections: PortalPhaseSelection[];
   canChange: boolean;
   onChange: () => void;
-  rtl?: boolean;
+  lang: PortalLang;
 }) {
-  // Most-recent updatedAt; user-locale formatting via toLocaleString().
+  const t = STRINGS[lang];
+  // Most-recent updatedAt — formatted with the active locale so Arabic
+  // users see Arabic numerals + Arabic month names.
   const latestSubmittedAt = (() => {
     if (selections.length === 0) return null;
     return new Date(
       Math.max(...selections.map((s) => new Date(s.updatedAt).getTime()))
     );
   })();
+  const localeTag = lang === "ar" ? "ar-SA" : undefined;
 
   return (
     <CardShell
-      title={canChange ? "Your selection" : "Your selection (locked)"}
-      rtl={rtl}
+      title={canChange ? t.yourSelection : t.yourSelectionLocked}
+      lang={lang}
     >
       <div className="space-y-3">
-        {options.map((opt) => (
-          <article key={opt.id} className="rounded-md border p-4">
-            <div className="flex items-start gap-3">
-              {canChange ? (
-                <Check className="mt-1 h-4 w-4 shrink-0 text-primary" />
-              ) : (
-                <LockIcon className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
-              )}
-              <div className="flex-1">
-                <h4 className="font-medium">{opt.label}</h4>
-                {opt.labelAr && (
-                  <p className="text-xs text-muted-foreground" dir="rtl">
-                    {opt.labelAr}
-                  </p>
+        {options.map((opt) => {
+          const label = pick(lang, opt.label, opt.labelAr);
+          const description = pick(lang, opt.description, opt.descriptionAr);
+          const secondary =
+            lang === "ar"
+              ? opt.label && opt.labelAr && opt.label !== opt.labelAr
+                ? opt.label
+                : null
+              : opt.labelAr && opt.label && opt.labelAr !== opt.label
+              ? opt.labelAr
+              : null;
+          return (
+            <article key={opt.id} className="rounded-md border p-4">
+              <div className="flex items-start gap-3">
+                {canChange ? (
+                  <Check className="mt-1 h-4 w-4 shrink-0 text-primary" />
+                ) : (
+                  <LockIcon className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
-                {opt.description && (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {opt.description}
-                  </p>
-                )}
-                {latestSubmittedAt && (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Submitted {latestSubmittedAt.toLocaleString()}
-                  </p>
-                )}
+                <div className="flex-1">
+                  <h4 className="font-medium">{label}</h4>
+                  {secondary && (
+                    <p
+                      className="text-xs text-muted-foreground"
+                      dir={lang === "ar" ? "ltr" : "rtl"}
+                    >
+                      {secondary}
+                    </p>
+                  )}
+                  {description && (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {description}
+                    </p>
+                  )}
+                  {latestSubmittedAt && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {t.submittedAt(
+                        latestSubmittedAt.toLocaleString(localeTag)
+                      )}
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
       </div>
       <div className="mt-4 flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
-          {canChange
-            ? "You can change your selection until the phase closes."
-            : "This phase doesn't allow changes once submitted. Contact your organizer if you need a change."}
+          {canChange ? t.canChange : t.locked}
         </p>
         {canChange && (
           <Button variant="outline" size="sm" onClick={onChange}>
-            Change my selection
+            {t.changeBtn}
           </Button>
         )}
       </div>
@@ -306,56 +436,71 @@ function SubmittedSelectionCard({
 
 function ExternalBookingCard({
   options,
-  rtl,
+  lang,
 }: {
   options: PortalPhaseOption[];
-  rtl?: boolean;
+  lang: PortalLang;
 }) {
+  const t = STRINGS[lang];
   return (
-    <CardShell title="Booking options" rtl={rtl}>
-      <p className="mb-4 text-sm text-muted-foreground">
-        Book directly with one of the partners below.
-      </p>
+    <CardShell title={t.bookingOptions} lang={lang}>
+      <p className="mb-4 text-sm text-muted-foreground">{t.bookingIntro}</p>
       <div className="space-y-3">
         {options
           .filter((o) => o.isActive)
-          .map((opt) => (
-            <article key={opt.id} className="rounded-md border p-4">
-              <h4 className="font-medium">{opt.label}</h4>
-              {opt.labelAr && (
-                <p className="text-xs text-muted-foreground" dir="rtl">
-                  {opt.labelAr}
-                </p>
-              )}
-              {opt.description && (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {opt.description}
-                </p>
-              )}
-              <MetadataList metadata={opt.metadata} />
-              {opt.externalUrl && (
-                <div className="mt-3">
-                  <Button asChild variant="outline" size="sm">
-                    <a
-                      href={opt.externalUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      Book {opt.label}
-                    </a>
-                  </Button>
-                </div>
-              )}
-            </article>
-          ))}
+          .map((opt) => {
+            const label = pick(lang, opt.label, opt.labelAr);
+            const description = pick(
+              lang,
+              opt.description,
+              opt.descriptionAr
+            );
+            const secondary =
+              lang === "ar"
+                ? opt.label && opt.labelAr && opt.label !== opt.labelAr
+                  ? opt.label
+                  : null
+                : opt.labelAr && opt.label && opt.labelAr !== opt.label
+                ? opt.labelAr
+                : null;
+            return (
+              <article key={opt.id} className="rounded-md border p-4">
+                <h4 className="font-medium">{label}</h4>
+                {secondary && (
+                  <p
+                    className="text-xs text-muted-foreground"
+                    dir={lang === "ar" ? "ltr" : "rtl"}
+                  >
+                    {secondary}
+                  </p>
+                )}
+                {description && (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {description}
+                  </p>
+                )}
+                <MetadataList metadata={opt.metadata} />
+                {opt.externalUrl && (
+                  <div className="mt-3">
+                    <Button asChild variant="outline" size="sm">
+                      <a
+                        href={opt.externalUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <ExternalLink className="mr-2 h-4 w-4" />
+                        {t.bookCta} {label}
+                      </a>
+                    </Button>
+                  </div>
+                )}
+              </article>
+            );
+          })}
       </div>
       <div className="mt-4 flex items-start gap-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <p>
-          Receipt upload arrives in the next release. For now, please book
-          externally — we&apos;ll wire up the upload flow soon.
-        </p>
+        <p>{t.receiptStage4Notice}</p>
       </div>
     </CardShell>
   );
@@ -368,7 +513,7 @@ function PickerCard({
   onChange,
   readOnly,
   phaseRequiresReceiptUpload,
-  rtl,
+  lang,
 }: {
   options: PortalPhaseOption[];
   maxSelections: number;
@@ -376,8 +521,9 @@ function PickerCard({
   onChange: (next: string[]) => void;
   readOnly: boolean;
   phaseRequiresReceiptUpload: boolean;
-  rtl?: boolean;
+  lang: PortalLang;
 }) {
+  const t = STRINGS[lang];
   const isMulti = maxSelections > 1;
   const activeOptions = options.filter((o) => o.isActive);
   const selectedSet = new Set(selectedOptionIds);
@@ -405,15 +551,12 @@ function PickerCard({
     }
   }
 
-  const headerText = (() => {
-    if (isMulti) {
-      return `Choose up to ${maxSelections} — ${selectedSet.size} of ${maxSelections} selected`;
-    }
-    return "Choose one";
-  })();
+  const headerText = isMulti
+    ? t.chooseUpTo(maxSelections, selectedSet.size)
+    : t.chooseOne;
 
   return (
-    <CardShell title={headerText} rtl={rtl}>
+    <CardShell title={headerText} lang={lang}>
       <div
         className={
           isMulti
@@ -429,6 +572,16 @@ function PickerCard({
           const willCapBlock =
             isMulti && !isSelected && remaining === 0;
           const interactable = !readOnly && !isFullDisabled && !willCapBlock;
+          const label = pick(lang, opt.label, opt.labelAr);
+          const description = pick(lang, opt.description, opt.descriptionAr);
+          const secondary =
+            lang === "ar"
+              ? opt.label && opt.labelAr && opt.label !== opt.labelAr
+                ? opt.label
+                : null
+              : opt.labelAr && opt.label && opt.labelAr !== opt.label
+              ? opt.labelAr
+              : null;
 
           return (
             <button
@@ -466,23 +619,27 @@ function PickerCard({
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-3">
-                    <h4 className="font-medium truncate">{opt.label}</h4>
+                    <h4 className="font-medium truncate">{label}</h4>
                     {/* Capacity badge — friendly wording, not the admin */}
                     {/* compact form. */}
                     <CapacityBadge
                       capacity={opt.capacity}
                       remaining={capLeft}
                       full={opt.full}
+                      lang={lang}
                     />
                   </div>
-                  {opt.labelAr && (
-                    <p className="text-xs text-muted-foreground" dir="rtl">
-                      {opt.labelAr}
+                  {secondary && (
+                    <p
+                      className="text-xs text-muted-foreground"
+                      dir={lang === "ar" ? "ltr" : "rtl"}
+                    >
+                      {secondary}
                     </p>
                   )}
-                  {opt.description && (
+                  {description && (
                     <p className="mt-1 text-sm text-muted-foreground">
-                      {opt.description}
+                      {description}
                     </p>
                   )}
                   <MetadataList metadata={opt.metadata} />
@@ -492,8 +649,7 @@ function PickerCard({
                     (opt.requiresReceipt === null &&
                       phaseRequiresReceiptUpload)) && (
                     <p className="mt-2 text-xs text-muted-foreground">
-                      Receipt upload required after submitting (coming next
-                      release).
+                      {t.receiptRequiredHint}
                     </p>
                   )}
                 </div>
@@ -504,9 +660,7 @@ function PickerCard({
       </div>
       {isMulti && remaining > 0 && (
         <p className="mt-3 text-xs text-muted-foreground">
-          {remaining === 1
-            ? "1 more pick available."
-            : `${remaining} more picks available.`}
+          {t.morePicks(remaining)}
         </p>
       )}
     </CardShell>
@@ -517,22 +671,25 @@ function CapacityBadge({
   capacity,
   remaining,
   full,
+  lang,
 }: {
   capacity: number | null;
   remaining: number | null;
   full: boolean;
+  lang: PortalLang;
 }) {
+  const t = STRINGS[lang];
   if (capacity == null || remaining == null) return null;
   if (full) {
     return (
       <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-        Full
+        {t.full}
       </span>
     );
   }
   return (
     <span className="text-xs text-muted-foreground whitespace-nowrap">
-      {remaining} of {capacity} left
+      {t.leftOf(remaining, capacity)}
     </span>
   );
 }

@@ -180,6 +180,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       name: event.name,
       slug: eventSlug,
       branding: event.branding ?? null,
+      // Surfaced so the page can decide whether to render the language
+      // toggle. The Arabic counterparts (titleAr, labelAr, …) are always
+      // present in the payload regardless; the flag just gates the UI.
+      multiLanguage: event.modules?.multiLanguage ?? false,
     },
     phase: {
       id: phase.id,
