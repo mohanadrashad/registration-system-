@@ -29,10 +29,10 @@ import { isFieldVisible } from "@/lib/form-conditional";
 import type { PhaseSelectionMode } from "@prisma/client";
 import {
   PhaseOptionsCard,
-  type PortalLang,
   type PortalPhaseOption,
   type PortalPhaseSelection,
 } from "./phase-options-card";
+import { pickText, type PortalLang } from "@/lib/portal/i18n";
 
 // ─── Page-local bilingual strings ─────────────────────────────────────
 //
@@ -97,21 +97,6 @@ const PAGE_STRINGS = {
     languageToggle: "English",
   },
 } as const;
-
-// Pick the Arabic value when lang=ar AND it's non-empty, otherwise the
-// English. Keeps option authors free to leave Arabic blank without
-// breaking rendering.
-function pickText(
-  lang: PortalLang,
-  en: string | null | undefined,
-  ar: string | null | undefined
-): string {
-  if (lang === "ar") {
-    const v = (ar ?? "").trim();
-    if (v) return v;
-  }
-  return en ?? "";
-}
 
 interface FormField {
   id: string;

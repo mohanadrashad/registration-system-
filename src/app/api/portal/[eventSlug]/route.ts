@@ -144,6 +144,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         endDate: event.endDate,
         branding: event.branding,
         formFields: event.formFields,
+        // Surfaced so the page can show / hide the language toggle.
+        // Arabic variants on form fields and phases are returned
+        // unconditionally; this flag just gates the UI.
+        multiLanguage: event.modules?.multiLanguage ?? false,
       },
       registration: {
         id: registration.id,

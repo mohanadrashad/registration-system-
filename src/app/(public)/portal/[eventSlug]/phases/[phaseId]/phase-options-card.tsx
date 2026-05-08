@@ -9,6 +9,12 @@ import {
 } from "lucide-react";
 import type { PhaseSelectionMode } from "@prisma/client";
 import { Button } from "@/components/ui/button";
+import { pickText, type PortalLang } from "@/lib/portal/i18n";
+
+// PortalLang is re-exported here for the existing import sites that
+// took it from this module before it was lifted to @/lib/portal/i18n.
+// New code should import from there directly.
+export type { PortalLang };
 
 // ─── Types — kept local so the page doesn't carry option specifics. ──
 
@@ -36,8 +42,6 @@ export interface PortalPhaseSelection {
   updatedAt: string;
   hasReceipt: boolean;
 }
-
-export type PortalLang = "ar" | "en";
 
 interface PhaseOptionsCardProps {
   selectionMode: PhaseSelectionMode;
@@ -140,19 +144,17 @@ const STRINGS = {
   },
 } as const;
 
-// Pick the Arabic value when lang=ar AND it's non-empty, otherwise
-// fall back to English. Authors can leave Arabic blank without breaking
-// the rendering.
+// `pickText` is shared via @/lib/portal/i18n; no local definition.
+// Wrapper kept for the existing call-sites returning string | null —
+// the shared helper returns string (empty for missing English), so
+// callers that want null-on-empty wrap here.
 function pick(
   lang: PortalLang,
   en: string | null | undefined,
   ar: string | null | undefined
 ): string | null {
-  if (lang === "ar") {
-    const v = (ar ?? "").trim();
-    if (v) return v;
-  }
-  return en ?? null;
+  const v = pickText(lang, en, ar);
+  return v === "" ? null : v;
 }
 
 /**
