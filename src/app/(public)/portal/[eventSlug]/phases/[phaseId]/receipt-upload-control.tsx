@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import {
   AlertCircle,
@@ -45,6 +45,8 @@ const STRINGS = {
     uploadingProgress: (pct: number) => `Uploading… ${pct}%`,
     uploading: "Uploading…",
     finalising: "Finalising…",
+    finaliseTimeout:
+      "Upload taking longer than expected. Refresh in a moment to see the latest.",
     cancel: "Cancel",
     acceptedNote: "Accepted: JPG, PNG, PDF · Max 10 MB",
     receiptRequiredWarn: "Receipt required to complete this phase",
@@ -90,6 +92,8 @@ const STRINGS = {
     uploadingProgress: (pct: number) => `جارٍ الرفع… ${pct}%`,
     uploading: "جارٍ الرفع…",
     finalising: "جارٍ الإنهاء…",
+    finaliseTimeout:
+      "الرفع يستغرق وقتًا أطول من المعتاد. حدّث الصفحة بعد لحظات لرؤية أحدث حالة.",
     cancel: "إلغاء",
     acceptedNote: "الصيغ المقبولة: JPG, PNG, PDF · الحد الأقصى 10 ميجابايت",
     receiptRequiredWarn: "يلزم رفع الإيصال لإكمال هذه المرحلة",
@@ -199,6 +203,25 @@ export function ReceiptUploadControl({
     | { kind: "error"; message: string; fileName: string | null };
   const [state, setState] = useState<UploadState>({ kind: "idle" });
 
+  // When polling for the new receipt to appear after upload, we read the
+  // latest `existingReceipt` prop via a ref. The async polling loop sits
+  // inside a closure that captured the prop at startUpload time; without
+  // a ref we'd never see the updated value the parent re-renders us with.
+  const existingReceiptRef = useRef(existingReceipt);
+  useEffect(() => {
+    existingReceiptRef.current = existingReceipt;
+  }, [existingReceipt]);
+
+  // After a finalise timeout we show a soft "refresh in a moment" banner
+  // instead of staying in "finalising" forever. The user can keep working
+  // around the timeout case — refresh resolves it cleanly. The banner
+  // auto-clears when the parent eventually surfaces a newer receipt id
+  // (handles "webhook fired late but did fire").
+  const [finaliseTimedOut, setFinaliseTimedOut] = useState(false);
+  useEffect(() => {
+    setFinaliseTimedOut(false);
+  }, [existingReceipt?.id]);
+
   // The dialog state for both replace-confirmation and delete-
   // confirmation. Kept as a single discriminated value so only one
   // dialog can be open at a time.
@@ -225,6 +248,48 @@ export function ReceiptUploadControl({
     return null;
   }
 
+  /**
+   * The Vercel Blob webhook fires server-to-server AFTER the SDK's
+   * `upload()` resolves, so a single refetch right after upload can
+   * easily race ahead of the DB write — the parent ends up showing the
+   * pre-upload receipt state and "View" points at a receipt the
+   * webhook has just deleted (the original Stage-4 bug report).
+   *
+   * To fix this we poll: ask the parent to refetch, then re-read the
+   * `existingReceipt` prop via the ref (set above in a useEffect) and
+   * check whether the receipt id is now different from what we had
+   * before the upload. If yes — the webhook fired, parent has fresh
+   * state, we're done. If no — wait and retry, up to ~10 seconds.
+   *
+   * Three cases the predicate covers, with `oldReceiptId` set just
+   * before the upload:
+   *
+   *   - Fresh upload (no previous receipt):   oldReceiptId === null
+   *     → wait until current is non-null
+   *   - Replace upload (had a previous one):  oldReceiptId === OLD_ID
+   *     → wait until current.id !== OLD_ID
+   *   - Upload after a delete:                oldReceiptId === null
+   *     → same as fresh
+   */
+  async function waitForReceiptUpdate(oldReceiptId: string | null) {
+    const MAX_ATTEMPTS = 12; // ~10s budget at ~800ms intervals
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      await onUploaded(); // parent refetches; will re-render us
+      // Yield long enough for React to commit + run our prop-sync
+      // effect that updates existingReceiptRef. 50ms is generous;
+      // refetch is the dominant cost.
+      await new Promise((r) => setTimeout(r, 50));
+
+      const current = existingReceiptRef.current;
+      if (current && current.id !== oldReceiptId) return true;
+
+      if (i < MAX_ATTEMPTS - 1) {
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    }
+    return false; // timed out — webhook never fired (or fired late)
+  }
+
   async function startUpload(
     file: File,
     replacePreviousReceiptId: string | null
@@ -237,12 +302,18 @@ export function ReceiptUploadControl({
 
     const controller = new AbortController();
     abortRef.current = controller;
+    setFinaliseTimedOut(false);
     setState({
       kind: "uploading",
       fileName: file.name,
       sizeBytes: file.size,
       pct: 0,
     });
+
+    // Snapshot the receipt id BEFORE the upload starts. The polling
+    // loop uses this as the threshold to detect that the new receipt
+    // has materialised in the DB.
+    const oldReceiptId = existingReceiptRef.current?.id ?? null;
 
     try {
       await upload(file.name, file, {
@@ -263,18 +334,22 @@ export function ReceiptUploadControl({
       });
 
       // SDK resolved — bytes are in blob. Vercel's webhook fires next
-      // (server-to-server, retried up to 5 times for non-200). Show
-      // "finalising" while the parent's refetch waits for the receipt
-      // row to appear.
+      // (server-to-server, retried up to 5 times for non-200). Poll
+      // the parent until the new receipt appears, then transition to
+      // idle — at which point the existingReceipt prop on the next
+      // render is the freshly-uploaded one.
       setState({ kind: "finalising", fileName: file.name });
       try {
-        await onUploaded();
+        const updated = await waitForReceiptUpdate(oldReceiptId);
+        if (!updated) {
+          // Webhook didn't fire within the budget. Surface a soft
+          // banner rather than blocking the UI forever — a manual
+          // refresh recovers cleanly. The next interaction (Replace
+          // / Delete / refresh) re-fetches automatically.
+          setFinaliseTimedOut(true);
+        }
       } finally {
         abortRef.current = null;
-        // Reset to idle either way — if onUploaded succeeded, the
-        // receipt now renders via the existingReceipt prop on the
-        // next render. If it didn't appear yet, the parent shows
-        // its own "refreshing" state.
         setState({ kind: "idle" });
       }
     } catch (e) {
@@ -355,6 +430,16 @@ export function ReceiptUploadControl({
         className="hidden"
         onChange={handleFilePicked}
       />
+
+      {/* Soft timeout banner — shown when the post-upload polling
+          gave up. Auto-clears the moment the parent surfaces a newer
+          receipt id (see the useEffect on existingReceipt?.id). */}
+      {finaliseTimedOut && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p className="flex-1">{t.finaliseTimeout}</p>
+        </div>
+      )}
 
       {/* State A — no existing receipt, no upload in flight: prompt + button */}
       {!existingReceipt && state.kind === "idle" && (
