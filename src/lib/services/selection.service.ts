@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/prisma";
-import type { AttendeeSelection, PhaseOption } from "@prisma/client";
+import type {
+  AttendeeSelection,
+  PhaseOption,
+  PhaseSelectionMode,
+} from "@prisma/client";
 import { Prisma } from "@prisma/client";
 
 // ─── Option CRUD ──────────────────────────────────────────────────────
@@ -194,6 +198,116 @@ export class OptionConcurrencyError extends Error {
         "Reload to see the latest version, then re-apply your edit."
     );
   }
+}
+
+// ─── Stage 4: phase completion calculation ───────────────────────────
+
+export type PhaseCompletionStatus =
+  | "NOT_STARTED"
+  | "PARTIALLY_COMPLETE"
+  | "COMPLETE"
+  | "PENDING_ASSIGNMENT";
+
+/**
+ * Compute the attendee-facing completion status for a single phase,
+ * given the phase shape, the attendee's selections, and whether the
+ * field-data submission exists. Matches the spec's four-state model:
+ *
+ *   NOT_STARTED          no selection, no submission, no receipt
+ *   PARTIALLY_COMPLETE   selection made but receipt required & missing
+ *   COMPLETE             selections + receipts + fields all done
+ *   PENDING_ASSIGNMENT   ADMIN_ASSIGNED phase, admin hasn't assigned yet
+ *
+ * Required-fields completion is the caller's responsibility — we
+ * accept a boolean so the rules stay where the field schema lives
+ * (the portal phase GET route already validates these).
+ *
+ * For non-required phases: a phase is considered COMPLETE if it has
+ * any selection AND no unmet receipt requirements AND fields are OK.
+ * For required phases: must have `maxSelections` selections.
+ */
+export function computePhaseCompletion(
+  phase: {
+    selectionMode: PhaseSelectionMode;
+    maxSelections: number;
+    isRequired: boolean;
+    requiresReceiptUpload: boolean;
+  },
+  options: Array<{
+    id: string;
+    requiresReceipt: boolean | null;
+  }>,
+  selections: Array<{
+    optionId: string;
+    source: "ADMIN_ASSIGNED" | "ATTENDEE_PICKED";
+    receiptFileId: string | null;
+  }>,
+  fieldsSatisfied: boolean
+): PhaseCompletionStatus {
+  // Mode-specific short-circuits first.
+  if (phase.selectionMode === "ADMIN_ASSIGNED") {
+    if (selections.length === 0) return "PENDING_ASSIGNMENT";
+    // Admin has assigned. Receipt requirement still applies if the
+    // option needs one (rare in this mode but allowed).
+    const allReceiptsOk = receiptCheck(phase, options, selections);
+    return allReceiptsOk && fieldsSatisfied
+      ? "COMPLETE"
+      : "PARTIALLY_COMPLETE";
+  }
+
+  if (phase.selectionMode === "EXTERNAL_BOOKING") {
+    // EXTERNAL_BOOKING: the selection is implicit when the receipt
+    // exists. Same completion rules as the others, but the receipt
+    // requirement is always on per spec.
+    if (selections.length === 0)
+      return fieldsSatisfied ? "NOT_STARTED" : "NOT_STARTED";
+    const allReceiptsOk = receiptCheck(phase, options, selections);
+    return allReceiptsOk && fieldsSatisfied
+      ? "COMPLETE"
+      : "PARTIALLY_COMPLETE";
+  }
+
+  // ATTENDEE_PICKS / MIXED / NONE.
+  if (phase.selectionMode === "NONE") {
+    // No options at play. Completion = field-data submission state.
+    // Caller's fieldsSatisfied + "any selection at all" semantics
+    // don't apply since there are no selectable options. Treat as:
+    //   fieldsSatisfied + (non-required OR submission exists)
+    //   → COMPLETE. Else NOT_STARTED.
+    return fieldsSatisfied ? "COMPLETE" : "NOT_STARTED";
+  }
+
+  // ATTENDEE_PICKS or MIXED.
+  if (selections.length === 0) {
+    return fieldsSatisfied ? "NOT_STARTED" : "NOT_STARTED";
+  }
+
+  const minSelections = phase.isRequired ? phase.maxSelections : 1;
+  const hasEnoughSelections = selections.length >= minSelections;
+  const allReceiptsOk = receiptCheck(phase, options, selections);
+
+  if (hasEnoughSelections && allReceiptsOk && fieldsSatisfied) {
+    return "COMPLETE";
+  }
+  return "PARTIALLY_COMPLETE";
+}
+
+function receiptCheck(
+  phase: { requiresReceiptUpload: boolean },
+  options: Array<{ id: string; requiresReceipt: boolean | null }>,
+  selections: Array<{ optionId: string; receiptFileId: string | null }>
+): boolean {
+  const optById = new Map(options.map((o) => [o.id, o] as const));
+  for (const s of selections) {
+    const opt = optById.get(s.optionId);
+    if (!opt) continue; // option deleted; ignore
+    const required =
+      opt.requiresReceipt === null
+        ? phase.requiresReceiptUpload
+        : opt.requiresReceipt;
+    if (required && s.receiptFileId === null) return false;
+  }
+  return true;
 }
 
 // ─── Stage 3: attendee submit-selections flow ────────────────────────

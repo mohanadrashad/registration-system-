@@ -6,6 +6,7 @@ import { isFieldRequiredByCondition } from "@/lib/form-conditional";
 import { getPortalSessionFromRequest } from "@/lib/portal/session";
 import { submitPhasePortalSchema } from "@/lib/validations/selection";
 import {
+  computePhaseCompletion,
   OptionFullError,
   OptionInactiveError,
   OptionsCrossPhaseError,
@@ -139,6 +140,17 @@ async function loadAuthorizedContext(
           updatedAt: true,
           // notes: deliberately omitted — admin-only.
           receiptFileId: true,
+          // Stage 4: include receipt metadata for the portal UI.
+          // Never include blobUrl or blobPath — those are server-only.
+          receipt: {
+            select: {
+              id: true,
+              originalName: true,
+              mimeType: true,
+              sizeBytes: true,
+              uploadedAt: true,
+            },
+          },
         },
       },
     },
@@ -251,6 +263,18 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       assignedAt: s.assignedAt,
       updatedAt: s.updatedAt,
       hasReceipt: !!s.receiptFileId,
+      // Stage 4 receipt metadata. Never includes blobUrl/blobPath —
+      // those stay server-side. Client uses receipt.id to call the
+      // stream-through endpoint when viewing.
+      receipt: s.receipt
+        ? {
+            id: s.receipt.id,
+            originalName: s.receipt.originalName,
+            mimeType: s.receipt.mimeType,
+            sizeBytes: s.receipt.sizeBytes,
+            uploadedAt: s.receipt.uploadedAt,
+          }
+        : null,
     })),
     selectionsUpdatedAt,
     submission: phase.submissions[0]
@@ -260,6 +284,36 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           updatedAt: phase.submissions[0].updatedAt,
         }
       : null,
+    // Stage 4 completion status. Derived from selections + receipts +
+    // field-data presence. The portal uses this to decide whether to
+    // show the receipt-required CTA or the "all done" state.
+    completionStatus: computePhaseCompletion(
+      {
+        selectionMode: phase.selectionMode,
+        maxSelections: phase.maxSelections,
+        isRequired: phase.isRequired,
+        requiresReceiptUpload: phase.requiresReceiptUpload,
+      },
+      phase.options.map((o) => ({
+        id: o.id,
+        requiresReceipt: o.requiresReceipt,
+      })),
+      phase.selections.map((s) => ({
+        optionId: s.optionId,
+        source: s.source,
+        receiptFileId: s.receiptFileId,
+      })),
+      // Field-data completion: present and not-explicitly-incomplete.
+      // We don't re-validate field-by-field here — the PUT handler
+      // does, and we trust the submission exists ⇒ fields were
+      // satisfied when written. For phases with no fields the
+      // submission is created with an empty object on first submit;
+      // for the read path "submission exists" is a sufficient proxy.
+      // Phases that have no submission AND no required fields are
+      // still "fields satisfied" by definition (nothing to satisfy).
+      phase.submissions[0] !== undefined ||
+        phase.steps.flatMap((st) => st.fields).every((f) => !f.required)
+    ),
   });
 }
 
@@ -379,7 +433,12 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
             assignedAt: s.assignedAt,
             updatedAt: s.updatedAt,
             hasReceipt: !!s.receiptFileId,
-            // notes: omitted — admin-only.
+            // notes: omitted — admin-only. Receipt detail is null here
+            // because PUT writes selections only (no receipts can be
+            // attached at submit time — they come later via the
+            // upload flow). The client refetches after upload to get
+            // receipt metadata.
+            receipt: null,
           }))
         : null,
       selectionsUpdatedAt:

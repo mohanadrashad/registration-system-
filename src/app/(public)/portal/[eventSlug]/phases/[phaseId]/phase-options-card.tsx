@@ -1,15 +1,26 @@
 "use client";
 
+import { useState } from "react";
 import {
   Check,
   Clock,
   ExternalLink,
-  Info,
   Lock as LockIcon,
 } from "lucide-react";
 import type { PhaseSelectionMode } from "@prisma/client";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { pickText, type PortalLang } from "@/lib/portal/i18n";
+import {
+  ReceiptUploadControl,
+  type PortalReceipt,
+} from "./receipt-upload-control";
 
 // PortalLang is re-exported here for the existing import sites that
 // took it from this module before it was lifted to @/lib/portal/i18n.
@@ -41,6 +52,9 @@ export interface PortalPhaseSelection {
   assignedAt: string;
   updatedAt: string;
   hasReceipt: boolean;
+  // Stage 4: receipt metadata (no blobUrl/blobPath, those are server-only).
+  // Null when the selection has no linked receipt yet.
+  receipt: PortalReceipt | null;
 }
 
 interface PhaseOptionsCardProps {
@@ -59,6 +73,13 @@ interface PhaseOptionsCardProps {
    * LOCKED — covers the date window or admin-locked override.
    */
   readOnly: boolean;
+  // ── Stage 4: receipt-upload plumbing. The card never owns the
+  // ── phase fetch; the parent does. After an upload or delete the
+  // ── parent re-fetches and re-renders the card with updated
+  // ── PortalPhaseSelection.receipt values.
+  eventSlug: string;
+  phaseId: string;
+  onReceiptChange: () => Promise<void> | void;
   /**
    * Active language for the portal. When "ar" the card flips to RTL,
    * picks Arabic primary text where available (falling back to English
@@ -89,14 +110,17 @@ const STRINGS = {
     bookingOptions: "Booking options",
     bookingIntro: "Book directly with one of the partners below.",
     bookCta: "Book",
-    receiptStage4Notice:
-      "Receipt upload arrives in the next release. For now, please book externally — we'll wire up the upload flow soon.",
+    externalBookingUploadIntro:
+      "Once you've booked, upload your receipt to confirm.",
+    externalBookingWhichOption: "Which option did you book?",
+    externalBookingPickPlaceholder: "Select a booking…",
+    externalBookingPickFirst:
+      "Pick an option above to upload a receipt.",
     full: "Full",
     leftOf: (left: number, total: number) => `${left} of ${total} left`,
     chooseUpTo: (max: number, picked: number) =>
       `Choose up to ${max} — ${picked} of ${max} selected`,
-    receiptRequiredHint:
-      "Receipt upload required after submitting (coming next release).",
+    receiptRequiredHint: "Receipt required after submitting.",
     morePicks: (n: number) =>
       n === 1 ? "1 more pick available." : `${n} more picks available.`,
     submittedAt: (s: string) => `Submitted ${s}`,
@@ -123,15 +147,18 @@ const STRINGS = {
     bookingOptions: "خيارات الحجز",
     bookingIntro: "احجز مباشرة مع أحد الشركاء أدناه.",
     bookCta: "احجز",
-    receiptStage4Notice:
-      "رفع الإيصال سيتوفر في الإصدار التالي. في الوقت الراهن، يُرجى الحجز خارجيًا.",
+    externalBookingUploadIntro:
+      "بمجرد الحجز، ارفع الإيصال للتأكيد.",
+    externalBookingWhichOption: "ما الخيار الذي حجزته؟",
+    externalBookingPickPlaceholder: "اختر حجزًا…",
+    externalBookingPickFirst:
+      "اختر خيارًا من الأعلى لرفع الإيصال.",
     full: "مكتمل",
     leftOf: (left: number, total: number) =>
       `متبقي ${left} من ${total}`,
     chooseUpTo: (max: number, picked: number) =>
       `اختر حتى ${max} — تم اختيار ${picked} من ${max}`,
-    receiptRequiredHint:
-      "يلزم رفع الإيصال بعد الإرسال (سيتوفر في الإصدار التالي).",
+    receiptRequiredHint: "يلزم رفع الإيصال بعد الإرسال.",
     morePicks: (n: number) =>
       n === 1
         ? "يمكنك اختيار خيار إضافي واحد."
@@ -188,6 +215,9 @@ export function PhaseOptionsCard({
   onStartEditing,
   readOnly,
   lang,
+  eventSlug,
+  phaseId,
+  onReceiptChange,
 }: PhaseOptionsCardProps) {
   if (selectionMode === "NONE") return null;
 
@@ -199,7 +229,17 @@ export function PhaseOptionsCard({
 
   // Read-only / informational modes first.
   if (selectionMode === "EXTERNAL_BOOKING") {
-    return <ExternalBookingCard options={options} lang={lang} />;
+    return (
+      <ExternalBookingCard
+        options={options}
+        selections={selections}
+        eventSlug={eventSlug}
+        phaseId={phaseId}
+        allowChangeAfterSubmit={allowChangeAfterSubmit && !readOnly}
+        lang={lang}
+        onReceiptChange={onReceiptChange}
+      />
+    );
   }
 
   if (selectionMode === "ADMIN_ASSIGNED") {
@@ -225,14 +265,17 @@ export function PhaseOptionsCard({
   if (hasAttendeeSubmission && !isEditing) {
     return (
       <SubmittedSelectionCard
-        options={selections
-          .filter((s) => s.source === "ATTENDEE_PICKED")
-          .map((s) => optionById.get(s.optionId))
-          .filter((o): o is PortalPhaseOption => !!o)}
-        selections={selections.filter((s) => s.source === "ATTENDEE_PICKED")}
+        attendeeSelections={selections.filter(
+          (s) => s.source === "ATTENDEE_PICKED"
+        )}
+        optionById={optionById}
         canChange={allowChangeAfterSubmit && !readOnly}
         onChange={onStartEditing}
         lang={lang}
+        eventSlug={eventSlug}
+        phaseId={phaseId}
+        phaseRequiresReceiptUpload={phaseRequiresReceiptUpload}
+        onReceiptChange={onReceiptChange}
       />
     );
   }
@@ -346,25 +389,35 @@ function AssignedCard({
 }
 
 function SubmittedSelectionCard({
-  options,
-  selections,
+  attendeeSelections,
+  optionById,
   canChange,
   onChange,
   lang,
+  eventSlug,
+  phaseId,
+  phaseRequiresReceiptUpload,
+  onReceiptChange,
 }: {
-  options: PortalPhaseOption[];
-  selections: PortalPhaseSelection[];
+  attendeeSelections: PortalPhaseSelection[];
+  optionById: Map<string, PortalPhaseOption>;
   canChange: boolean;
   onChange: () => void;
   lang: PortalLang;
+  eventSlug: string;
+  phaseId: string;
+  phaseRequiresReceiptUpload: boolean;
+  onReceiptChange: () => Promise<void> | void;
 }) {
   const t = STRINGS[lang];
   // Most-recent updatedAt — formatted with the active locale so Arabic
   // users see Arabic numerals + Arabic month names.
   const latestSubmittedAt = (() => {
-    if (selections.length === 0) return null;
+    if (attendeeSelections.length === 0) return null;
     return new Date(
-      Math.max(...selections.map((s) => new Date(s.updatedAt).getTime()))
+      Math.max(
+        ...attendeeSelections.map((s) => new Date(s.updatedAt).getTime())
+      )
     );
   })();
   const localeTag = lang === "ar" ? "ar-SA" : undefined;
@@ -375,7 +428,9 @@ function SubmittedSelectionCard({
       lang={lang}
     >
       <div className="space-y-3">
-        {options.map((opt) => {
+        {attendeeSelections.map((sel) => {
+          const opt = optionById.get(sel.optionId);
+          if (!opt) return null;
           const label = pick(lang, opt.label, opt.labelAr);
           const description = pick(lang, opt.description, opt.descriptionAr);
           const secondary =
@@ -386,8 +441,14 @@ function SubmittedSelectionCard({
               : opt.labelAr && opt.label && opt.labelAr !== opt.label
               ? opt.labelAr
               : null;
+          // Receipt requirement for this option (per-option override
+          // wins; falls back to phase-level default when null).
+          const effectiveRequiresReceipt =
+            opt.requiresReceipt === null
+              ? phaseRequiresReceiptUpload
+              : opt.requiresReceipt;
           return (
-            <article key={opt.id} className="rounded-md border p-4">
+            <article key={sel.id} className="rounded-md border p-4">
               <div className="flex items-start gap-3">
                 {canChange ? (
                   <Check className="mt-1 h-4 w-4 shrink-0 text-primary" />
@@ -416,6 +477,24 @@ function SubmittedSelectionCard({
                       )}
                     </p>
                   )}
+                  {/* Stage 4: per-selection receipt control. Shown */}
+                  {/* whenever the option needs a receipt OR already */}
+                  {/* has one (so the user can view it). */}
+                  {(effectiveRequiresReceipt || sel.receipt) && (
+                    <div className="mt-4 border-t pt-4">
+                      <ReceiptUploadControl
+                        eventSlug={eventSlug}
+                        phaseId={phaseId}
+                        optionId={opt.id}
+                        existingReceipt={sel.receipt}
+                        allowReplace={canChange}
+                        required={!!effectiveRequiresReceipt}
+                        lang={lang}
+                        onUploaded={onReceiptChange}
+                        onDeleted={onReceiptChange}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </article>
@@ -438,71 +517,212 @@ function SubmittedSelectionCard({
 
 function ExternalBookingCard({
   options,
+  selections,
+  eventSlug,
+  phaseId,
+  allowChangeAfterSubmit,
   lang,
+  onReceiptChange,
 }: {
   options: PortalPhaseOption[];
+  selections: PortalPhaseSelection[];
+  eventSlug: string;
+  phaseId: string;
+  allowChangeAfterSubmit: boolean;
   lang: PortalLang;
+  onReceiptChange: () => Promise<void> | void;
 }) {
   const t = STRINGS[lang];
+  const activeOptions = options.filter((o) => o.isActive);
+  const optById = new Map(options.map((o) => [o.id, o] as const));
+
+  // EXTERNAL_BOOKING is single-pick by design — show the first
+  // attendee-picked selection if one exists. The picked-by-receipt
+  // model means a selection only exists once a receipt has been
+  // uploaded (the receipt creates the selection).
+  const attendeeSelection =
+    selections.find((s) => s.source === "ATTENDEE_PICKED") ?? null;
+  const pickedOption = attendeeSelection
+    ? optById.get(attendeeSelection.optionId) ?? null
+    : null;
+
+  // Selection state for the "upload to confirm" dropdown. Only used
+  // before the attendee has uploaded anything.
+  const [pendingOptionId, setPendingOptionId] = useState<string | null>(null);
+
+  // ── Already-uploaded path: show the chosen option + receipt + (optionally) replace.
+  if (attendeeSelection && pickedOption) {
+    const label = pick(lang, pickedOption.label, pickedOption.labelAr);
+    const description = pick(
+      lang,
+      pickedOption.description,
+      pickedOption.descriptionAr
+    );
+    return (
+      <CardShell
+        title={
+          allowChangeAfterSubmit ? t.yourSelection : t.yourSelectionLocked
+        }
+        lang={lang}
+      >
+        <article className="rounded-md border p-4">
+          <div className="flex items-start gap-3">
+            {allowChangeAfterSubmit ? (
+              <Check className="mt-1 h-4 w-4 shrink-0 text-primary" />
+            ) : (
+              <LockIcon className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
+            )}
+            <div className="flex-1">
+              <h4 className="font-medium">{label}</h4>
+              {description && (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {description}
+                </p>
+              )}
+              {pickedOption.externalUrl && (
+                <div className="mt-3">
+                  <Button asChild variant="outline" size="sm">
+                    <a
+                      href={pickedOption.externalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      {t.bookCta} {label}
+                    </a>
+                  </Button>
+                </div>
+              )}
+              <div className="mt-4 border-t pt-4">
+                {/* In EXTERNAL_BOOKING the receipt always confirms the */}
+                {/* selection — required:true is implicit per spec. */}
+                <ReceiptUploadControl
+                  eventSlug={eventSlug}
+                  phaseId={phaseId}
+                  optionId={pickedOption.id}
+                  existingReceipt={attendeeSelection.receipt}
+                  allowReplace={allowChangeAfterSubmit}
+                  required
+                  lang={lang}
+                  onUploaded={onReceiptChange}
+                  onDeleted={onReceiptChange}
+                />
+              </div>
+            </div>
+          </div>
+        </article>
+        <p className="mt-3 text-xs text-muted-foreground">
+          {allowChangeAfterSubmit ? t.canChange : t.locked}
+        </p>
+      </CardShell>
+    );
+  }
+
+  // ── Pre-upload path: show booking links + dropdown + upload control.
   return (
     <CardShell title={t.bookingOptions} lang={lang}>
       <p className="mb-4 text-sm text-muted-foreground">{t.bookingIntro}</p>
       <div className="space-y-3">
-        {options
-          .filter((o) => o.isActive)
-          .map((opt) => {
-            const label = pick(lang, opt.label, opt.labelAr);
-            const description = pick(
-              lang,
-              opt.description,
-              opt.descriptionAr
-            );
-            const secondary =
-              lang === "ar"
-                ? opt.label && opt.labelAr && opt.label !== opt.labelAr
-                  ? opt.label
-                  : null
-                : opt.labelAr && opt.label && opt.labelAr !== opt.label
-                ? opt.labelAr
-                : null;
-            return (
-              <article key={opt.id} className="rounded-md border p-4">
-                <h4 className="font-medium">{label}</h4>
-                {secondary && (
-                  <p
-                    className="text-xs text-muted-foreground"
-                    dir={lang === "ar" ? "ltr" : "rtl"}
-                  >
-                    {secondary}
-                  </p>
-                )}
-                {description && (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {description}
-                  </p>
-                )}
-                <MetadataList metadata={opt.metadata} />
-                {opt.externalUrl && (
-                  <div className="mt-3">
-                    <Button asChild variant="outline" size="sm">
-                      <a
-                        href={opt.externalUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <ExternalLink className="mr-2 h-4 w-4" />
-                        {t.bookCta} {label}
-                      </a>
-                    </Button>
-                  </div>
-                )}
-              </article>
-            );
-          })}
+        {activeOptions.map((opt) => {
+          const label = pick(lang, opt.label, opt.labelAr);
+          const description = pick(
+            lang,
+            opt.description,
+            opt.descriptionAr
+          );
+          const secondary =
+            lang === "ar"
+              ? opt.label && opt.labelAr && opt.label !== opt.labelAr
+                ? opt.label
+                : null
+              : opt.labelAr && opt.label && opt.labelAr !== opt.label
+              ? opt.labelAr
+              : null;
+          return (
+            <article key={opt.id} className="rounded-md border p-4">
+              <h4 className="font-medium">{label}</h4>
+              {secondary && (
+                <p
+                  className="text-xs text-muted-foreground"
+                  dir={lang === "ar" ? "ltr" : "rtl"}
+                >
+                  {secondary}
+                </p>
+              )}
+              {description && (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {description}
+                </p>
+              )}
+              <MetadataList metadata={opt.metadata} />
+              {opt.externalUrl && (
+                <div className="mt-3">
+                  <Button asChild variant="outline" size="sm">
+                    <a
+                      href={opt.externalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      {t.bookCta} {label}
+                    </a>
+                  </Button>
+                </div>
+              )}
+            </article>
+          );
+        })}
       </div>
-      <div className="mt-4 flex items-start gap-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-        <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <p>{t.receiptStage4Notice}</p>
+
+      {/* Confirm-by-upload section. Visible whenever there's no existing */}
+      {/* selection yet — the upload creates the selection atomically. */}
+      <div className="mt-6 border-t pt-4 space-y-3">
+        <p className="text-sm text-muted-foreground">
+          {t.externalBookingUploadIntro}
+        </p>
+        <div className="space-y-2">
+          <label className="text-sm font-medium">
+            {t.externalBookingWhichOption}
+          </label>
+          <Select
+            value={pendingOptionId ?? ""}
+            onValueChange={(v) => setPendingOptionId(v || null)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={t.externalBookingPickPlaceholder} />
+            </SelectTrigger>
+            <SelectContent>
+              {activeOptions.map((opt) => (
+                <SelectItem key={opt.id} value={opt.id}>
+                  {pick(lang, opt.label, opt.labelAr)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {pendingOptionId ? (
+          // Dropdown chose an option → show the upload control bound
+          // to that option. The control's success path creates the
+          // selection AND links the receipt in one server transaction
+          // (see writeReceiptIdempotent).
+          <ReceiptUploadControl
+            eventSlug={eventSlug}
+            phaseId={phaseId}
+            optionId={pendingOptionId}
+            existingReceipt={null}
+            allowReplace={false}
+            required
+            lang={lang}
+            onUploaded={onReceiptChange}
+            onDeleted={onReceiptChange}
+          />
+        ) : (
+          // No option picked yet — show the disabled CTA placeholder
+          // so the layout doesn't jump when the user picks one.
+          <p className="text-xs text-muted-foreground">
+            {t.externalBookingPickFirst}
+          </p>
+        )}
       </div>
     </CardShell>
   );

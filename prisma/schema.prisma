@@ -862,7 +862,12 @@ model PhaseReceipt {
   // Internal Vercel Blob URL. Store is Private — never expose this raw URL
   // in client responses. Reads always go through a server-generated signed URL.
   blobUrl      String
-  blobPath     String // Storage key/pathname inside the Blob store; used for signed URL + delete.
+  // Storage key/pathname inside the Blob store; used for signed URL + delete.
+  // @unique makes the onUploadCompleted callback race-safe: Vercel retries the
+  // webhook up to 5 times if it doesn't get a 200, and the addRandomSuffix
+  // pathname is deterministic per upload — so two retries for the same blob
+  // hit the unique constraint and the second one no-ops cleanly.
+  blobPath     String   @unique
   mimeType     String
   sizeBytes    Int
   originalName String // for display ("flight-ticket.pdf")

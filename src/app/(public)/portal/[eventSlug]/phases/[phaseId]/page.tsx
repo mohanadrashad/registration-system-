@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LogOut } from "lucide-react";
@@ -146,6 +146,12 @@ interface EventLite {
   multiLanguage?: boolean;
 }
 
+type PhaseCompletionStatus =
+  | "NOT_STARTED"
+  | "PARTIALLY_COMPLETE"
+  | "COMPLETE"
+  | "PENDING_ASSIGNMENT";
+
 interface PhaseData {
   id: string;
   title: string;
@@ -226,92 +232,117 @@ export default function PortalPhaseFillPage() {
   const isFirstStep = currentStep === 0;
   const readOnly = phase?.status === "CLOSED" || phase?.status === "LOCKED";
 
-  useEffect(() => {
-    async function fetchPhase() {
+  // Refetch the phase from the API. Used both on mount and after
+  // mutations (selection submit, receipt upload, receipt delete) so
+  // the UI always reflects the latest server state. We deliberately
+  // DON'T re-seed form values or the user's lang choice on a refetch
+  // — those represent user intent that shouldn't be overwritten.
+  // `seedFromScratch` is set on the first mount call so the initial
+  // page render gets all the seeding logic.
+  //
+  // Returns the freshly-fetched data so callers can act on it
+  // immediately (e.g. performSubmit checks completionStatus to
+  // decide whether to flip into the fullscreen success view).
+  const refetchPhase = useCallback(
+    async (
+      seedFromScratch = false
+    ): Promise<{
+      phase: PhaseData;
+      submission: SubmissionData | null;
+      selections: PortalPhaseSelection[];
+      selectionsUpdatedAt: string | null;
+      completionStatus: PhaseCompletionStatus | null;
+    } | null> => {
       try {
         const url = `/api/portal/${eventSlug}/phases/${phaseId}`;
         const res = await fetch(url, { credentials: "same-origin" });
         if (res.status === 401) {
-          // No valid session — bounce to portal so the user can log in.
           router.replace(`/portal/${eventSlug}`);
-          return;
+          return null;
         }
         const data = await res.json();
         if (!res.ok) {
           setError(data.error || "Failed to load phase");
-          setPageLoading(false);
-          return;
+          if (seedFromScratch) setPageLoading(false);
+          return null;
         }
         const p: PhaseData = data.phase;
         const sub: SubmissionData | null = data.submission;
         const sels: PortalPhaseSelection[] = data.selections ?? [];
         const selUpdatedAt: string | null = data.selectionsUpdatedAt ?? null;
+        const completionStatus: PhaseCompletionStatus | null =
+          data.completionStatus ?? null;
         setPhase(p);
         setEvent(data.event ?? null);
         setSubmission(sub);
         setSelections(sels);
         setSelectionsUpdatedAt(selUpdatedAt);
 
-        // Hydrate language preference. Prior choice in localStorage
-        // wins. Otherwise: default to Arabic if the event has
-        // multiLanguage on (matches the registration page's default,
-        // which targets the Saudi market). Otherwise default to
-        // English. Fall back silently if localStorage isn't available.
-        // Note: localStorage key is inlined here rather than referencing
-        // langStorageKey from the closure, so the effect's deps stay
-        // limited to the route params.
-        try {
-          const stored = window.localStorage.getItem(
-            `portal-lang:${eventSlug}`
-          );
-          if (stored === "ar" || stored === "en") {
-            setLang(stored);
-          } else if (data.event?.multiLanguage) {
-            setLang("ar");
+        if (seedFromScratch) {
+          // Hydrate language preference (mount-only — toggling later
+          // shouldn't get overridden by a refetch). Prior choice in
+          // localStorage wins; otherwise default Arabic when
+          // multiLanguage is on.
+          try {
+            const stored = window.localStorage.getItem(
+              `portal-lang:${eventSlug}`
+            );
+            if (stored === "ar" || stored === "en") {
+              setLang(stored);
+            } else if (data.event?.multiLanguage) {
+              setLang("ar");
+            }
+          } catch {
+            if (data.event?.multiLanguage) setLang("ar");
           }
-        } catch {
-          if (data.event?.multiLanguage) setLang("ar");
+
+          // Seed selectedOptionIds + initial editing flag.
+          const attendeeSelectedIds = sels
+            .filter((s) => s.source === "ATTENDEE_PICKED")
+            .map((s) => s.optionId);
+          setSelectedOptionIds(attendeeSelectedIds);
+          setIsEditingSelections(attendeeSelectedIds.length === 0);
+
+          // Seed form values from saved submission or field defaults.
+          const allFields = p.steps.flatMap((s) => s.fields);
+          const seeded: FormValueMap = {};
+          for (const f of allFields) {
+            const fromSub = sub?.data?.[f.name];
+            if (fromSub !== undefined && fromSub !== null) {
+              seeded[f.name] = fromSub as FormValueMap[string];
+            } else if (f.defaultValue) {
+              seeded[f.name] = f.defaultValue;
+            } else if (f.type === "CHECKBOX") {
+              seeded[f.name] = false;
+            } else if (f.type === "MULTISELECT") {
+              seeded[f.name] = [];
+            } else {
+              seeded[f.name] = "";
+            }
+          }
+          setFormValues(seeded);
         }
 
-        // Seed selectedOptionIds from existing attendee selections so the
-        // picker re-opens pre-filled when the user clicks "Change my
-        // selection". Admin-assigned rows aren't editable from here, so
-        // they don't seed the picker draft.
-        const attendeeSelectedIds = sels
-          .filter((s) => s.source === "ATTENDEE_PICKED")
-          .map((s) => s.optionId);
-        setSelectedOptionIds(attendeeSelectedIds);
-        // Picker is shown by default for first-time attendees; the
-        // "submitted" view appears once they have any attendee-picked
-        // selections and they're not actively editing.
-        setIsEditingSelections(attendeeSelectedIds.length === 0);
-
-        // Seed form values: existing submission > field default > empty.
-        const allFields = p.steps.flatMap((s) => s.fields);
-        const seeded: FormValueMap = {};
-        for (const f of allFields) {
-          const fromSub = sub?.data?.[f.name];
-          if (fromSub !== undefined && fromSub !== null) {
-            seeded[f.name] = fromSub as FormValueMap[string];
-          } else if (f.defaultValue) {
-            seeded[f.name] = f.defaultValue;
-          } else if (f.type === "CHECKBOX") {
-            seeded[f.name] = false;
-          } else if (f.type === "MULTISELECT") {
-            seeded[f.name] = [];
-          } else {
-            seeded[f.name] = "";
-          }
-        }
-        setFormValues(seeded);
+        return {
+          phase: p,
+          submission: sub,
+          selections: sels,
+          selectionsUpdatedAt: selUpdatedAt,
+          completionStatus,
+        };
       } catch {
         setError("Failed to load phase");
+        return null;
       } finally {
-        setPageLoading(false);
+        if (seedFromScratch) setPageLoading(false);
       }
-    }
-    fetchPhase();
-  }, [eventSlug, phaseId, router]);
+    },
+    [eventSlug, phaseId, router]
+  );
+
+  useEffect(() => {
+    void refetchPhase(true);
+  }, [refetchPhase]);
 
   const visibleFields = useMemo(() => {
     if (!activeStep) return [];
@@ -492,7 +523,18 @@ export default function PortalPhaseFillPage() {
         // Successful submit closes the picker. The user lands on the
         // submitted-view card; they can re-open via "Change my selection".
         setIsEditingSelections(false);
-        setSuccess(true);
+
+        // Stage 4: only show the fullscreen "Saved" overlay when the
+        // phase is fully COMPLETE. If receipts are required and still
+        // pending, the page stays put so the receipt-upload UI in the
+        // SubmittedSelectionCard is visible — the user has more to do.
+        // We refetch first to get the authoritative completionStatus
+        // (the PUT response doesn't include it, since selections were
+        // just written and their receipts can't have arrived yet).
+        const refreshed = await refetchPhase();
+        if (refreshed?.completionStatus === "COMPLETE") {
+          setSuccess(true);
+        }
         return;
       }
 
@@ -1044,6 +1086,11 @@ export default function PortalPhaseFillPage() {
                 }}
                 readOnly={readOnly}
                 lang={lang}
+                eventSlug={eventSlug}
+                phaseId={phaseId}
+                onReceiptChange={async () => {
+                  await refetchPhase();
+                }}
               />
             </div>
           )}
