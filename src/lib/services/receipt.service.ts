@@ -320,6 +320,91 @@ export class ReceiptNotFoundError extends Error {
   }
 }
 
+// ─── Stage 5: orphan cleanup (cron) ──────────────────────────────────
+
+export interface OrphanCleanupResult {
+  scanned: number;
+  deletedRows: number;
+  deletedBlobs: number;
+  blobErrors: number;
+}
+
+/**
+ * Nightly cleanup: removes PhaseReceipt rows that aren't linked to
+ * any AttendeeSelection and are older than the grace window. Each
+ * orphan's blob is deleted best-effort; failures get counted in
+ * `blobErrors` but don't block the DB row delete (the row gets
+ * re-scanned on the next run if the blob delete recovers).
+ *
+ * Grace window is 24h by default to avoid racing a freshly-uploaded
+ * receipt mid-write (between the blob landing and the webhook
+ * linking the row).
+ *
+ * Trigger paths for orphans:
+ *   - writeReceiptIdempotent case (C): race-lost / out-of-order
+ *     retry where the row was inserted but the selection already
+ *     pointed elsewhere.
+ *   - adminWriteSelectionsWithCleanup: when admin replaces an
+ *     attendee's selections, old receipts are deleted via the row +
+ *     blob synchronously, but a blob-delete failure leaves an
+ *     orphaned blob — cleanup catches it.
+ *   - clearSelectionForAdmin: same as above.
+ */
+export async function cleanupOrphanReceipts(
+  graceMs: number = 24 * 60 * 60 * 1000
+): Promise<OrphanCleanupResult> {
+  const cutoff = new Date(Date.now() - graceMs);
+
+  // Find orphans: no selection back-ref AND older than the cutoff.
+  // The Prisma relation `selection` is the 0..1 back-ref defined on
+  // PhaseReceipt; filtering `selection: null` is the orphan condition.
+  const orphans = await prisma.phaseReceipt.findMany({
+    where: {
+      selection: null,
+      uploadedAt: { lt: cutoff },
+    },
+    select: { id: true, blobPath: true },
+  });
+
+  let deletedBlobs = 0;
+  let blobErrors = 0;
+  let deletedRows = 0;
+
+  for (const orphan of orphans) {
+    try {
+      await deleteBlob(orphan.blobPath);
+      deletedBlobs += 1;
+    } catch (err) {
+      blobErrors += 1;
+      console.warn(
+        "[cleanupOrphanReceipts] blob delete failed:",
+        orphan.blobPath,
+        err
+      );
+      // Keep going — we still try to delete the DB row so the next
+      // run doesn't re-attempt the same blob endlessly. If the row
+      // delete also fails, this orphan gets re-scanned tomorrow.
+    }
+    try {
+      await prisma.phaseReceipt.delete({ where: { id: orphan.id } });
+      deletedRows += 1;
+    } catch (err) {
+      console.warn(
+        "[cleanupOrphanReceipts] row delete failed:",
+        orphan.id,
+        err
+      );
+    }
+  }
+
+  return {
+    scanned: orphans.length,
+    deletedRows,
+    deletedBlobs,
+    blobErrors,
+  };
+}
+
 export class ReceiptDeleteNotAllowedError extends Error {
   readonly code = "RECEIPT_DELETE_NOT_ALLOWED";
   constructor() {

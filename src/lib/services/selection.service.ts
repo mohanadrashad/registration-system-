@@ -743,6 +743,601 @@ export class OptionFullError extends Error {
   }
 }
 
+// ─── Stage 5: admin assignment + listings ────────────────────────────
+
+/**
+ * Per-attendee admin view of every option-bearing phase on the event.
+ * Returns enough for the Selections card on the attendee detail page:
+ * phase shape + this attendee's current selections (with option label,
+ * source, admin audit fields, notes, receipt summary) + the full
+ * option list with live taken/capacity counts so the assign dropdown
+ * can render them inline.
+ *
+ * Notes are returned here because this is the admin perimeter — the
+ * portal endpoints already strip them.
+ */
+export async function listAttendeeSelectionsForAdmin(
+  eventId: string,
+  registrationId: string
+) {
+  const phases = await prisma.phase.findMany({
+    where: {
+      eventId,
+      type: "POST_REGISTRATION",
+      isActive: true,
+      selectionMode: { not: "NONE" },
+    },
+    orderBy: { order: "asc" },
+    include: {
+      options: {
+        orderBy: { order: "asc" },
+        include: { _count: { select: { selections: true } } },
+      },
+      selections: {
+        where: { registrationId },
+        include: {
+          option: { select: { id: true, label: true, labelAr: true } },
+          receipt: {
+            select: {
+              id: true,
+              originalName: true,
+              mimeType: true,
+              sizeBytes: true,
+              uploadedAt: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Resolve assignedBy user IDs → emails for display. Batch one query
+  // covering every distinct user across all phases so the request stays
+  // O(1) in DB round-trips regardless of phase count.
+  const assignedByIds = Array.from(
+    new Set(
+      phases
+        .flatMap((p) => p.selections)
+        .map((s) => s.assignedBy)
+        .filter((id): id is string => !!id)
+    )
+  );
+  const users =
+    assignedByIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: assignedByIds } },
+          select: { id: true, name: true, email: true },
+        })
+      : [];
+  const userById = new Map(users.map((u) => [u.id, u] as const));
+
+  return phases.map((p) => ({
+    id: p.id,
+    title: p.title,
+    titleAr: p.titleAr,
+    description: p.description,
+    descriptionAr: p.descriptionAr,
+    selectionMode: p.selectionMode,
+    maxSelections: p.maxSelections,
+    isRequired: p.isRequired,
+    allowChangeAfterSubmit: p.allowChangeAfterSubmit,
+    requiresReceiptUpload: p.requiresReceiptUpload,
+    options: p.options.map((o) => ({
+      id: o.id,
+      label: o.label,
+      labelAr: o.labelAr,
+      capacity: o.capacity,
+      taken: o._count.selections,
+      full:
+        o.capacity != null && o._count.selections >= o.capacity,
+      isActive: o.isActive,
+      requiresReceipt: o.requiresReceipt,
+    })),
+    selections: p.selections.map((s) => ({
+      id: s.id,
+      optionId: s.optionId,
+      optionLabel: s.option.label,
+      optionLabelAr: s.option.labelAr,
+      source: s.source,
+      assignedAt: s.assignedAt,
+      assignedBy: s.assignedBy,
+      assignedByUser: s.assignedBy
+        ? userById.get(s.assignedBy)
+          ? {
+              id: s.assignedBy,
+              name: userById.get(s.assignedBy)?.name ?? null,
+              email: userById.get(s.assignedBy)?.email ?? null,
+            }
+          : null
+        : null,
+      notes: s.notes,
+      hasReceipt: !!s.receiptFileId,
+      receipt: s.receipt
+        ? {
+            id: s.receipt.id,
+            originalName: s.receipt.originalName,
+            mimeType: s.receipt.mimeType,
+            sizeBytes: s.receipt.sizeBytes,
+            uploadedAt: s.receipt.uploadedAt,
+          }
+        : null,
+    })),
+  }));
+}
+
+export interface AdminWriteSelectionsInput {
+  eventId: string;
+  phaseId: string;
+  registrationId: string;
+  optionIds: string[];
+  notes: string | null;
+  /** User.id of the admin making the change — written to assignedBy. */
+  adminUserId: string;
+  /**
+   * When true, skip capacity locks entirely. The admin's write goes
+   * through even if the option is already full. Per the spec: "Admin
+   * force-assignment **bypasses the capacity check** but writes a
+   * warning into the response."
+   *
+   * We do NOT acquire SELECT … FOR UPDATE on the option in the force
+   * path — holding the lock for a write that's intentionally
+   * bypassing capacity would needlessly contend with concurrent
+   * attendee picks. Only the AttendeeSelection lock for the user's
+   * own (phase, reg) pair is taken.
+   */
+  force: boolean;
+}
+
+export interface AdminWriteSelectionsResult {
+  selections: AttendeeSelection[];
+  options: OptionCountSummary[];
+  overCapacity: Array<{ optionId: string; taken: number; capacity: number }>;
+}
+
+export class AdminWriteCapacityError extends Error {
+  readonly code = "OPTION_FULL_ADMIN";
+  constructor(
+    public readonly optionId: string,
+    public readonly label: string,
+    public readonly taken: number,
+    public readonly capacity: number
+  ) {
+    super(
+      `"${label}" is at ${taken}/${capacity}. Resubmit with force=true to assign past capacity.`
+    );
+  }
+}
+
+/**
+ * Admin pre-assignment / re-assignment for a single phase. Replaces
+ * any existing selections (admin- or attendee-picked) for this
+ * attendee on this phase. Writes `source = ADMIN_ASSIGNED` and
+ * `assignedBy = adminUserId` for audit. Capacity is enforced unless
+ * `force` is true.
+ *
+ * Two transaction locks (same shape as Stage 3 but the option lock is
+ * conditional):
+ *   1. AttendeeSelection rows for (phaseId, registrationId) — always.
+ *      Protects against concurrent admin / attendee edits to this
+ *      attendee's own state.
+ *   2. PhaseOption rows for each target optionId — only when !force.
+ *      The force path writes without contending with capacity locks
+ *      held by concurrent attendee picks.
+ *
+ * When replacing a selection that has a linked receipt, the old
+ * receipt's blob is deleted best-effort and its row removed (cascade
+ * doesn't fire on the AttendeeSelection delete — the FK is
+ * SetNull-on-PhaseReceipt-delete, not the other direction). Stage 5's
+ * orphan cleanup is the safety net.
+ */
+export async function adminWriteSelections(
+  input: AdminWriteSelectionsInput
+): Promise<AdminWriteSelectionsResult> {
+  const dedupedOptionIds = Array.from(new Set(input.optionIds));
+  if (dedupedOptionIds.length !== input.optionIds.length) {
+    throw new SelectionDuplicateError();
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const phase = await tx.phase.findUnique({
+      where: { id: input.phaseId },
+      select: {
+        id: true,
+        eventId: true,
+        type: true,
+        selectionMode: true,
+        maxSelections: true,
+        options: {
+          select: { id: true, label: true, capacity: true, isActive: true },
+        },
+      },
+    });
+    if (!phase) throw new PhaseNotFoundForSelectionError();
+    if (phase.eventId !== input.eventId) {
+      throw new PhaseNotFoundForSelectionError();
+    }
+    if (phase.type !== "POST_REGISTRATION") {
+      throw new SelectionModeNotWritableError(phase.selectionMode);
+    }
+    if (phase.selectionMode === "NONE") {
+      throw new SelectionModeNotWritableError(phase.selectionMode);
+    }
+    if (dedupedOptionIds.length > phase.maxSelections) {
+      throw new TooManySelectionsError(
+        phase.maxSelections,
+        dedupedOptionIds.length
+      );
+    }
+    const optionIndex = new Map(
+      phase.options.map((o) => [o.id, o] as const)
+    );
+    for (const id of dedupedOptionIds) {
+      const opt = optionIndex.get(id);
+      if (!opt) throw new OptionsCrossPhaseError(id);
+      // Admin can assign to inactive options too (force-recover an
+      // attendee mid-flight), but only when they're force-writing. The
+      // normal admin path still respects isActive — matches the
+      // attendee path's behaviour.
+      if (!opt.isActive && !input.force) {
+        throw new OptionInactiveError(id, opt.label);
+      }
+    }
+
+    // ── AttendeeSelection lock for this attendee's (phase, reg)
+    // rows. Held in both force and non-force paths.
+    const existing = await tx.$queryRaw<
+      Array<{ id: string; receiptFileId: string | null }>
+    >(Prisma.sql`
+      SELECT id, "receiptFileId"
+      FROM "AttendeeSelection"
+      WHERE "phaseId" = ${input.phaseId}
+        AND "registrationId" = ${input.registrationId}
+      FOR UPDATE
+    `);
+
+    // Capacity check + option-row lock — only on the non-force path.
+    // The force path intentionally skips lock acquisition so it
+    // doesn't contend with concurrent attendee picks on the same
+    // option row.
+    const overCapacity: Array<{
+      optionId: string;
+      taken: number;
+      capacity: number;
+    }> = [];
+    if (!input.force) {
+      for (const optionId of dedupedOptionIds) {
+        await tx.$queryRaw(Prisma.sql`
+          SELECT id, capacity FROM "PhaseOption"
+          WHERE id = ${optionId}
+          FOR UPDATE
+        `);
+        const opt = optionIndex.get(optionId)!;
+        if (opt.capacity == null) continue;
+        const countRows = await tx.$queryRaw<Array<{ count: bigint }>>(
+          Prisma.sql`
+            SELECT COUNT(*)::bigint AS count
+            FROM "AttendeeSelection"
+            WHERE "optionId" = ${optionId}
+              AND "registrationId" <> ${input.registrationId}
+          `
+        );
+        const takenExcludingThisAttendee =
+          countRows[0]?.count != null ? Number(countRows[0].count) : 0;
+        if (takenExcludingThisAttendee >= opt.capacity) {
+          throw new AdminWriteCapacityError(
+            optionId,
+            opt.label,
+            takenExcludingThisAttendee,
+            opt.capacity
+          );
+        }
+      }
+    } else {
+      // Force path — record which target options are currently at-
+      // or-over capacity for the response payload. Read-only check
+      // (no lock) so it's purely informational and doesn't block.
+      for (const optionId of dedupedOptionIds) {
+        const opt = optionIndex.get(optionId)!;
+        if (opt.capacity == null) continue;
+        const countRows = await tx.$queryRaw<Array<{ count: bigint }>>(
+          Prisma.sql`
+            SELECT COUNT(*)::bigint AS count
+            FROM "AttendeeSelection"
+            WHERE "optionId" = ${optionId}
+              AND "registrationId" <> ${input.registrationId}
+          `
+        );
+        const taken =
+          countRows[0]?.count != null ? Number(countRows[0].count) : 0;
+        if (taken >= opt.capacity) {
+          overCapacity.push({
+            optionId,
+            taken: taken + 1,
+            capacity: opt.capacity,
+          });
+        }
+      }
+    }
+
+    // Collect existing-selection receipt IDs so we can delete the
+    // orphaned blobs after the DB replace. Done AFTER lock acquisition
+    // so concurrent admin writes serialise on the AttendeeSelection
+    // rows.
+    const orphanedReceiptIds = existing
+      .map((e) => e.receiptFileId)
+      .filter((id): id is string => !!id);
+
+    if (existing.length > 0) {
+      await tx.attendeeSelection.deleteMany({
+        where: {
+          phaseId: input.phaseId,
+          registrationId: input.registrationId,
+        },
+      });
+    }
+
+    // Insert new selections with admin audit fields.
+    const created = await Promise.all(
+      dedupedOptionIds.map((optionId) =>
+        tx.attendeeSelection.create({
+          data: {
+            phaseId: input.phaseId,
+            registrationId: input.registrationId,
+            optionId,
+            source: "ADMIN_ASSIGNED",
+            assignedBy: input.adminUserId,
+            notes: input.notes ?? null,
+          },
+        })
+      )
+    );
+
+    // Delete orphaned receipt rows from the DB inside the same txn.
+    // Blob deletes are best-effort and happen AFTER commit (outside
+    // this txn) since they can't roll back. We pass the IDs back to
+    // the caller through a side channel.
+    if (orphanedReceiptIds.length > 0) {
+      await tx.phaseReceipt.deleteMany({
+        where: { id: { in: orphanedReceiptIds } },
+      });
+    }
+
+    const summary = await readOptionCountSummary(tx, input.phaseId);
+
+    // Blob-path collection happens in the wrapper
+    // (adminWriteSelectionsWithCleanup) BEFORE this txn runs, so the
+    // post-commit blob deletes have what they need. Keeping the txn
+    // tight here means lock hold time stays minimal.
+
+    return {
+      selections: created,
+      options: summary,
+      overCapacity,
+    };
+  });
+}
+
+/**
+ * Wraps adminWriteSelections to also do best-effort blob cleanup for
+ * orphaned receipts AFTER the DB transaction commits. Splitting the
+ * post-commit work out of the transaction keeps the lock-hold time
+ * minimal and means a blob delete failure can't roll back the DB
+ * change.
+ */
+export async function adminWriteSelectionsWithCleanup(
+  input: AdminWriteSelectionsInput
+): Promise<AdminWriteSelectionsResult & { blobsDeleted: number }> {
+  // Capture the pre-write receipt blob paths BEFORE the txn so we
+  // know what to delete from Blob after it commits. The txn itself
+  // deletes the PhaseReceipt rows; blob deletes are post-commit.
+  const existingReceipts = await prisma.phaseReceipt.findMany({
+    where: {
+      selection: {
+        phaseId: input.phaseId,
+        registrationId: input.registrationId,
+      },
+    },
+    select: { blobPath: true },
+  });
+
+  const result = await adminWriteSelections(input);
+
+  let blobsDeleted = 0;
+  for (const r of existingReceipts) {
+    try {
+      // Imported inline below to avoid pulling @vercel/blob into the
+      // module's top-level imports for code paths that never use it.
+      const { deleteBlob } = await import("@/lib/blob");
+      await deleteBlob(r.blobPath);
+      blobsDeleted += 1;
+    } catch (err) {
+      console.warn(
+        "[adminWriteSelectionsWithCleanup] blob delete failed:",
+        r.blobPath,
+        err
+      );
+    }
+  }
+
+  return { ...result, blobsDeleted };
+}
+
+/**
+ * Clear (delete) a single AttendeeSelection row as an admin. Caller
+ * is responsible for ensuring the selection belongs to a phase on the
+ * target event. Returns the linked receipt path (if any) so the route
+ * can do the post-commit blob delete.
+ */
+export async function clearSelectionForAdmin(
+  selectionId: string,
+  eventId: string
+): Promise<{ deletedBlobPath: string | null }> {
+  return prisma.$transaction(async (tx) => {
+    const sel = await tx.attendeeSelection.findUnique({
+      where: { id: selectionId },
+      include: {
+        phase: { select: { eventId: true } },
+        receipt: { select: { id: true, blobPath: true } },
+      },
+    });
+    if (!sel) throw new Error("Selection not found");
+    if (sel.phase.eventId !== eventId) {
+      throw new Error("Selection doesn't belong to this event");
+    }
+    let deletedBlobPath: string | null = null;
+    if (sel.receipt) {
+      deletedBlobPath = sel.receipt.blobPath;
+      // Cascade-style cleanup: delete the receipt row inside this txn.
+      // The blob delete happens post-commit (best-effort).
+      await tx.phaseReceipt.delete({ where: { id: sel.receipt.id } });
+    }
+    await tx.attendeeSelection.delete({ where: { id: sel.id } });
+    return { deletedBlobPath };
+  });
+}
+
+/**
+ * Stats helper — full-attendee per-option breakdown for the
+ * statistics page. Returns one row per option with taken count,
+ * receipt counts, and the phase aggregates. Doesn't include
+ * attendee identities; that's a separate lazy fetch via the
+ * stream-friendly listPhaseSelectionsForAdmin.
+ */
+export async function listPhaseOptionStats(eventId: string) {
+  const phases = await prisma.phase.findMany({
+    where: {
+      eventId,
+      type: "POST_REGISTRATION",
+      isActive: true,
+      selectionMode: { not: "NONE" },
+    },
+    orderBy: { order: "asc" },
+    include: {
+      options: {
+        orderBy: { order: "asc" },
+        include: {
+          _count: { select: { selections: true } },
+          selections: {
+            select: { receiptFileId: true },
+          },
+        },
+      },
+    },
+  });
+
+  return phases.map((p) => ({
+    id: p.id,
+    title: p.title,
+    selectionMode: p.selectionMode,
+    requiresReceiptUpload: p.requiresReceiptUpload,
+    options: p.options.map((o) => {
+      const taken = o._count.selections;
+      const receiptCount = o.selections.filter(
+        (s) => s.receiptFileId !== null
+      ).length;
+      const receiptRequired =
+        o.requiresReceipt === null
+          ? p.requiresReceiptUpload
+          : o.requiresReceipt;
+      return {
+        id: o.id,
+        label: o.label,
+        capacity: o.capacity,
+        taken,
+        full: o.capacity != null && taken >= o.capacity,
+        receiptRequired,
+        receiptCount,
+      };
+    }),
+  }));
+}
+
+/**
+ * Async generator that streams selections for a phase in cursor-paged
+ * batches. Used by both the JSON attendee-list expand AND the CSV
+ * export so the response body streams as rows are queried rather
+ * than buffering ~5000+ rows in memory for a large phase.
+ *
+ * Yields one selection at a time (with joined contact/option/receipt
+ * data). Callers compose the output: JSON array for the expand, CSV
+ * row encoding for the export.
+ */
+/**
+ * Async generator that streams selections for a phase in cursor-paged
+ * batches. Used by both the JSON attendee-list expand AND the CSV
+ * export so the response body streams as rows are queried rather
+ * than buffering ~5000+ rows in memory for a large phase.
+ */
+export type AdminPhaseSelection = Prisma.AttendeeSelectionGetPayload<{
+  include: {
+    option: { select: { id: true; label: true } };
+    registration: {
+      select: {
+        id: true;
+        contact: {
+          select: {
+            firstName: true;
+            lastName: true;
+            email: true;
+            phone: true;
+          };
+        };
+      };
+    };
+    receipt: { select: { id: true; originalName: true; uploadedAt: true } };
+  };
+}>;
+
+export async function* streamPhaseSelectionsForAdmin(
+  phaseId: string,
+  eventId: string,
+  filterOptionId?: string
+): AsyncGenerator<AdminPhaseSelection, void, void> {
+  const BATCH_SIZE = 500;
+  let cursor: string | undefined = undefined;
+  while (true) {
+    const args: Prisma.AttendeeSelectionFindManyArgs = {
+      where: {
+        phaseId,
+        phase: { eventId },
+        ...(filterOptionId && { optionId: filterOptionId }),
+      },
+      take: BATCH_SIZE,
+      orderBy: { id: "asc" },
+      include: {
+        option: { select: { id: true, label: true } },
+        registration: {
+          select: {
+            id: true,
+            contact: {
+              select: {
+                firstName: true,
+                lastName: true,
+                email: true,
+                phone: true,
+              },
+            },
+          },
+        },
+        receipt: {
+          select: { id: true, originalName: true, uploadedAt: true },
+        },
+      },
+    };
+    if (cursor) {
+      args.skip = 1;
+      args.cursor = { id: cursor };
+    }
+    const batch = (await prisma.attendeeSelection.findMany(
+      args
+    )) as AdminPhaseSelection[];
+    if (batch.length === 0) return;
+    for (const row of batch) yield row;
+    if (batch.length < BATCH_SIZE) return;
+    cursor = batch[batch.length - 1].id;
+  }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 function normaliseUrl(url: string | null | undefined): string | null {

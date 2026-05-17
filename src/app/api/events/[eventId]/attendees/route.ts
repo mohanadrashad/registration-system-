@@ -17,6 +17,9 @@ export async function GET(
   const badgeEmail = searchParams.get("badgeEmail") || "";
   const phaseId = searchParams.get("phase") || "";
   const phaseStatus = searchParams.get("phaseStatus") || ""; // submitted | notSubmitted
+  // Stage 5: filter by a specific option pick. Combines with `phase`
+  // — "phase=X&option=Y" means "attendees who picked Y on phase X".
+  const optionId = searchParams.get("option") || "";
 
   const where: Record<string, unknown> = { eventId };
   const andConditions: Record<string, unknown>[] = [];
@@ -70,6 +73,18 @@ export async function GET(
     });
   }
 
+  // Stage 5 option filter — independent of phase-status above. Filters
+  // to contacts whose registration has a selection on (phaseId, optionId).
+  if (phaseId && optionId) {
+    andConditions.push({
+      registration: {
+        is: {
+          selections: { some: { phaseId, optionId } },
+        },
+      },
+    });
+  }
+
   if (andConditions.length > 0) {
     where.AND = andConditions;
   }
@@ -99,11 +114,21 @@ export async function GET(
         select: { id: true, name: true, type: true, subject: true },
         orderBy: { createdAt: "desc" },
       }),
-      // Post-registration phases — feeds the "Phase status" filter dropdown
+      // Post-registration phases — feeds the "Phase status" filter
+      // dropdown AND the Stage-5 option-filter chip (we include the
+      // option list per phase so the chip can resolve its label
+      // without a second fetch).
       prisma.phase.findMany({
         where: { eventId, type: "POST_REGISTRATION", isActive: true },
         orderBy: { order: "asc" },
-        select: { id: true, title: true },
+        select: {
+          id: true,
+          title: true,
+          options: {
+            select: { id: true, label: true },
+            orderBy: { order: "asc" },
+          },
+        },
       }),
     ]);
 

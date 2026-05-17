@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { listPhaseOptionStats } from "@/lib/services/selection.service";
 
 export async function GET(
   _req: Request,
@@ -111,6 +112,12 @@ export async function GET(
       };
     });
 
+    // Stage 5: per-option breakdown for option-bearing phases. Skipped
+    // when the postRegPhases module is off (same gate as phaseStats).
+    const optionStats = modules?.postRegPhases
+      ? await listPhaseOptionStats(eventId)
+      : [];
+
     return NextResponse.json({
       event,
       summary: {
@@ -126,6 +133,7 @@ export async function GET(
         .sort((a, b) => b.total - a.total),
       campaigns: campaigns.slice(0, 10),
       phaseStats,
+      optionStats,
     });
   } catch (e) {
     console.error("Failed to fetch statistics:", e);
