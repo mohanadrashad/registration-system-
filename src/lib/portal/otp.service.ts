@@ -83,6 +83,50 @@ export async function requestOtpForEvent(
   return { generated: true };
 }
 
+/**
+ * Dev-only: generate and store a fresh OTP for the given email's
+ * registration on this event, returning the plain code so a developer
+ * can log into the portal without receiving an email. Same generation
+ * + hashing as the regular requestOtpForEvent flow but skips the email
+ * send — the whole point is testing portal flows when email infra
+ * isn't reliable on staging.
+ *
+ * Pending unconsumed OTPs for the same registration are burned to
+ * preserve the "at most one live code per registration" invariant.
+ *
+ * Caller is responsible for environment-gating this — never invoke
+ * outside the env-protected dev-peek route.
+ */
+export async function issueDevOtpForEvent(
+  eventId: string,
+  emailRaw: string
+): Promise<{ code: string; expiresAt: Date } | null> {
+  const email = emailRaw.trim().toLowerCase();
+
+  const registration = await prisma.registration.findFirst({
+    where: { eventId, contact: { email } },
+    select: { id: true },
+  });
+  if (!registration) return null;
+
+  await prisma.portalOtp.updateMany({
+    where: { registrationId: registration.id, consumedAt: null },
+    data: { consumedAt: new Date() },
+  });
+
+  const code = generateCode();
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+  await prisma.portalOtp.create({
+    data: {
+      registrationId: registration.id,
+      codeHash: hashCode(code),
+      expiresAt,
+    },
+  });
+
+  return { code, expiresAt };
+}
+
 export type VerifyOtpResult =
   | { ok: true; registrationId: string }
   | { ok: false; reason: "invalid" | "expired" | "exhausted" };

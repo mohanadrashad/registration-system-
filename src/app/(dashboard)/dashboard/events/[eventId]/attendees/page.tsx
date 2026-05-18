@@ -41,6 +41,8 @@ import {
   BarChart3,
   ArrowUpDown,
   Award,
+  Filter,
+  X,
 } from "lucide-react";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
@@ -89,6 +91,7 @@ interface EmailTemplate {
 interface PostRegPhase {
   id: string;
   title: string;
+  options?: { id: string; label: string }[];
 }
 
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; }> = {
@@ -127,6 +130,20 @@ export default function AttendeesPage() {
     const phaseStatus = searchParams.get("phaseStatus");
     return phase && phaseStatus ? `${phase}:${phaseStatus}` : "ALL";
   });
+  // Stage 5: a separate option filter set via deep-link from the
+  // statistics page (?phase=X&option=Y). The page doesn't expose an
+  // option dropdown — entering this filter only happens via deep-link
+  // from the stats expand or the per-option CSV row.
+  const [optionFilterPhaseId, setOptionFilterPhaseId] = useState<string | null>(
+    () => {
+      const phase = searchParams.get("phase");
+      const option = searchParams.get("option");
+      return phase && option ? phase : null;
+    }
+  );
+  const [optionFilterOptionId, setOptionFilterOptionId] = useState<string | null>(
+    () => searchParams.get("option")
+  );
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -146,7 +163,17 @@ export default function AttendeesPage() {
   const [editStatusValue, setEditStatusValue] = useState<string>("");
 
   // Reset page when filters change
-  useEffect(() => { setPage(1); }, [statusFilter, categoryFilter, badgeEmailFilter, phaseFilter, debouncedSearch]);
+  useEffect(() => {
+    setPage(1);
+  }, [
+    statusFilter,
+    categoryFilter,
+    badgeEmailFilter,
+    phaseFilter,
+    optionFilterPhaseId,
+    optionFilterOptionId,
+    debouncedSearch,
+  ]);
 
   // Debounce search
   useEffect(() => {
@@ -168,6 +195,15 @@ export default function AttendeesPage() {
           p.set("phaseStatus", phaseStatus);
         }
       }
+      if (optionFilterPhaseId && optionFilterOptionId) {
+        // Option filter shares the `phase` param with the
+        // phase-status filter above. When both are set, the
+        // phase-status filter wins for the phase param value; the
+        // option clause is added by the server as an AND so both
+        // narrow the result set independently.
+        p.set("phase", optionFilterPhaseId);
+        p.set("option", optionFilterOptionId);
+      }
 
       const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
       if (!res.ok) throw new Error("Failed");
@@ -185,7 +221,16 @@ export default function AttendeesPage() {
     } finally {
       setLoading(false);
     }
-  }, [eventId, statusFilter, categoryFilter, badgeEmailFilter, phaseFilter, debouncedSearch]);
+  }, [
+    eventId,
+    statusFilter,
+    categoryFilter,
+    badgeEmailFilter,
+    phaseFilter,
+    optionFilterPhaseId,
+    optionFilterOptionId,
+    debouncedSearch,
+  ]);
 
   useEffect(() => {
     fetchData();
@@ -545,6 +590,50 @@ export default function AttendeesPage() {
           </Button>
         </Link>
       </div>
+
+      {/* Stage 5 option-filter chip — visible only when deep-linked */}
+      {/* from the statistics page (?phase=X&option=Y). Single chip with */}
+      {/* an × that clears both params from the URL via the state setter. */}
+      {optionFilterPhaseId && optionFilterOptionId && (() => {
+        const phase = postRegPhases.find(
+          (p) => p.id === optionFilterPhaseId
+        );
+        const option = phase?.options?.find(
+          (o) => o.id === optionFilterOptionId
+        );
+        return (
+          <div className="flex items-center gap-2 rounded-lg border border-dashed bg-muted/30 px-3 py-2 text-sm">
+            <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-muted-foreground">Filtered:</span>
+            <span className="font-medium">
+              {phase?.title ?? "phase"} → {option?.label ?? "option"}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-7"
+              onClick={() => {
+                setOptionFilterPhaseId(null);
+                setOptionFilterOptionId(null);
+                // Strip the URL params so a refresh keeps the cleared
+                // state — otherwise the deep-link would re-apply.
+                const u = new URL(window.location.href);
+                u.searchParams.delete("phase");
+                u.searchParams.delete("option");
+                window.history.replaceState(
+                  null,
+                  "",
+                  u.pathname + (u.search ? `?${u.searchParams}` : "")
+                );
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+              <span className="sr-only">Clear filter</span>
+            </Button>
+          </div>
+        );
+      })()}
 
       {/* Category Tabs */}
       {event?.categories && event.categories.length > 0 && (

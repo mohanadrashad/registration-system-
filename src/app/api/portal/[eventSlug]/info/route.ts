@@ -19,7 +19,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     select: {
       name: true,
       isActive: true,
-      modules: { select: { selfServicePortal: true } },
+      modules: {
+        select: { selfServicePortal: true, multiLanguage: true },
+      },
       branding: true,
     },
   });
@@ -37,6 +39,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
   return NextResponse.json({
     name: event.name,
+    multiLanguage: event.modules?.multiLanguage ?? false,
     branding: event.branding
       ? {
           primaryColor: event.branding.primaryColor,

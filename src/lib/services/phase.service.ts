@@ -1,5 +1,13 @@
 import { prisma } from "@/lib/prisma";
-import type { Step, Phase, AccessStatus, PhaseAccess } from "@prisma/client";
+import type {
+  Step,
+  Phase,
+  AccessStatus,
+  PhaseAccess,
+  PhaseSelectionMode,
+} from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import { assertSelectionModeAllowed } from "@/lib/validations/selection";
 
 // ─── Status calculation ────────────────────────────────────────────────
 
@@ -79,6 +87,12 @@ export async function listPhasesForEvent(eventId: string) {
         },
       },
       reminderTemplate: { select: { id: true, name: true } },
+      // Stage 2: include selectable options. _count.selections lets the
+      // form-builder show the delete-guard count without a separate fetch.
+      options: {
+        orderBy: { order: "asc" },
+        include: { _count: { select: { selections: true } } },
+      },
     },
   });
 }
@@ -131,30 +145,95 @@ export async function createPostRegistrationPhase(
 
 export type UpdatePhaseInput = Partial<CreatePhaseInput> & {
   isActive?: boolean;
+  // Stage 2 selection fields. Patched alongside the base fields in one call.
+  // REGISTRATION phases are not allowed to enable selection — guarded below.
+  selectionMode?: PhaseSelectionMode;
+  maxSelections?: number;
+  allowChangeAfterSubmit?: boolean;
+  requiresReceiptUpload?: boolean;
 };
 
 export async function updatePhase(
   phaseId: string,
-  input: UpdatePhaseInput
+  input: UpdatePhaseInput,
+  expectedUpdatedAt: Date | null = null
 ): Promise<Phase> {
-  return prisma.phase.update({
-    where: { id: phaseId },
-    data: {
-      ...(input.title !== undefined && { title: input.title }),
-      ...(input.titleAr !== undefined && { titleAr: input.titleAr }),
-      ...(input.description !== undefined && { description: input.description }),
-      ...(input.descriptionAr !== undefined && {
-        descriptionAr: input.descriptionAr,
-      }),
-      ...(input.opensAt !== undefined && { opensAt: input.opensAt }),
-      ...(input.closesAt !== undefined && { closesAt: input.closesAt }),
-      ...(input.isRequired !== undefined && { isRequired: input.isRequired }),
-      ...(input.reminderTemplateId !== undefined && {
-        reminderTemplateId: input.reminderTemplateId,
-      }),
-      ...(input.isActive !== undefined && { isActive: input.isActive }),
-    },
-  });
+  const data: Prisma.PhaseUpdateInput = {
+    ...(input.title !== undefined && { title: input.title }),
+    ...(input.titleAr !== undefined && { titleAr: input.titleAr }),
+    ...(input.description !== undefined && { description: input.description }),
+    ...(input.descriptionAr !== undefined && {
+      descriptionAr: input.descriptionAr,
+    }),
+    ...(input.opensAt !== undefined && { opensAt: input.opensAt }),
+    ...(input.closesAt !== undefined && { closesAt: input.closesAt }),
+    ...(input.isRequired !== undefined && { isRequired: input.isRequired }),
+    ...(input.reminderTemplateId !== undefined && {
+      reminderTemplateId: input.reminderTemplateId,
+    }),
+    ...(input.isActive !== undefined && { isActive: input.isActive }),
+    ...(input.selectionMode !== undefined && {
+      selectionMode: input.selectionMode,
+    }),
+    ...(input.maxSelections !== undefined && {
+      maxSelections: input.maxSelections,
+    }),
+    ...(input.allowChangeAfterSubmit !== undefined && {
+      allowChangeAfterSubmit: input.allowChangeAfterSubmit,
+    }),
+    ...(input.requiresReceiptUpload !== undefined && {
+      requiresReceiptUpload: input.requiresReceiptUpload,
+    }),
+  };
+
+  // Two checks fold cleanly into a single transaction when the caller
+  // supplied the updatedAt it last saw: (1) phase still exists and isn't
+  // a REGISTRATION row that's getting selectionMode flipped on, and
+  // (2) nobody else has saved a newer version of the row.
+  if (expectedUpdatedAt || input.selectionMode !== undefined) {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.phase.findUnique({
+        where: { id: phaseId },
+        select: { type: true, updatedAt: true },
+      });
+      if (!existing) throw new PhaseNotFoundError();
+      if (input.selectionMode !== undefined) {
+        assertSelectionModeAllowed(existing.type, input.selectionMode);
+      }
+      if (
+        expectedUpdatedAt &&
+        existing.updatedAt.getTime() > expectedUpdatedAt.getTime()
+      ) {
+        throw new PhaseConcurrencyError(existing.updatedAt);
+      }
+      return tx.phase.update({ where: { id: phaseId }, data });
+    });
+  }
+
+  return prisma.phase.update({ where: { id: phaseId }, data });
+}
+
+export class PhaseNotFoundError extends Error {
+  readonly code = "PHASE_NOT_FOUND";
+  constructor() {
+    super("Phase not found.");
+  }
+}
+
+/**
+ * Thrown by updatePhase when the caller's expectedUpdatedAt is older than
+ * the row's current updatedAt — i.e., someone else (another tab, another
+ * admin) saved a newer version. Routes map this to a 409 carrying the
+ * current updatedAt so the client can refetch + reconcile.
+ */
+export class PhaseConcurrencyError extends Error {
+  readonly code = "PHASE_CONCURRENCY";
+  constructor(public readonly currentUpdatedAt: Date) {
+    super(
+      "This phase was changed by someone else since you last loaded it. " +
+        "Reload to see the latest version, then re-apply your edit."
+    );
+  }
 }
 
 export async function reorderPhase(

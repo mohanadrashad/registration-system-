@@ -137,7 +137,7 @@ model EventModules {
   customDomain      Boolean @default(false) // Custom domain support
   customEmail       Boolean @default(false) // Custom SMTP per event
   webhooks          Boolean @default(false) // External integrations
-  postRegPhases     Boolean @default(false) // Post-registration data collection phases
+  postRegPhases     Boolean @default(true) // Post-registration data collection phases (incl. selectable options)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -364,13 +364,14 @@ model Registration {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
-  contact          Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  event            Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  contact          Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  event            Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
   badge            Badge?
   checkIns         CheckIn[]
   phaseSubmissions PhaseSubmission[]
   phaseAccess      PhaseAccess[]
   portalOtps       PortalOtp[]
+  selections       AttendeeSelection[]
 
   @@index([eventId])
   @@index([status])
@@ -680,14 +681,22 @@ model Phase {
   reminderSent       Boolean   @default(false)
   reminderTemplateId String? // NULL = no automatic reminder (manual only)
 
+  // Selectable options (POST_REGISTRATION only — REGISTRATION must keep NONE)
+  selectionMode          PhaseSelectionMode @default(NONE)
+  maxSelections          Int                @default(1)
+  allowChangeAfterSubmit Boolean            @default(false)
+  requiresReceiptUpload  Boolean            @default(false) // phase-level default; per-option override on PhaseOption.requiresReceipt
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  event            Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  reminderTemplate EmailTemplate?    @relation("PhaseReminderTemplate", fields: [reminderTemplateId], references: [id])
+  event            Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  reminderTemplate EmailTemplate?      @relation("PhaseReminderTemplate", fields: [reminderTemplateId], references: [id])
   steps            Step[]
   submissions      PhaseSubmission[]
   accessOverrides  PhaseAccess[]
+  options          PhaseOption[]
+  selections       AttendeeSelection[]
 
   @@unique([eventId, order])
   @@index([eventId, type])
@@ -696,6 +705,14 @@ model Phase {
 enum PhaseType {
   REGISTRATION
   POST_REGISTRATION
+}
+
+enum PhaseSelectionMode {
+  NONE // No options panel — phase behaves identically to today.
+  ADMIN_ASSIGNED // Admin picks for everyone. Attendees see read-only.
+  ATTENDEE_PICKS // Attendees pick for themselves.
+  MIXED // Admin can pre-assign some; rest pick for themselves.
+  EXTERNAL_BOOKING // Options informational; attendees book externally and upload receipt.
 }
 
 model Step {
@@ -777,4 +794,88 @@ model PortalOtp {
 
   @@index([registrationId])
   @@index([expiresAt])
+}
+
+// ─── Phase Selections (admin-defined option lists per post-reg phase) ───
+
+model PhaseOption {
+  id      String @id @default(cuid())
+  phaseId String
+
+  label           String
+  labelAr         String?
+  description     String?  @db.Text
+  descriptionAr   String?  @db.Text
+  externalUrl     String? // booking link, info link
+  capacity        Int? // null = unlimited
+  metadata        Json? // free-form: { price, address, checkIn, ... }
+  requiresReceipt Boolean? // null = inherit from Phase.requiresReceiptUpload
+
+  order    Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  phase      Phase               @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  selections AttendeeSelection[]
+
+  @@unique([phaseId, order])
+  @@index([phaseId, isActive])
+}
+
+model AttendeeSelection {
+  id             String @id @default(cuid())
+  phaseId        String
+  registrationId String
+  optionId       String
+
+  source     SelectionSource
+  assignedBy String? // User.id of admin (ADMIN_ASSIGNED) or null (ATTENDEE_PICKED)
+  assignedAt DateTime        @default(now())
+  notes      String? // admin-only note (never returned to portal)
+
+  receiptFileId String? @unique // 0 or 1 receipt per selection
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  phase        Phase         @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  registration Registration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  option       PhaseOption   @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  receipt      PhaseReceipt? @relation(fields: [receiptFileId], references: [id], onDelete: SetNull)
+
+  // Multi-pick on a phase means N rows with N different options — never two rows for the same option.
+  @@unique([phaseId, registrationId, optionId])
+  @@index([phaseId, optionId])
+  @@index([registrationId])
+}
+
+enum SelectionSource {
+  ADMIN_ASSIGNED
+  ATTENDEE_PICKED
+}
+
+model PhaseReceipt {
+  id String @id @default(cuid())
+
+  // Internal Vercel Blob URL. Store is Private — never expose this raw URL
+  // in client responses. Reads always go through a server-generated signed URL.
+  blobUrl      String
+  // Storage key/pathname inside the Blob store; used for signed URL + delete.
+  // @unique makes the onUploadCompleted callback race-safe: Vercel retries the
+  // webhook up to 5 times if it doesn't get a 200, and the addRandomSuffix
+  // pathname is deterministic per upload — so two retries for the same blob
+  // hit the unique constraint and the second one no-ops cleanly.
+  blobPath     String   @unique
+  mimeType     String
+  sizeBytes    Int
+  originalName String // for display ("flight-ticket.pdf")
+
+  uploadedAt DateTime @default(now())
+  uploadedBy String // "registration:<id>" for attendee uploads, "admin:<userId>" for admin uploads.
+
+  selection AttendeeSelection?
+
+  @@index([uploadedAt])
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LogOut } from "lucide-react";
@@ -26,6 +26,77 @@ import {
 } from "lucide-react";
 import { COUNTRIES } from "@/lib/form-builder/countries";
 import { isFieldVisible } from "@/lib/form-conditional";
+import type { PhaseSelectionMode } from "@prisma/client";
+import {
+  PhaseOptionsCard,
+  type PortalPhaseOption,
+  type PortalPhaseSelection,
+} from "./phase-options-card";
+import { pickText, type PortalLang } from "@/lib/portal/i18n";
+
+// ─── Page-local bilingual strings ─────────────────────────────────────
+//
+// Kept inline rather than in a shared i18n module — the portal post-
+// login flow doesn't have a translation infrastructure yet, and the
+// surface area is small. If a third language ever lands, lift this
+// out to src/lib/i18n/.
+const PAGE_STRINGS = {
+  en: {
+    backToPortal: "Back to portal",
+    logout: "Log out",
+    locked: "Locked",
+    closed: "View only",
+    closes: (when: string) => `Closes ${when}`,
+    submittedAt: (when: string) => `Submitted ${when}`,
+    lastEdited: (when: string) => `last edited ${when}`,
+    stepLabel: (n: number, total: number) => `Step ${n} of ${total}`,
+    requiredFields:
+      "Please complete the required fields before continuing.",
+    submissionFailed: "Submission failed",
+    networkFailed:
+      "Submission failed. Check your connection and try again.",
+    optionFullFallback:
+      "An option you picked just filled up. Please pick another and resubmit.",
+    selectionsConcurrency:
+      "Your selection was updated elsewhere. Reloading the latest…",
+    saving: "Saving…",
+    submit: "Submit",
+    update: "Update",
+    next: "Next",
+    back: "Back",
+    saved: "Saved",
+    savedBody: (title: string) =>
+      `Your response to "${title}" has been submitted. You can come back and edit it anytime until the phase closes.`,
+    languageToggle: "العربية",
+  },
+  ar: {
+    backToPortal: "العودة إلى البوابة",
+    logout: "تسجيل الخروج",
+    locked: "مقفل",
+    closed: "عرض فقط",
+    closes: (when: string) => `تُغلق في ${when}`,
+    submittedAt: (when: string) => `أُرسل في ${when}`,
+    lastEdited: (when: string) => `آخر تعديل ${when}`,
+    stepLabel: (n: number, total: number) => `الخطوة ${n} من ${total}`,
+    requiredFields:
+      "يُرجى إكمال الحقول المطلوبة قبل المتابعة.",
+    submissionFailed: "فشل الإرسال",
+    networkFailed: "فشل الإرسال. تحقق من اتصالك وحاول مرة أخرى.",
+    optionFullFallback:
+      "أحد الخيارات التي اخترتها أصبح ممتلئًا. يُرجى اختيار خيار آخر وإعادة الإرسال.",
+    selectionsConcurrency:
+      "تم تحديث اختيارك من مكان آخر. جارٍ إعادة تحميل أحدث نسخة…",
+    saving: "جارٍ الحفظ…",
+    submit: "إرسال",
+    update: "تحديث",
+    next: "التالي",
+    back: "رجوع",
+    saved: "تم الحفظ",
+    savedBody: (title: string) =>
+      `تم إرسال إجابتك على "${title}". يمكنك الرجوع وتعديلها في أي وقت قبل إغلاق المرحلة.`,
+    languageToggle: "English",
+  },
+} as const;
 
 interface FormField {
   id: string;
@@ -72,7 +143,14 @@ interface EventLite {
   name: string;
   slug: string;
   branding?: Branding | null;
+  multiLanguage?: boolean;
 }
+
+type PhaseCompletionStatus =
+  | "NOT_STARTED"
+  | "PARTIALLY_COMPLETE"
+  | "COMPLETE"
+  | "PENDING_ASSIGNMENT";
 
 interface PhaseData {
   id: string;
@@ -85,6 +163,14 @@ interface PhaseData {
   isRequired: boolean;
   status: PhaseStatus;
   steps: FormStep[];
+  // Stage 3: selection-related fields. Always present on the wire even
+  // when the phase has no options panel — defaults to NONE/1/false/false
+  // server-side, so legacy phases keep working unchanged.
+  selectionMode: PhaseSelectionMode;
+  maxSelections: number;
+  allowChangeAfterSubmit: boolean;
+  requiresReceiptUpload: boolean;
+  options: PortalPhaseOption[];
 }
 
 interface SubmissionData {
@@ -113,6 +199,32 @@ export default function PortalPhaseFillPage() {
   const [formValues, setFormValues] = useState<FormValueMap>({});
   const [currentStep, setCurrentStep] = useState(0);
 
+  // Stage 3 selection state.
+  const [selections, setSelections] = useState<PortalPhaseSelection[]>([]);
+  const [selectionsUpdatedAt, setSelectionsUpdatedAt] = useState<string | null>(
+    null
+  );
+  const [selectedOptionIds, setSelectedOptionIds] = useState<string[]>([]);
+  // True when the picker is actively shown. Defaults to true when there
+  // are no prior attendee selections; flips to false after a successful
+  // submit, and back to true if the user clicks "Change my selection".
+  const [isEditingSelections, setIsEditingSelections] = useState(true);
+
+  // Anchor to scroll the page back to the options card when a capacity
+  // race forces a re-pick.
+  const optionsCardRef = useRef<HTMLDivElement | null>(null);
+
+  // Language preference. Hydrates from localStorage on mount, then
+  // tracks the toggle button. We store it per portal so each event's
+  // language can be remembered independently. Default = "en"; the
+  // useEffect below promotes to "ar" if the event has multiLanguage on
+  // and the attendee hasn't set an explicit preference yet.
+  const [lang, setLang] = useState<PortalLang>("en");
+  const langStorageKey = `portal-lang:${eventSlug}`;
+  const t = PAGE_STRINGS[lang];
+  const isRtl = lang === "ar";
+  const localeTag = lang === "ar" ? "ar-SA" : undefined;
+
   const totalSteps = phase?.steps.length ?? 0;
   const isMultiStep = totalSteps > 1;
   const activeStep = phase?.steps[currentStep] ?? null;
@@ -120,54 +232,117 @@ export default function PortalPhaseFillPage() {
   const isFirstStep = currentStep === 0;
   const readOnly = phase?.status === "CLOSED" || phase?.status === "LOCKED";
 
-  useEffect(() => {
-    async function fetchPhase() {
+  // Refetch the phase from the API. Used both on mount and after
+  // mutations (selection submit, receipt upload, receipt delete) so
+  // the UI always reflects the latest server state. We deliberately
+  // DON'T re-seed form values or the user's lang choice on a refetch
+  // — those represent user intent that shouldn't be overwritten.
+  // `seedFromScratch` is set on the first mount call so the initial
+  // page render gets all the seeding logic.
+  //
+  // Returns the freshly-fetched data so callers can act on it
+  // immediately (e.g. performSubmit checks completionStatus to
+  // decide whether to flip into the fullscreen success view).
+  const refetchPhase = useCallback(
+    async (
+      seedFromScratch = false
+    ): Promise<{
+      phase: PhaseData;
+      submission: SubmissionData | null;
+      selections: PortalPhaseSelection[];
+      selectionsUpdatedAt: string | null;
+      completionStatus: PhaseCompletionStatus | null;
+    } | null> => {
       try {
         const url = `/api/portal/${eventSlug}/phases/${phaseId}`;
         const res = await fetch(url, { credentials: "same-origin" });
         if (res.status === 401) {
-          // No valid session — bounce to portal so the user can log in.
           router.replace(`/portal/${eventSlug}`);
-          return;
+          return null;
         }
         const data = await res.json();
         if (!res.ok) {
           setError(data.error || "Failed to load phase");
-          setPageLoading(false);
-          return;
+          if (seedFromScratch) setPageLoading(false);
+          return null;
         }
         const p: PhaseData = data.phase;
         const sub: SubmissionData | null = data.submission;
+        const sels: PortalPhaseSelection[] = data.selections ?? [];
+        const selUpdatedAt: string | null = data.selectionsUpdatedAt ?? null;
+        const completionStatus: PhaseCompletionStatus | null =
+          data.completionStatus ?? null;
         setPhase(p);
         setEvent(data.event ?? null);
         setSubmission(sub);
+        setSelections(sels);
+        setSelectionsUpdatedAt(selUpdatedAt);
 
-        // Seed form values: existing submission > field default > empty.
-        const allFields = p.steps.flatMap((s) => s.fields);
-        const seeded: FormValueMap = {};
-        for (const f of allFields) {
-          const fromSub = sub?.data?.[f.name];
-          if (fromSub !== undefined && fromSub !== null) {
-            seeded[f.name] = fromSub as FormValueMap[string];
-          } else if (f.defaultValue) {
-            seeded[f.name] = f.defaultValue;
-          } else if (f.type === "CHECKBOX") {
-            seeded[f.name] = false;
-          } else if (f.type === "MULTISELECT") {
-            seeded[f.name] = [];
-          } else {
-            seeded[f.name] = "";
+        if (seedFromScratch) {
+          // Hydrate language preference (mount-only — toggling later
+          // shouldn't get overridden by a refetch). Prior choice in
+          // localStorage wins; otherwise default Arabic when
+          // multiLanguage is on.
+          try {
+            const stored = window.localStorage.getItem(
+              `portal-lang:${eventSlug}`
+            );
+            if (stored === "ar" || stored === "en") {
+              setLang(stored);
+            } else if (data.event?.multiLanguage) {
+              setLang("ar");
+            }
+          } catch {
+            if (data.event?.multiLanguage) setLang("ar");
           }
+
+          // Seed selectedOptionIds + initial editing flag.
+          const attendeeSelectedIds = sels
+            .filter((s) => s.source === "ATTENDEE_PICKED")
+            .map((s) => s.optionId);
+          setSelectedOptionIds(attendeeSelectedIds);
+          setIsEditingSelections(attendeeSelectedIds.length === 0);
+
+          // Seed form values from saved submission or field defaults.
+          const allFields = p.steps.flatMap((s) => s.fields);
+          const seeded: FormValueMap = {};
+          for (const f of allFields) {
+            const fromSub = sub?.data?.[f.name];
+            if (fromSub !== undefined && fromSub !== null) {
+              seeded[f.name] = fromSub as FormValueMap[string];
+            } else if (f.defaultValue) {
+              seeded[f.name] = f.defaultValue;
+            } else if (f.type === "CHECKBOX") {
+              seeded[f.name] = false;
+            } else if (f.type === "MULTISELECT") {
+              seeded[f.name] = [];
+            } else {
+              seeded[f.name] = "";
+            }
+          }
+          setFormValues(seeded);
         }
-        setFormValues(seeded);
+
+        return {
+          phase: p,
+          submission: sub,
+          selections: sels,
+          selectionsUpdatedAt: selUpdatedAt,
+          completionStatus,
+        };
       } catch {
         setError("Failed to load phase");
+        return null;
       } finally {
-        setPageLoading(false);
+        if (seedFromScratch) setPageLoading(false);
       }
-    }
-    fetchPhase();
-  }, [eventSlug, phaseId, router]);
+    },
+    [eventSlug, phaseId, router]
+  );
+
+  useEffect(() => {
+    void refetchPhase(true);
+  }, [refetchPhase]);
 
   const visibleFields = useMemo(() => {
     if (!activeStep) return [];
@@ -208,6 +383,37 @@ export default function PortalPhaseFillPage() {
     setError("");
   }
 
+  function toggleLang() {
+    const next: PortalLang = lang === "ar" ? "en" : "ar";
+    setLang(next);
+    try {
+      window.localStorage.setItem(langStorageKey, next);
+    } catch {
+      // localStorage unavailable; keep in-memory choice.
+    }
+  }
+
+  // Bilingual field helpers — pick Arabic variant when available, fall
+  // back to English. Used by renderField and the stepper UI.
+  function fieldLabel(field: FormField): string {
+    return pickText(lang, field.label, field.labelAr);
+  }
+  function fieldPlaceholder(field: FormField): string {
+    return pickText(lang, field.placeholder, field.placeholderAr);
+  }
+  function fieldHelpText(field: FormField): string {
+    return pickText(lang, field.helpText, field.helpTextAr);
+  }
+  function fieldOptionLabel(o: { label: string; labelAr?: string }): string {
+    return pickText(lang, o.label, o.labelAr);
+  }
+  function stepTitle(s: FormStep): string {
+    return pickText(lang, s.title, s.titleAr);
+  }
+  function stepDescription(s: FormStep): string {
+    return pickText(lang, s.description, s.descriptionAr);
+  }
+
   function validateCurrentStep(): boolean {
     if (!activeStep) return false;
     for (const field of activeStep.fields) {
@@ -220,7 +426,7 @@ export default function PortalPhaseFillPage() {
         value === "" ||
         (Array.isArray(value) && value.length === 0);
       if (empty) {
-        setError("Please complete the required fields before continuing.");
+        setError(t.requiredFields);
         return false;
       }
     }
@@ -248,25 +454,179 @@ export default function PortalPhaseFillPage() {
     if (!validateCurrentStep()) return;
     setSubmitting(true);
     setError("");
+
+    // Build the request body. We send optionIds whenever the phase has a
+    // writable selection mode AND the picker is actively editable —
+    // otherwise we skip the field entirely so the server doesn't run the
+    // selection write path. The expectedSelectionsUpdatedAt token comes
+    // from the most recent GET / submit response.
+    const isWritableMode =
+      phase?.selectionMode === "ATTENDEE_PICKS" ||
+      phase?.selectionMode === "MIXED";
+    const adminPreAssigned = selections.some(
+      (s) => s.source === "ADMIN_ASSIGNED"
+    );
+    const includeOptions =
+      isWritableMode && !adminPreAssigned && isEditingSelections;
+
+    const body: {
+      data: FormValueMap;
+      optionIds?: string[];
+      expectedSelectionsUpdatedAt?: string | null;
+    } = { data: formValues };
+    if (includeOptions) {
+      body.optionIds = selectedOptionIds;
+      body.expectedSelectionsUpdatedAt = selectionsUpdatedAt;
+    }
+
     try {
       const res = await fetch(`/api/portal/${eventSlug}/phases/${phaseId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ data: formValues }),
+        body: JSON.stringify(body),
       });
       if (res.status === 401) {
         router.replace(`/portal/${eventSlug}`);
         return;
       }
       const result = await res.json();
+
       if (res.ok) {
-        setSuccess(true);
-      } else {
-        setError(result.error || "Submission failed");
+        // Reconcile local state from the server response so the next
+        // edit cycle uses the fresh updatedAt token.
+        if (result.selections) {
+          setSelections(result.selections);
+        }
+        if (result.selectionsUpdatedAt !== undefined) {
+          setSelectionsUpdatedAt(result.selectionsUpdatedAt);
+        }
+        if (result.options && phase) {
+          // Merge refreshed counts into the page's options without
+          // dropping any other local state.
+          setPhase({
+            ...phase,
+            options: phase.options.map((o) => {
+              const fresh = (
+                result.options as Array<{
+                  id: string;
+                  capacity: number | null;
+                  taken: number;
+                  full: boolean;
+                }>
+              ).find((r) => r.id === o.id);
+              if (!fresh) return o;
+              return { ...o, taken: fresh.taken, full: fresh.full };
+            }),
+          });
+        }
+        // Successful submit closes the picker. The user lands on the
+        // submitted-view card; they can re-open via "Change my selection".
+        setIsEditingSelections(false);
+
+        // Stage 4: only show the fullscreen "Saved" overlay when the
+        // phase is fully COMPLETE. If receipts are required and still
+        // pending, the page stays put so the receipt-upload UI in the
+        // SubmittedSelectionCard is visible — the user has more to do.
+        // We refetch first to get the authoritative completionStatus
+        // (the PUT response doesn't include it, since selections were
+        // just written and their receipts can't have arrived yet).
+        const refreshed = await refetchPhase();
+        if (refreshed?.completionStatus === "COMPLETE") {
+          setSuccess(true);
+        }
+        return;
       }
+
+      // ── Non-OK response handling ────────────────────────────────────
+      // 409 OPTION_FULL: refresh capacity counts in-place, deselect the
+      // dead option, scroll to options card. The user fixes the pick and
+      // re-clicks Submit.
+      if (res.status === 409 && result.code === "OPTION_FULL") {
+        const failingOptionId: string | undefined = result.optionId;
+        if (Array.isArray(result.options) && phase) {
+          setPhase({
+            ...phase,
+            options: phase.options.map((o) => {
+              const fresh = (
+                result.options as Array<{
+                  id: string;
+                  capacity: number | null;
+                  taken: number;
+                  full: boolean;
+                }>
+              ).find((r) => r.id === o.id);
+              if (!fresh) return o;
+              return { ...o, taken: fresh.taken, full: fresh.full };
+            }),
+          });
+        }
+        if (failingOptionId) {
+          setSelectedOptionIds((ids) =>
+            ids.filter((id) => id !== failingOptionId)
+          );
+        }
+        // Server's friendly message wins (it names the specific option),
+        // but fall back to the localised generic if the server text is
+        // missing or in the wrong language for some reason.
+        setError(result.error || t.optionFullFallback);
+        // Scroll to options so the user sees the badge update.
+        optionsCardRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+        return;
+      }
+
+      // 409 SELECTIONS_CONCURRENCY: another tab / device already saved
+      // a newer version. Refetch the phase so the user sees the fresh
+      // state, then re-applies their edit.
+      if (res.status === 409 && result.code === "SELECTIONS_CONCURRENCY") {
+        setError(t.selectionsConcurrency);
+        // Trigger a page-data refresh.
+        router.refresh();
+        // Re-fetch the phase state directly so local state catches up
+        // without waiting for navigation.
+        try {
+          const r = await fetch(
+            `/api/portal/${eventSlug}/phases/${phaseId}`,
+            { credentials: "same-origin" }
+          );
+          if (r.ok) {
+            const fresh = await r.json();
+            setPhase(fresh.phase);
+            setSubmission(fresh.submission);
+            setSelections(fresh.selections ?? []);
+            setSelectionsUpdatedAt(fresh.selectionsUpdatedAt ?? null);
+            const attendeeIds = (fresh.selections ?? [])
+              .filter(
+                (s: PortalPhaseSelection) => s.source === "ATTENDEE_PICKED"
+              )
+              .map((s: PortalPhaseSelection) => s.optionId);
+            setSelectedOptionIds(attendeeIds);
+            setIsEditingSelections(true);
+          }
+        } catch {
+          // Refetch failed; user can manually reload.
+        }
+        return;
+      }
+
+      // 409 SELECTIONS_LOCKED / 403 SELECTIONS_ADMIN_LOCKED: the phase
+      // doesn't allow attendee changes. Surface the friendly message.
+      if (
+        result.code === "SELECTIONS_LOCKED" ||
+        result.code === "SELECTIONS_ADMIN_LOCKED"
+      ) {
+        setError(result.error || "This phase doesn't allow changes.");
+        setIsEditingSelections(false);
+        return;
+      }
+
+      // Generic non-OK: surface the server's message.
+      setError(result.error || t.submissionFailed);
     } catch {
-      setError("Submission failed");
+      setError(t.networkFailed);
     } finally {
       setSubmitting(false);
     }
@@ -291,8 +651,9 @@ export default function PortalPhaseFillPage() {
   }
 
   function renderField(field: FormField) {
-    const label = field.label;
-    const placeholder = field.placeholder;
+    const label = fieldLabel(field);
+    const placeholder = fieldPlaceholder(field);
+    const helpText = fieldHelpText(field);
     const value = formValues[field.name] ?? "";
     const widthClass =
       field.width === "HALF" || field.width === "THIRD"
@@ -335,6 +696,9 @@ export default function PortalPhaseFillPage() {
         <Label htmlFor={field.name} className="text-xs font-medium text-gray-500">
           {label} {field.required && <span className="text-red-400">*</span>}
         </Label>
+        {helpText && (
+          <p className="text-xs text-muted-foreground">{helpText}</p>
+        )}
         {["TEXT", "EMAIL", "PHONE", "NUMBER", "PHONE_COUNTRY"].includes(
           field.type
         ) && (
@@ -374,12 +738,16 @@ export default function PortalPhaseFillPage() {
             disabled={readOnly}
           >
             <SelectTrigger>
-              <SelectValue placeholder={placeholder || "Select..."} />
+              <SelectValue
+                placeholder={
+                  placeholder || (lang === "ar" ? "اختر..." : "Select...")
+                }
+              />
             </SelectTrigger>
             <SelectContent>
               {(field.options || []).map((option) => (
                 <SelectItem key={option.value} value={option.value}>
-                  {option.label}
+                  {fieldOptionLabel(option)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -392,12 +760,17 @@ export default function PortalPhaseFillPage() {
             disabled={readOnly}
           >
             <SelectTrigger>
-              <SelectValue placeholder={placeholder || "Select country..."} />
+              <SelectValue
+                placeholder={
+                  placeholder ||
+                  (lang === "ar" ? "اختر الدولة..." : "Select country...")
+                }
+              />
             </SelectTrigger>
             <SelectContent>
               {COUNTRIES.map((country) => (
                 <SelectItem key={country.code} value={country.code}>
-                  {country.name}
+                  {lang === "ar" ? country.nameAr : country.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -420,7 +793,7 @@ export default function PortalPhaseFillPage() {
                   htmlFor={`${field.name}-${option.value}`}
                   className="text-sm"
                 >
-                  {option.label}
+                  {fieldOptionLabel(option)}
                 </Label>
               </div>
             ))}
@@ -463,7 +836,7 @@ export default function PortalPhaseFillPage() {
                       : "border-gray-200 bg-gray-50/50 text-gray-600 hover:bg-gray-100"
                   }`}
                 >
-                  {option.label}
+                  {fieldOptionLabel(option)}
                 </button>
               );
             })}
@@ -533,6 +906,7 @@ export default function PortalPhaseFillPage() {
         <div
           className="min-h-screen flex items-center justify-center px-4"
           style={{ backgroundColor }}
+          dir={isRtl ? "rtl" : "ltr"}
         >
           <div className="max-w-md text-center space-y-6">
             {logoUrl && (
@@ -550,22 +924,17 @@ export default function PortalPhaseFillPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold" style={{ color: textColor }}>
-                Saved
+                {t.saved}
               </h1>
               <p className="text-muted-foreground mt-1">
-                Your response to &ldquo;{phase?.title}&rdquo; has been submitted.
-                You can come back and edit it anytime until the phase closes.
+                {t.savedBody(pickText(lang, phase?.title, phase?.titleAr))}
               </p>
             </div>
             <Button
               asChild
               style={{ backgroundColor: primaryColor, color: "#fff" }}
             >
-              <Link
-                href={`/portal/${eventSlug}`}
-              >
-                Back to portal
-              </Link>
+              <Link href={`/portal/${eventSlug}`}>{t.backToPortal}</Link>
             </Button>
           </div>
         </div>
@@ -580,11 +949,15 @@ export default function PortalPhaseFillPage() {
         <div
           className="min-h-screen flex items-center justify-center px-4"
           style={{ backgroundColor }}
+          dir={isRtl ? "rtl" : "ltr"}
         >
           <div className="max-w-md text-center space-y-4">
-            <p className="text-red-500">{error || "Phase not found"}</p>
+            <p className="text-red-500">
+              {error ||
+                (lang === "ar" ? "المرحلة غير موجودة" : "Phase not found")}
+            </p>
             <Button asChild variant="outline">
-              <Link href={`/portal/${eventSlug}`}>Back to portal</Link>
+              <Link href={`/portal/${eventSlug}`}>{t.backToPortal}</Link>
             </Button>
           </div>
         </div>
@@ -595,7 +968,11 @@ export default function PortalPhaseFillPage() {
   return (
     <>
       {customStyles}
-      <div className="min-h-screen" style={{ backgroundColor }}>
+      <div
+        className="min-h-screen"
+        style={{ backgroundColor }}
+        dir={isRtl ? "rtl" : "ltr"}
+      >
         <div className="h-1.5 w-full" style={{ backgroundColor: primaryColor }} />
         <div className="py-8 px-4">
         <div className="max-w-2xl mx-auto space-y-6">
@@ -613,50 +990,109 @@ export default function PortalPhaseFillPage() {
               href={`/portal/${eventSlug}`}
               className="text-sm text-muted-foreground inline-flex items-center hover:text-foreground"
             >
-              <ArrowLeft className="h-4 w-4 mr-1" /> Back to portal
+              <ArrowLeft
+                className={`h-4 w-4 ${isRtl ? "ml-1 rotate-180" : "mr-1"}`}
+              />{" "}
+              {t.backToPortal}
             </Link>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={logout}
-            >
-              <LogOut className="h-3.5 w-3.5 mr-1" /> Log out
-            </Button>
+            <div className="flex items-center gap-2">
+              {/* Language toggle — only when the event opted into multi-
+                  language. The toggle's label is the OTHER language's
+                  name in its own script, the standard pattern. */}
+              {event?.multiLanguage && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={toggleLang}
+                  aria-label={
+                    lang === "ar"
+                      ? "Switch to English"
+                      : "التبديل إلى العربية"
+                  }
+                >
+                  {t.languageToggle}
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={logout}
+              >
+                <LogOut className="h-3.5 w-3.5 mr-1" /> {t.logout}
+              </Button>
+            </div>
           </div>
 
           <div className="rounded-xl border bg-white p-6 space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <h1 className="text-2xl font-bold">{phase.title}</h1>
+            <h1 className="text-2xl font-bold">
+              {pickText(lang, phase.title, phase.titleAr)}
+            </h1>
             {phase.status === "LOCKED" && (
               <span className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-600">
-                <LockIcon className="h-3 w-3" /> Locked
+                <LockIcon className="h-3 w-3" /> {t.locked}
               </span>
             )}
             {phase.status === "CLOSED" && (
               <span className="rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-600">
-                View only
+                {t.closed}
               </span>
             )}
           </div>
-          {phase.description && (
-            <p className="text-sm text-muted-foreground">{phase.description}</p>
+          {pickText(lang, phase.description, phase.descriptionAr) && (
+            <p className="text-sm text-muted-foreground">
+              {pickText(lang, phase.description, phase.descriptionAr)}
+            </p>
           )}
           {phase.closesAt && phase.status === "OPEN" && (
             <p className="text-xs text-muted-foreground">
-              Closes {new Date(phase.closesAt).toLocaleString()}
+              {t.closes(new Date(phase.closesAt).toLocaleString(localeTag))}
             </p>
           )}
           {submission && (
             <p className="text-xs text-green-700">
-              Submitted {new Date(submission.submittedAt).toLocaleString()}
+              {t.submittedAt(
+                new Date(submission.submittedAt).toLocaleString(localeTag)
+              )}
               {submission.updatedAt !== submission.submittedAt && (
                 <>
-                  {" · "}last edited{" "}
-                  {new Date(submission.updatedAt).toLocaleString()}
+                  {" · "}
+                  {t.lastEdited(
+                    new Date(submission.updatedAt).toLocaleString(localeTag)
+                  )}
                 </>
               )}
             </p>
+          )}
+
+          {/* Stage 3: options card sits above the stepper, mode-dependent. */}
+          {phase.selectionMode !== "NONE" && (
+            <div ref={optionsCardRef}>
+              <PhaseOptionsCard
+                selectionMode={phase.selectionMode}
+                maxSelections={phase.maxSelections}
+                allowChangeAfterSubmit={phase.allowChangeAfterSubmit}
+                phaseRequiresReceiptUpload={phase.requiresReceiptUpload}
+                options={phase.options}
+                selections={selections}
+                selectedOptionIds={selectedOptionIds}
+                onChange={setSelectedOptionIds}
+                isEditing={isEditingSelections}
+                onStartEditing={() => {
+                  setIsEditingSelections(true);
+                  setError("");
+                }}
+                readOnly={readOnly}
+                lang={lang}
+                eventSlug={eventSlug}
+                phaseId={phaseId}
+                onReceiptChange={async () => {
+                  await refetchPhase();
+                }}
+              />
+            </div>
           )}
 
           {isMultiStep && (
@@ -695,12 +1131,14 @@ export default function PortalPhaseFillPage() {
                 })}
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                Step {currentStep + 1} of {totalSteps} ·{" "}
-                <span className="font-medium">{activeStep?.title ?? ""}</span>
+                {t.stepLabel(currentStep + 1, totalSteps)} ·{" "}
+                <span className="font-medium">
+                  {activeStep ? stepTitle(activeStep) : ""}
+                </span>
               </p>
-              {activeStep?.description && (
+              {activeStep && stepDescription(activeStep) && (
                 <p className="text-xs text-gray-500 mt-1">
-                  {activeStep.description}
+                  {stepDescription(activeStep)}
                 </p>
               )}
             </div>
@@ -744,7 +1182,10 @@ export default function PortalPhaseFillPage() {
                       onClick={goBack}
                       className="flex-1"
                     >
-                      <ArrowLeft className="h-4 w-4 mr-1" /> Back
+                      <ArrowLeft
+                        className={`h-4 w-4 ${isRtl ? "ml-1 rotate-180" : "mr-1"}`}
+                      />{" "}
+                      {t.back}
                     </Button>
                   )}
                   {isLastStep ? (
@@ -755,7 +1196,16 @@ export default function PortalPhaseFillPage() {
                       disabled={submitting}
                       style={{ backgroundColor: primaryColor, color: "#fff" }}
                     >
-                      {submitting ? "Saving…" : submission ? "Update" : "Submit"}
+                      {submitting ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          {t.saving}
+                        </>
+                      ) : submission ? (
+                        t.update
+                      ) : (
+                        t.submit
+                      )}
                     </Button>
                   ) : (
                     <Button
@@ -764,7 +1214,10 @@ export default function PortalPhaseFillPage() {
                       className="flex-1"
                       style={{ backgroundColor: primaryColor, color: "#fff" }}
                     >
-                      Next <ArrowRight className="h-4 w-4 ml-1" />
+                      {t.next}{" "}
+                      <ArrowRight
+                        className={`h-4 w-4 ${isRtl ? "mr-1 rotate-180" : "ml-1"}`}
+                      />
                     </Button>
                   )}
                 </div>
@@ -776,7 +1229,16 @@ export default function PortalPhaseFillPage() {
                   disabled={submitting}
                   style={{ backgroundColor: primaryColor, color: "#fff" }}
                 >
-                  {submitting ? "Saving…" : submission ? "Update" : "Submit"}
+                  {submitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {t.saving}
+                    </>
+                  ) : submission ? (
+                    t.update
+                  ) : (
+                    t.submit
+                  )}
                 </Button>
               )
             )}

@@ -11,6 +11,7 @@
     "db:migrate": "npx prisma migrate dev",
     "db:push": "npx prisma db push",
     "db:seed": "npx tsx prisma/seed.ts",
+    "seed:staging": "npx tsx prisma/scripts/seed-staging.ts",
     "db:studio": "npx prisma studio",
     "postinstall": "npx prisma generate"
   },
@@ -28,6 +29,7 @@
     "@tiptap/react": "^3.20.0",
     "@tiptap/starter-kit": "^3.20.0",
     "@types/nodemailer": "^7.0.11",
+    "@vercel/blob": "^2.3.3",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/phase-reminders",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/cleanup-orphan-receipts",
+      "schedule": "30 3 * * *"
     }
   ]
 }

@@ -48,6 +48,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { COUNTRIES } from "@/lib/form-builder/countries";
+import { SelectionsCard } from "./selections-card";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
 
@@ -941,6 +942,15 @@ export default function AttendeeDetailPage() {
             })}
           </CardContent>
         </Card>
+      )}
+
+      {/* Stage 5: per-phase admin selections + receipts (option-bearing phases). */}
+      {contact.registration && (
+        <SelectionsCard
+          eventId={eventId}
+          contactId={contactId}
+          canEdit={userCanEdit}
+        />
       )}
 
       {/* Phase access override dialog */}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { computePhaseStatus } from "@/lib/services/phase.service";
+import { computePhaseCompletion } from "@/lib/services/selection.service";
 import { getPortalSessionFromRequest } from "@/lib/portal/session";
 
 interface RouteParams {
@@ -105,6 +106,29 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             where: { registrationId: registration.id },
             select: { id: true, submittedAt: true, updatedAt: true },
           },
+          // Stage 4: options + this attendee's selections needed to
+          // compute the four-state completion status. Pulled here so
+          // the portal home renders the right badge without an extra
+          // round-trip per phase.
+          options: {
+            select: { id: true, requiresReceipt: true },
+          },
+          selections: {
+            where: { registrationId: registration.id },
+            select: {
+              optionId: true,
+              source: true,
+              receiptFileId: true,
+            },
+          },
+          steps: {
+            select: {
+              fields: {
+                where: { isActive: true },
+                select: { required: true },
+              },
+            },
+          },
         },
       });
 
@@ -116,6 +140,26 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           const submission = p.submissions[0] ?? null;
           // Closed-without-submission phases are hidden per spec.
           if (status === "CLOSED" && !submission) return null;
+          // Field completion proxy: any required field implies the
+          // submission must exist for "fields satisfied"; if there are
+          // no required fields the phase is fields-satisfied by default.
+          const hasRequiredFields = p.steps.some((st) =>
+            st.fields.some((f) => f.required)
+          );
+          const fieldsSatisfied = hasRequiredFields
+            ? !!submission
+            : true;
+          const completionStatus = computePhaseCompletion(
+            {
+              selectionMode: p.selectionMode,
+              maxSelections: p.maxSelections,
+              isRequired: p.isRequired,
+              requiresReceiptUpload: p.requiresReceiptUpload,
+            },
+            p.options,
+            p.selections,
+            fieldsSatisfied
+          );
           return {
             id: p.id,
             title: p.title,
@@ -129,7 +173,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             status,
             submittedAt: submission?.submittedAt ?? null,
             updatedAt: submission?.updatedAt ?? null,
-            isCompleted: !!submission,
+            // Kept for back-compat with existing portal home UI;
+            // true when phase is COMPLETE.
+            isCompleted: completionStatus === "COMPLETE",
+            completionStatus,
           };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -144,6 +191,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         endDate: event.endDate,
         branding: event.branding,
         formFields: event.formFields,
+        // Surfaced so the page can show / hide the language toggle.
+        // Arabic variants on form fields and phases are returned
+        // unconditionally; this flag just gates the UI.
+        multiLanguage: event.modules?.multiLanguage ?? false,
       },
       registration: {
         id: registration.id,

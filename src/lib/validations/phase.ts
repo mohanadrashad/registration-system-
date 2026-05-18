@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  expectedUpdatedAtSchema,
+  updatePhaseSelectionSchema,
+} from "@/lib/validations/selection";
 
 const optionalNullableString = z
   .union([z.string().min(1), z.null()])
@@ -19,9 +23,15 @@ export const createPhaseSchema = z.object({
   reminderTemplateId: optionalNullableString,
 });
 
-export const updatePhaseSchema = createPhaseSchema.partial().extend({
-  isActive: z.boolean().optional(),
-});
+// Phase update accepts the base fields plus the Stage 2 selection fields
+// in the same payload. Service layer enforces the REGISTRATION-phase guard.
+// expectedUpdatedAt enables optimistic concurrency control on conflict-prone
+// edits like the Options panel toggles.
+export const updatePhaseSchema = createPhaseSchema
+  .partial()
+  .extend({ isActive: z.boolean().optional() })
+  .merge(updatePhaseSelectionSchema)
+  .merge(expectedUpdatedAtSchema);
 
 export const reorderPhaseSchema = z.object({
   direction: z.enum(["up", "down"]),

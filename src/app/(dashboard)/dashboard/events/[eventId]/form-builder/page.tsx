@@ -59,6 +59,11 @@ import {
   Lock,
 } from "lucide-react";
 import { FieldType, FieldWidth, PhaseType } from "@prisma/client";
+import type { PhaseSelectionMode } from "@prisma/client";
+import {
+  PhaseOptionsPanel,
+  type PhaseOption,
+} from "./phase-options-panel";
 
 interface FieldOption {
   value: string;
@@ -111,6 +116,16 @@ interface Phase {
   closesAt?: string | null;
   isRequired: boolean;
   reminderTemplateId?: string | null;
+  // Stage 2 selection fields. Always present on the wire — defaults to
+  // NONE/1/false/false on phases that don't use the Options panel.
+  selectionMode: PhaseSelectionMode;
+  maxSelections: number;
+  allowChangeAfterSubmit: boolean;
+  requiresReceiptUpload: boolean;
+  // Concurrency token for the phase row. Used by the Options panel as
+  // expectedUpdatedAt on its phase-level PATCH calls.
+  updatedAt: string;
+  options: PhaseOption[];
 }
 
 interface ModulesPayload {
@@ -343,14 +358,18 @@ function ConditionalEditor({
 
 function PhaseSettingsCard({
   phase,
+  eventId,
   multiLanguageEnabled,
   emailTemplates,
   onUpdate,
+  onRefetch,
 }: {
   phase: Phase;
+  eventId: string;
   multiLanguageEnabled: boolean;
   emailTemplates: EmailTemplateOption[];
   onUpdate: (patch: Partial<Phase>) => void;
+  onRefetch: () => Promise<void> | void;
 }) {
   const [title, setTitle] = useState(phase.title);
   const [titleAr, setTitleAr] = useState(phase.titleAr ?? "");
@@ -527,6 +546,24 @@ function PhaseSettingsCard({
             for manual sending only.
           </p>
         </div>
+
+        {/* Stage 2: selectable-options panel. Purely additive — collapsed by */}
+        {/* default unless the phase already has selectionMode != NONE. The */}
+        {/* panel manages its own optimistic state; onRefetch is only called  */}
+        {/* on 409 conflicts to recover from concurrent edits in another tab. */}
+        <PhaseOptionsPanel
+          eventId={eventId}
+          phase={{
+            id: phase.id,
+            selectionMode: phase.selectionMode,
+            maxSelections: phase.maxSelections,
+            allowChangeAfterSubmit: phase.allowChangeAfterSubmit,
+            requiresReceiptUpload: phase.requiresReceiptUpload,
+            updatedAt: phase.updatedAt,
+            options: phase.options,
+          }}
+          onRefetch={onRefetch}
+        />
       </CardContent>
     </Card>
   );
@@ -1496,9 +1533,11 @@ export default function FormBuilderPage() {
       {selectedPhase && selectedPhase.type === "POST_REGISTRATION" && (
         <PhaseSettingsCard
           phase={selectedPhase}
+          eventId={eventId}
           multiLanguageEnabled={multiLanguageEnabled}
           emailTemplates={emailTemplates}
           onUpdate={(patch) => updatePhaseSettings(selectedPhase.id, patch)}
+          onRefetch={fetchEverything}
         />
       )}
 

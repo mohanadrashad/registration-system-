@@ -7,6 +7,10 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
+  OptionBreakdown,
+  type PhaseOptionStats,
+} from "./option-breakdown";
+import {
   Users,
   UserCheck,
   Mail,
@@ -70,6 +74,7 @@ export default function StatisticsPage() {
   const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryRow[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
   const [phaseStats, setPhaseStats] = useState<PhaseStat[]>([]);
+  const [optionStats, setOptionStats] = useState<PhaseOptionStats[]>([]);
 
   useEffect(() => {
     fetch(`/api/events/${eventId}/statistics`)
@@ -79,6 +84,7 @@ export default function StatisticsPage() {
         setSummary(data.summary);
         setCategoryBreakdown(data.categoryBreakdown || []);
         setPhaseStats(data.phaseStats || []);
+        setOptionStats(data.optionStats || []);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -319,6 +325,13 @@ export default function StatisticsPage() {
             ))}
           </div>
         </>
+      )}
+
+      {/* Stage 5: Per-Option Breakdown (only in "All" view, after */}
+      {/* the per-phase completion cards). Sits between phase + */}
+      {/* category sections to keep all phase-scoped stats together. */}
+      {categoryFilter === "ALL" && (
+        <OptionBreakdown eventId={eventId} optionStats={optionStats} />
       )}
 
       {/* Per-Category Cards (only in "All" view) */}
