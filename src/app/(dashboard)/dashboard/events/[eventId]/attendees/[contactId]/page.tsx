@@ -6,210 +6,39 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { getRole, canEdit } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "sonner";
+import { ArrowLeft, Pencil, Tag } from "lucide-react";
 import {
-  ArrowLeft,
-  Pencil,
-  Copy,
-  Check,
-  Mail,
-  Clock,
-  ExternalLink,
-  Award,
-  Tag,
-  User,
-  Lock,
-  Unlock,
-  ShieldCheck,
-  ClipboardList,
-  CheckCircle2,
-  CircleDashed,
-} from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { COUNTRIES } from "@/lib/form-builder/countries";
-import { SelectionsCard } from "./selections-card";
+  type ContactDetail,
+  type ContactStatus,
+  LAYOUT_TYPES,
+  COLUMN_FIELDS,
+  STATUS_CONFIG,
+  deriveDisplayName,
+  getFieldValue,
+  initialsFor,
+} from "@/components/attendee/field-display";
+import { IdentityCard } from "@/components/attendee/identity-card";
+import { RegistrationAnswersCard } from "@/components/attendee/registration-answers-card";
+import { AdminCard } from "@/components/attendee/admin-card";
+import { RegistrationLinkCard } from "@/components/attendee/registration-link-card";
+import { PhaseColumn } from "@/components/attendee/phase-column";
+import { EBadgeCard } from "@/components/attendee/ebadge-card";
+import { EmailHistoryCard } from "@/components/attendee/email-history-card";
+import { QuickActionsCard } from "@/components/attendee/quick-actions-card";
 
-type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
-
-// Field names that are stored as Contact columns by the register handler's destructure.
-const COLUMN_FIELDS = new Set([
-  "firstName",
-  "lastName",
-  "email",
-  "phone",
-  "organization",
-  "designation",
-]);
-
-const LAYOUT_TYPES = new Set(["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"]);
-
-interface FormFieldDef {
-  name: string;
-  label: string;
-  labelAr: string | null;
-  type: string;
-  options: { value: string; label: string; labelAr?: string }[] | null;
-  isSystem: boolean;
-}
-
-interface ContactDetail {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string | null;
-  organization: string | null;
-  designation: string | null;
-  category: string | null;
-  status: ContactStatus;
-  inviteToken: string | null;
-  metadata: Record<string, unknown> | null;
-  createdAt: string;
-  updatedAt: string;
-  registration: { status: string; registeredAt: string; confirmationCode: string; badgeEmailSent: boolean } | null;
-  emailLogs: { id: string; status: string; sentAt: string | null; subject: string }[];
-  event: { slug: string; name: string; categories: string[] };
-  formFields: FormFieldDef[];
-}
-
-const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
-  IMPORTED: { label: "Imported", variant: "secondary" },
-  INVITED: { label: "Invited", variant: "outline" },
-  REGISTERED: { label: "Registered", variant: "default" },
-  CANCELLED: { label: "Cancelled", variant: "destructive" },
-};
-
-type PhaseStatus = "LOCKED" | "NOT_OPEN" | "OPEN" | "CLOSED";
-type AccessOverride = "OPEN" | "LOCKED" | null;
-
-interface PhaseAccessItem {
-  id: string;
-  title: string;
-  titleAr: string | null;
-  opensAt: string | null;
-  closesAt: string | null;
-  isRequired: boolean;
-  override: AccessOverride;
-  reason: string | null;
-  overriddenAt: string | null;
-  status: PhaseStatus;
-}
-
-interface PhaseSubmissionField {
-  name: string;
-  label: string;
-  labelAr: string | null;
-  type: string;
-  options: { value: string; label: string; labelAr?: string }[] | null;
-}
-
-interface PhaseSubmissionStep {
-  id: string;
-  title: string;
-  fields: PhaseSubmissionField[];
-}
-
-interface PhaseSubmissionItem {
-  id: string;
-  title: string;
-  titleAr: string | null;
-  status: "SUBMITTED" | "NOT_SUBMITTED";
-  submittedAt: string | null;
-  updatedAt: string | null;
-  steps: PhaseSubmissionStep[];
-  data: Record<string, unknown> | null;
-}
-
-const phaseStatusConfig: Record<
-  PhaseStatus,
-  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
-> = {
-  OPEN: { label: "Open", variant: "default" },
-  NOT_OPEN: { label: "Not open yet", variant: "secondary" },
-  CLOSED: { label: "Closed", variant: "outline" },
-  LOCKED: { label: "Locked", variant: "destructive" },
-};
-
-function getFieldValue(contact: ContactDetail, field: FormFieldDef): unknown {
-  if (COLUMN_FIELDS.has(field.name)) {
-    return (contact as unknown as Record<string, unknown>)[field.name];
-  }
-  return contact.metadata?.[field.name];
-}
-
-function formatFieldValue(field: FormFieldDef, raw: unknown): string {
-  if (raw === undefined || raw === null || raw === "") return "-";
-  if (Array.isArray(raw)) {
-    return raw
-      .map((v) => {
-        const opt = field.options?.find((o) => o.value === v);
-        return opt?.label ?? String(v);
-      })
-      .join(", ");
-  }
-  if (typeof raw === "boolean") return raw ? "Yes" : "No";
-  if (field.type === "COUNTRY") {
-    const country = COUNTRIES.find((c) => c.code === raw);
-    if (country) return country.name;
-  }
-  if (field.options && field.options.length > 0) {
-    const opt = field.options.find((o) => o.value === raw);
-    if (opt) return opt.label;
-  }
-  return String(raw);
-}
-
-function isSyntheticEmail(email: string | null | undefined): boolean {
-  return !!email && email.endsWith("@noemail.local");
-}
-
-function deriveDisplayName(contact: ContactDetail, visibleFields: FormFieldDef[]): { primary: string; secondary: string } {
-  const fullName = [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim();
-  const secondary = contact.email && !isSyntheticEmail(contact.email) ? contact.email : "";
-
-  if (fullName) {
-    return { primary: fullName, secondary };
-  }
-
-  const textFields = visibleFields.filter((f) => ["TEXT", "EMAIL", "PHONE"].includes(f.type));
-  const values: string[] = [];
-  for (const f of textFields) {
-    const v = getFieldValue(contact, f);
-    if (typeof v === "string" && v.trim() !== "") {
-      values.push(v.trim());
-      if (values.length === 2) break;
-    }
-  }
-  if (values.length > 0) {
-    return { primary: values.join(" "), secondary };
-  }
-  return {
-    primary: "Attendee",
-    secondary: contact.registration?.confirmationCode || "",
-  };
-}
-
+/**
+ * Attendee detail — three-column layout.
+ *  - Left:   Identity / Registration answers / Admin / Registration link
+ *  - Middle: one unified card per phase (PhaseColumn)
+ *  - Right:  E-Badge / Email history / Quick actions
+ *
+ * This page owns only the contact fetch + the single shared edit flow
+ * (one Save writes columns + metadata + category + status in one PUT,
+ * unchanged from before). All per-phase data fetching/mutating lives in
+ * the column/card components.
+ */
 export default function AttendeeDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -222,22 +51,10 @@ export default function AttendeeDetailPage() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const [editValues, setEditValues] = useState<Record<string, unknown>>({});
   const [editCategory, setEditCategory] = useState("");
   const [editStatus, setEditStatus] = useState<ContactStatus>("IMPORTED");
-
-  const [phaseSubmissions, setPhaseSubmissions] = useState<PhaseSubmissionItem[] | null>(null);
-
-  const [phaseAccess, setPhaseAccess] = useState<PhaseAccessItem[] | null>(null);
-  const [phaseAccessDialog, setPhaseAccessDialog] = useState<{
-    phaseId: string;
-    phaseTitle: string;
-    nextStatus: "OPEN" | "LOCKED";
-    reason: string;
-  } | null>(null);
-  const [phaseAccessSaving, setPhaseAccessSaving] = useState(false);
 
   const fetchContact = useCallback(async () => {
     try {
@@ -273,77 +90,6 @@ export default function AttendeeDetailPage() {
     fetchContact();
   }, [fetchContact]);
 
-  const fetchPhaseAccess = useCallback(async () => {
-    try {
-      const res = await fetch(
-        `/api/events/${eventId}/contacts/${contactId}/phase-access`
-      );
-      if (!res.ok) return;
-      const data: { phases: PhaseAccessItem[] } = await res.json();
-      setPhaseAccess(data.phases);
-    } catch {
-      // Non-fatal — the card just won't render.
-    }
-  }, [eventId, contactId]);
-
-  useEffect(() => {
-    fetchPhaseAccess();
-  }, [fetchPhaseAccess]);
-
-  const fetchPhaseSubmissions = useCallback(async () => {
-    try {
-      const res = await fetch(
-        `/api/events/${eventId}/contacts/${contactId}/phase-submissions`
-      );
-      if (!res.ok) return;
-      const data: { phases: PhaseSubmissionItem[] } = await res.json();
-      setPhaseSubmissions(data.phases);
-    } catch {
-      // Non-fatal — card just won't show.
-    }
-  }, [eventId, contactId]);
-
-  useEffect(() => {
-    fetchPhaseSubmissions();
-  }, [fetchPhaseSubmissions]);
-
-  async function submitPhaseAccess(
-    phaseId: string,
-    status: "OPEN" | "LOCKED" | null,
-    reason: string | null
-  ) {
-    setPhaseAccessSaving(true);
-    try {
-      const res = await fetch(
-        `/api/events/${eventId}/contacts/${contactId}/phase-access`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phaseId, status, reason }),
-        }
-      );
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        toast.error(err?.error || "Failed to update phase access");
-        return;
-      }
-      const data: { phases: PhaseAccessItem[] } = await res.json();
-      setPhaseAccess(data.phases);
-      setPhaseAccessDialog(null);
-      toast.success(
-        status === null
-          ? "Phase override cleared"
-          : status === "OPEN"
-          ? "Phase forced open for this attendee"
-          : "Phase locked for this attendee"
-      );
-    } catch {
-      toast.error("Failed to update phase access");
-    } finally {
-      setPhaseAccessSaving(false);
-    }
-  }
-
   const appUrl = typeof window !== "undefined" ? window.location.origin : "";
   const registrationLink = contact
     ? contact.inviteToken
@@ -351,29 +97,21 @@ export default function AttendeeDetailPage() {
       : `${appUrl}/register/${contact.event.slug}`
     : "";
 
-  async function copyLink() {
-    try {
-      await navigator.clipboard.writeText(registrationLink);
-      setCopied(true);
-      toast.success("Registration link copied!");
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast.error("Failed to copy");
-    }
-  }
-
   async function handleSave() {
     if (!contact) return;
     setSaving(true);
     try {
       const columnUpdates: Record<string, unknown> = {};
-      const metadataUpdates: Record<string, unknown> = { ...(contact.metadata || {}) };
+      const metadataUpdates: Record<string, unknown> = {
+        ...(contact.metadata || {}),
+      };
 
       for (const field of contact.formFields || []) {
         if (LAYOUT_TYPES.has(field.type)) continue;
         const value = editValues[field.name];
         if (COLUMN_FIELDS.has(field.name)) {
-          columnUpdates[field.name] = value === "" || value === undefined ? null : value;
+          columnUpdates[field.name] =
+            value === "" || value === undefined ? null : value;
         } else {
           metadataUpdates[field.name] = value;
         }
@@ -381,7 +119,8 @@ export default function AttendeeDetailPage() {
 
       const body = {
         ...columnUpdates,
-        metadata: Object.keys(metadataUpdates).length > 0 ? metadataUpdates : null,
+        metadata:
+          Object.keys(metadataUpdates).length > 0 ? metadataUpdates : null,
         category: editCategory || null,
         status: editStatus,
       };
@@ -398,7 +137,9 @@ export default function AttendeeDetailPage() {
         fetchContact();
       } else {
         const err = await res.json().catch(() => null);
-        toast.error(err?.error?.fieldErrors ? "Validation error" : "Failed to update");
+        toast.error(
+          err?.error?.fieldErrors ? "Validation error" : "Failed to update"
+        );
       }
     } catch {
       toast.error("Failed to update");
@@ -407,618 +148,144 @@ export default function AttendeeDetailPage() {
     }
   }
 
-  function renderEditInput(field: FormFieldDef) {
-    const value = editValues[field.name];
-    const setValue = (v: unknown) => setEditValues((prev) => ({ ...prev, [field.name]: v }));
-
-    if (["TEXT", "EMAIL", "PHONE", "NUMBER", "PHONE_COUNTRY"].includes(field.type)) {
-      return (
-        <Input
-          type={field.type === "EMAIL" ? "email" : field.type === "NUMBER" ? "number" : "text"}
-          value={(value as string) || ""}
-          onChange={(e) => setValue(e.target.value)}
-        />
-      );
-    }
-    if (field.type === "TEXTAREA") {
-      return (
-        <Textarea
-          value={(value as string) || ""}
-          onChange={(e) => setValue(e.target.value)}
-          rows={3}
-        />
-      );
-    }
-    if (field.type === "SELECT") {
-      return (
-        <Select value={(value as string) || ""} onValueChange={setValue}>
-          <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
-          <SelectContent>
-            {(field.options || []).map((o) => (
-              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      );
-    }
-    if (field.type === "COUNTRY") {
-      return (
-        <Select value={(value as string) || ""} onValueChange={setValue}>
-          <SelectTrigger><SelectValue placeholder="Select country..." /></SelectTrigger>
-          <SelectContent>
-            {COUNTRIES.map((c) => (
-              <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      );
-    }
-    if (field.type === "RADIO") {
-      return (
-        <RadioGroup value={(value as string) || ""} onValueChange={setValue} className="flex flex-wrap gap-4">
-          {(field.options || []).map((o) => (
-            <div key={o.value} className="flex items-center space-x-2">
-              <RadioGroupItem value={o.value} id={`${field.name}-${o.value}`} />
-              <Label htmlFor={`${field.name}-${o.value}`} className="text-sm">{o.label}</Label>
-            </div>
-          ))}
-        </RadioGroup>
-      );
-    }
-    if (field.type === "CHECKBOX") {
-      return (
-        <div className="flex items-center space-x-2">
-          <Checkbox checked={Boolean(value)} onCheckedChange={(c) => setValue(Boolean(c))} id={field.name} />
-          <Label htmlFor={field.name} className="text-sm">{field.label}</Label>
-        </div>
-      );
-    }
-    if (field.type === "MULTISELECT") {
-      const arr = Array.isArray(value) ? (value as string[]) : [];
-      return (
-        <div className="space-y-1">
-          {(field.options || []).map((o) => {
-            const checked = arr.includes(o.value);
-            return (
-              <div key={o.value} className="flex items-center space-x-2">
-                <Checkbox
-                  checked={checked}
-                  onCheckedChange={(c) => {
-                    const next = c ? [...arr, o.value] : arr.filter((v) => v !== o.value);
-                    setValue(next);
-                  }}
-                  id={`${field.name}-${o.value}`}
-                />
-                <Label htmlFor={`${field.name}-${o.value}`} className="text-sm">{o.label}</Label>
-              </div>
-            );
-          })}
-        </div>
-      );
-    }
-    if (["DATE", "TIME", "DATETIME"].includes(field.type)) {
-      return (
-        <Input
-          type={field.type === "DATE" ? "date" : field.type === "TIME" ? "time" : "datetime-local"}
-          value={(value as string) || ""}
-          onChange={(e) => setValue(e.target.value)}
-        />
-      );
-    }
-    return (
-      <Input value={(value as string) || ""} onChange={(e) => setValue(e.target.value)} />
-    );
-  }
-
   if (loading) {
-    return <div className="flex items-center justify-center py-12">Loading...</div>;
+    return (
+      <div className="flex items-center justify-center py-12">Loading...</div>
+    );
   }
 
   if (!contact) return null;
 
-  const visibleFields = (contact.formFields || []).filter((f) => !LAYOUT_TYPES.has(f.type));
+  const visibleFields = (contact.formFields || []).filter(
+    (f) => !LAYOUT_TYPES.has(f.type)
+  );
+  const systemFields = visibleFields.filter((f) => f.isSystem);
+  const answerFields = visibleFields.filter((f) => !f.isSystem);
   const displayName = deriveDisplayName(contact, visibleFields);
+  const statusCfg = STATUS_CONFIG[contact.status];
+
+  const onChangeValue = (name: string, v: unknown) =>
+    setEditValues((prev) => ({ ...prev, [name]: v }));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <Link href={`/dashboard/events/${eventId}/attendees`}>
             <Button variant="ghost" size="sm">
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back
             </Button>
           </Link>
-          <div>
-            <h1 className="text-2xl font-bold">{displayName.primary}</h1>
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold">
+            {initialsFor(displayName.primary)}
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold truncate">{displayName.primary}</h1>
             {displayName.secondary && (
-              <p className="text-sm text-muted-foreground">{displayName.secondary}</p>
+              <p className="text-sm text-muted-foreground truncate">
+                {displayName.secondary}
+              </p>
             )}
           </div>
-          <Badge variant={statusConfig[contact.status]?.variant || "secondary"} className="ml-2">
-            {statusConfig[contact.status]?.label || contact.status}
+          <Badge
+            variant={statusCfg?.variant || "secondary"}
+            className="ml-1 shrink-0"
+          >
+            {statusCfg?.label || contact.status}
           </Badge>
+          <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground shrink-0">
+            <Tag className="h-3 w-3" />
+            {contact.category || "Uncategorized"}
+          </span>
         </div>
         {userCanEdit && (
-          <Button variant={editing ? "ghost" : "outline"} onClick={() => setEditing(!editing)}>
-            <Pencil className="mr-2 h-4 w-4" />
-            {editing ? "Cancel Edit" : "Edit"}
-          </Button>
+          <div className="flex items-center gap-2">
+            {editing ? (
+              <>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setEditing(false);
+                    // reset drafts to last-loaded values
+                    fetchContact();
+                  }}
+                  disabled={saving}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleSave} disabled={saving}>
+                  {saving ? "Saving..." : "Save Changes"}
+                </Button>
+              </>
+            ) : (
+              <Button variant="outline" onClick={() => setEditing(true)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Attendee Information — mirrors the event's form definition */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Attendee Information</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {visibleFields.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                This event has no form fields yet. Build the form in the form builder to collect attendee info.
-              </p>
-            ) : editing ? (
-              <div className="space-y-4">
-                {visibleFields.map((field) => (
-                  <div key={field.name} className="space-y-1.5">
-                    {field.type !== "CHECKBOX" && <Label>{field.label}</Label>}
-                    {renderEditInput(field)}
-                  </div>
-                ))}
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
-                  <Button onClick={handleSave} disabled={saving}>
-                    {saving ? "Saving..." : "Save Changes"}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {visibleFields.map((field) => (
-                  <div key={field.name} className="flex items-start gap-3 text-sm">
-                    <span className="text-muted-foreground w-32 shrink-0">{field.label}</span>
-                    <span className="font-medium break-words">
-                      {formatFieldValue(field, getFieldValue(contact, field))}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      {/* Three columns */}
+      <div className="grid grid-cols-1 gap-[14px] lg:[grid-template-columns:minmax(0,0.9fr)_minmax(0,1.2fr)_minmax(0,0.9fr)]">
+        {/* Left — Identity */}
+        <div className="space-y-[14px]">
+          <IdentityCard
+            contact={contact}
+            fields={systemFields}
+            editing={editing}
+            editValues={editValues}
+            onChangeValue={onChangeValue}
+          />
+          <RegistrationAnswersCard
+            contact={contact}
+            fields={answerFields}
+            editing={editing}
+            editValues={editValues}
+            onChangeValue={onChangeValue}
+          />
+          <AdminCard
+            contact={contact}
+            editing={editing}
+            editCategory={editCategory}
+            setEditCategory={setEditCategory}
+            editStatus={editStatus}
+            setEditStatus={setEditStatus}
+          />
+          <RegistrationLinkCard
+            hasToken={!!contact.inviteToken}
+            registrationLink={registrationLink}
+          />
+        </div>
 
-        {/* Right column */}
-        <div className="space-y-6">
-          {/* Registration Link */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <ExternalLink className="h-4 w-4" />
-                Registration Link
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-xs text-muted-foreground mb-2">
-                {contact.inviteToken
-                  ? "Personal registration link for this attendee. Share it if they didn't receive the email."
-                  : "This attendee has no invite token. They can use the general registration link."}
-              </p>
-              <div className="flex items-center gap-2">
-                <Input
-                  readOnly
-                  value={registrationLink}
-                  className="text-xs font-mono"
-                  onClick={(e) => (e.target as HTMLInputElement).select()}
-                />
-                <Button variant="outline" size="sm" onClick={copyLink} className="shrink-0">
-                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+        {/* Middle — Per-phase */}
+        <div>
+          <PhaseColumn
+            eventId={eventId}
+            contactId={contactId}
+            canEdit={userCanEdit}
+            hasRegistration={!!contact.registration}
+          />
+        </div>
 
-          {/* Admin — category/status/added (not part of the form) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <User className="h-4 w-4" />
-                Admin
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              {editing ? (
-                <>
-                  <div className="space-y-1.5">
-                    <Label>Category</Label>
-                    {contact.event.categories.length > 0 ? (
-                      <Select value={editCategory} onValueChange={setEditCategory}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select category" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {contact.event.categories.map((cat) => (
-                            <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input value={editCategory} onChange={(e) => setEditCategory(e.target.value)} />
-                    )}
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Status</Label>
-                    <Select value={editStatus} onValueChange={(v) => setEditStatus(v as ContactStatus)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="IMPORTED">Imported</SelectItem>
-                        <SelectItem value="INVITED">Invited</SelectItem>
-                        <SelectItem value="REGISTERED">Registered</SelectItem>
-                        <SelectItem value="CANCELLED">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground flex items-center gap-2">
-                      <Tag className="h-3.5 w-3.5" />Category
-                    </span>
-                    <span className="font-medium">{contact.category || "Uncategorized"}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground flex items-center gap-2">
-                      <Clock className="h-3.5 w-3.5" />Added
-                    </span>
-                    <span className="font-medium">
-                      {new Date(contact.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
-                    </span>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Registration Info */}
-          {contact.registration && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Registration</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Confirmation Code</span>
-                  <span className="font-mono font-medium">{contact.registration.confirmationCode}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Status</span>
-                  <Badge variant="default">{contact.registration.status}</Badge>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Registered At</span>
-                  <span>{new Date(contact.registration.registeredAt).toLocaleString()}</span>
-                </div>
-              </CardContent>
-            </Card>
+        {/* Right — Communications & Output */}
+        <div className="space-y-[14px]">
+          <EBadgeCard registration={contact.registration} />
+          <EmailHistoryCard emailLogs={contact.emailLogs} />
+          {userCanEdit && (
+            <QuickActionsCard
+              eventId={eventId}
+              contactId={contactId}
+              registration={contact.registration}
+              contactStatus={contact.status}
+              onChanged={fetchContact}
+            />
           )}
-
-          {/* Phase Access — per-attendee override of post-reg phase visibility */}
-          {contact.registration && phaseAccess && phaseAccess.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <ShieldCheck className="h-4 w-4" />
-                  Phase Access
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-xs text-muted-foreground">
-                  Override the date-based open/close on a per-attendee basis. Useful when someone needs the form opened early or kept locked.
-                </p>
-                {phaseAccess.map((p) => {
-                  const cfg = phaseStatusConfig[p.status];
-                  return (
-                    <div key={p.id} className="rounded-lg border p-3 space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-medium text-sm truncate">{p.title}</p>
-                          {(p.opensAt || p.closesAt) && (
-                            <p className="text-xs text-muted-foreground">
-                              {p.opensAt
-                                ? `Opens ${new Date(p.opensAt).toLocaleString()}`
-                                : "Always open"}
-                              {p.closesAt
-                                ? ` · Closes ${new Date(p.closesAt).toLocaleString()}`
-                                : ""}
-                            </p>
-                          )}
-                        </div>
-                        <Badge variant={cfg.variant} className="shrink-0">
-                          {cfg.label}
-                        </Badge>
-                      </div>
-
-                      {p.override && p.reason && (
-                        <p className="text-xs text-muted-foreground italic">
-                          Reason: {p.reason}
-                        </p>
-                      )}
-
-                      {userCanEdit && (
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          <Button
-                            variant={p.override === null ? "default" : "outline"}
-                            size="sm"
-                            disabled={p.override === null || phaseAccessSaving}
-                            onClick={() => submitPhaseAccess(p.id, null, null)}
-                          >
-                            Default
-                          </Button>
-                          <Button
-                            variant={p.override === "OPEN" ? "default" : "outline"}
-                            size="sm"
-                            disabled={p.override === "OPEN" || phaseAccessSaving}
-                            onClick={() =>
-                              setPhaseAccessDialog({
-                                phaseId: p.id,
-                                phaseTitle: p.title,
-                                nextStatus: "OPEN",
-                                reason: p.reason ?? "",
-                              })
-                            }
-                          >
-                            <Unlock className="mr-1 h-3.5 w-3.5" />
-                            Force Open
-                          </Button>
-                          <Button
-                            variant={p.override === "LOCKED" ? "destructive" : "outline"}
-                            size="sm"
-                            disabled={p.override === "LOCKED" || phaseAccessSaving}
-                            onClick={() =>
-                              setPhaseAccessDialog({
-                                phaseId: p.id,
-                                phaseTitle: p.title,
-                                nextStatus: "LOCKED",
-                                reason: p.reason ?? "",
-                              })
-                            }
-                          >
-                            <Lock className="mr-1 h-3.5 w-3.5" />
-                            Force Lock
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Badge */}
-          {contact.registration?.status === "CONFIRMED" && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Award className="h-4 w-4" />
-                  E-Badge
-                  {contact.registration.badgeEmailSent && (
-                    <Badge variant="default" className="ml-auto text-xs">Email Sent</Badge>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-sm text-muted-foreground">Badge is ready for this confirmed attendee.</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => window.open(`/badge/${contact.registration!.confirmationCode}`, "_blank")}
-                >
-                  <ExternalLink className="mr-2 h-3.5 w-3.5" />
-                  View Badge
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Email History */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Mail className="h-4 w-4" />
-                Email History
-                <Badge variant="outline" className="ml-auto">{contact.emailLogs.length}</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {contact.emailLogs.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No emails sent to this attendee yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {contact.emailLogs.map((log) => (
-                    <div key={log.id} className="flex items-center justify-between rounded-lg border p-3 text-sm">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium truncate">{log.subject}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {log.sentAt ? new Date(log.sentAt).toLocaleString() : "Queued"}
-                        </p>
-                      </div>
-                      <Badge
-                        variant={log.status === "SENT" ? "default" : log.status === "FAILED" ? "destructive" : "secondary"}
-                        className="ml-2 shrink-0"
-                      >
-                        {log.status}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
         </div>
       </div>
-
-      {/* Phase Submissions — what the attendee typed into each post-reg phase */}
-      {contact.registration && phaseSubmissions && phaseSubmissions.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <ClipboardList className="h-5 w-5" />
-              Phase Submissions
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {phaseSubmissions.map((p) => {
-              const submitted = p.status === "SUBMITTED";
-              const submittedFields: { label: string; value: string }[] = [];
-              if (submitted && p.data) {
-                for (const step of p.steps) {
-                  for (const field of step.fields) {
-                    if (LAYOUT_TYPES.has(field.type)) continue;
-                    submittedFields.push({
-                      label: field.label,
-                      value: formatFieldValue(
-                        { ...field, isSystem: false },
-                        p.data[field.name]
-                      ),
-                    });
-                  }
-                }
-              }
-
-              return (
-                <div key={p.id} className="rounded-lg border">
-                  <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {submitted ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                      ) : (
-                        <CircleDashed className="h-4 w-4 text-muted-foreground shrink-0" />
-                      )}
-                      <p className="font-medium text-sm truncate">{p.title}</p>
-                    </div>
-                    {submitted ? (
-                      <span className="text-xs text-muted-foreground shrink-0">
-                        Submitted{" "}
-                        {p.submittedAt &&
-                          new Date(p.submittedAt).toLocaleString(undefined, {
-                            year: "numeric",
-                            month: "short",
-                            day: "numeric",
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })}
-                      </span>
-                    ) : (
-                      <Badge variant="outline" className="text-xs">
-                        Not submitted
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="p-4">
-                    {!submitted ? (
-                      <p className="text-sm text-muted-foreground">
-                        This attendee hasn&apos;t filled this phase yet.
-                      </p>
-                    ) : submittedFields.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        Submission recorded but no field values found.
-                      </p>
-                    ) : (
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {submittedFields.map((f, i) => (
-                          <div key={i} className="flex items-start gap-3 text-sm">
-                            <span className="text-muted-foreground w-32 shrink-0">{f.label}</span>
-                            <span className="font-medium break-words">{f.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Stage 5: per-phase admin selections + receipts (option-bearing phases). */}
-      {contact.registration && (
-        <SelectionsCard
-          eventId={eventId}
-          contactId={contactId}
-          canEdit={userCanEdit}
-        />
-      )}
-
-      {/* Phase access override dialog */}
-      <Dialog
-        open={phaseAccessDialog !== null}
-        onOpenChange={(open) => {
-          if (!open) setPhaseAccessDialog(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {phaseAccessDialog?.nextStatus === "OPEN"
-                ? "Force open this phase"
-                : "Lock this phase"}
-            </DialogTitle>
-            <DialogDescription>
-              {phaseAccessDialog?.nextStatus === "OPEN"
-                ? `Override the schedule and let this attendee fill "${phaseAccessDialog?.phaseTitle}" right now.`
-                : `Prevent this attendee from filling "${phaseAccessDialog?.phaseTitle}", regardless of the schedule.`}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="phase-access-reason">Reason (optional)</Label>
-            <Textarea
-              id="phase-access-reason"
-              rows={3}
-              placeholder="e.g. Travelling early, attending a different track, etc."
-              value={phaseAccessDialog?.reason ?? ""}
-              onChange={(e) =>
-                setPhaseAccessDialog((prev) =>
-                  prev ? { ...prev, reason: e.target.value } : prev
-                )
-              }
-            />
-            <p className="text-xs text-muted-foreground">
-              Visible to admins on this attendee's record. Not shown to the attendee.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setPhaseAccessDialog(null)}
-              disabled={phaseAccessSaving}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                if (!phaseAccessDialog) return;
-                submitPhaseAccess(
-                  phaseAccessDialog.phaseId,
-                  phaseAccessDialog.nextStatus,
-                  phaseAccessDialog.reason.trim() || null
-                );
-              }}
-              disabled={phaseAccessSaving}
-              variant={phaseAccessDialog?.nextStatus === "LOCKED" ? "destructive" : "default"}
-            >
-              {phaseAccessSaving
-                ? "Saving..."
-                : phaseAccessDialog?.nextStatus === "OPEN"
-                ? "Force open"
-                : "Lock phase"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
