@@ -165,6 +165,25 @@ export function PhaseColumn({
     );
   }
 
+  // No registration → no per-phase state to act on (phase-access has
+  // nothing to override, selections 404). The old page hid all three
+  // phase cards in this case; preserve that rather than rendering
+  // cards with mutation controls that would 400.
+  if (!hasRegistration) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between px-1">
+          <p className="text-sm font-medium">Phases for this attendee</p>
+        </div>
+        <div className="rounded-lg border border-dashed p-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            This attendee has not registered yet — no phase activity.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between px-1">
