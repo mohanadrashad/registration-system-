@@ -758,7 +758,8 @@ export class OptionFullError extends Error {
  */
 export async function listAttendeeSelectionsForAdmin(
   eventId: string,
-  registrationId: string
+  registrationId: string,
+  attendeeCategory: string | null
 ) {
   const phases = await prisma.phase.findMany({
     where: {
@@ -769,6 +770,10 @@ export async function listAttendeeSelectionsForAdmin(
     },
     orderBy: { order: "asc" },
     include: {
+      accessOverrides: {
+        where: { registrationId },
+        select: { status: true },
+      },
       options: {
         orderBy: { order: "asc" },
         include: { _count: { select: { selections: true } } },
@@ -811,7 +816,20 @@ export async function listAttendeeSelectionsForAdmin(
       : [];
   const userById = new Map(users.map((u) => [u.id, u] as const));
 
-  return phases.map((p) => ({
+  return phases
+    // Stage 2: per-category visibility. A PhaseAccess override (OPEN or
+    // LOCKED) is an explicit per-attendee admin decision and wins over
+    // the category filter (open Q5 default).
+    .filter((p) => {
+      const ov = p.accessOverrides[0]?.status ?? null;
+      if (ov === "OPEN" || ov === "LOCKED") return true;
+      return (
+        p.appliesToCategories.length === 0 ||
+        (attendeeCategory != null &&
+          p.appliesToCategories.includes(attendeeCategory))
+      );
+    })
+    .map((p) => ({
     id: p.id,
     title: p.title,
     titleAr: p.titleAr,

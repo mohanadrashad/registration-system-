@@ -33,7 +33,7 @@ const writeBodySchema = z.object({
 async function resolveRegistration(eventId: string, contactId: string) {
   const reg = await prisma.registration.findFirst({
     where: { contactId, eventId },
-    select: { id: true },
+    select: { id: true, contact: { select: { category: true } } },
   });
   return reg;
 }
@@ -49,7 +49,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     return apiError("Attendee not found on this event", 404);
   }
 
-  const phases = await listAttendeeSelectionsForAdmin(eventId, reg.id);
+  const phases = await listAttendeeSelectionsForAdmin(
+    eventId,
+    reg.id,
+    reg.contact.category
+  );
   return NextResponse.json({ registrationId: reg.id, phases });
 }
 

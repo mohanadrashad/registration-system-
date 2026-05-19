@@ -73,7 +73,11 @@ async function loadAuthorizedContext(
 
   const registration = await prisma.registration.findFirst({
     where: { id: session.registrationId, eventId: event.id },
-    select: { id: true, status: true },
+    select: {
+      id: true,
+      status: true,
+      contact: { select: { category: true } },
+    },
   });
   if (!registration) {
     return {
@@ -156,6 +160,24 @@ async function loadAuthorizedContext(
     },
   });
   if (!phase) {
+    return {
+      error: NextResponse.json({ error: "Phase not found" }, { status: 404 }),
+    } as const;
+  }
+
+  // Stage 2: per-category visibility. If the phase is restricted and the
+  // attendee's category isn't listed, it doesn't apply — return the
+  // same 404 as a missing phase (don't leak that it exists). A
+  // PhaseAccess override (OPEN or LOCKED) is an explicit per-attendee
+  // admin decision and wins over the category filter (open Q5 default).
+  const override = phase.accessOverrides[0]?.status ?? null;
+  const hasOverride = override === "OPEN" || override === "LOCKED";
+  const attendeeCategory = registration.contact.category;
+  const categoryApplies =
+    phase.appliesToCategories.length === 0 ||
+    (attendeeCategory != null &&
+      phase.appliesToCategories.includes(attendeeCategory));
+  if (!hasOverride && !categoryApplies) {
     return {
       error: NextResponse.json({ error: "Phase not found" }, { status: 404 }),
     } as const;

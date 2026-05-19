@@ -138,6 +138,18 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           const override = p.accessOverrides[0]?.status ?? null;
           const status = computePhaseStatus(p, override, now);
           const submission = p.submissions[0] ?? null;
+          // Stage 2: per-category visibility. A phase with no category
+          // restriction is universal; otherwise the attendee's category
+          // must be listed. A PhaseAccess override (OPEN or LOCKED) is
+          // an explicit per-attendee admin decision and wins over the
+          // category filter (open question #5 default).
+          const hasOverride = override === "OPEN" || override === "LOCKED";
+          const attendeeCategory = registration.contact.category;
+          const categoryApplies =
+            p.appliesToCategories.length === 0 ||
+            (attendeeCategory != null &&
+              p.appliesToCategories.includes(attendeeCategory));
+          if (!hasOverride && !categoryApplies) return null;
           // Closed-without-submission phases are hidden per spec.
           if (status === "CLOSED" && !submission) return null;
           // Field completion proxy: any required field implies the

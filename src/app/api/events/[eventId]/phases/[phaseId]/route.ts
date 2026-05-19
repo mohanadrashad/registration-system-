@@ -11,6 +11,7 @@ import {
 import {
   reorderPhaseSchema,
   updatePhaseSchema,
+  validatePhaseCategoriesForEvent,
 } from "@/lib/validations/phase";
 import { SelectionModeNotAllowedError } from "@/lib/validations/selection";
 import { requireModule } from "@/lib/guards/module-guard";
@@ -72,6 +73,23 @@ export async function PATCH(
   const parsed = updatePhaseSchema.safeParse(body);
   if (!parsed.success) {
     return apiError(JSON.stringify(parsed.error.flatten()), 400);
+  }
+
+  // Per-category visibility is NOT module-gated — any phase type can be
+  // category-restricted. Validate membership against Event.categories
+  // only when the field is present in the patch.
+  if (parsed.data.appliesToCategories !== undefined) {
+    const ev = await prisma.event.findUnique({
+      where: { id: eventId },
+      select: { categories: true },
+    });
+    if (!ev) return apiError("Event not found", 404);
+    const check = validatePhaseCategoriesForEvent(
+      parsed.data.appliesToCategories,
+      ev.categories
+    );
+    if (!check.ok) return apiError(check.error, 400);
+    parsed.data.appliesToCategories = check.value;
   }
 
   // Gate Stage 2 selection-field writes on the postRegPhases module.

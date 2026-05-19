@@ -24,11 +24,13 @@ export function PhaseColumn({
   contactId,
   canEdit,
   hasRegistration,
+  attendeeCategory,
 }: {
   eventId: string;
   contactId: string;
   canEdit: boolean;
   hasRegistration: boolean;
+  attendeeCategory: string | null;
 }) {
   const [access, setAccess] = useState<PhaseAccessItem[] | null>(null);
   const [submissions, setSubmissions] = useState<PhaseSubmissionItem[] | null>(
@@ -37,6 +39,9 @@ export function PhaseColumn({
   const [selections, setSelections] = useState<SelectionPhaseEntry[] | null>(
     null
   );
+  // M for the "Showing N of M" hint — total active POST_REG phases on
+  // the event, before category filtering. Surfaced by phase-submissions.
+  const [totalPhases, setTotalPhases] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refetch = useCallback(async () => {
@@ -57,10 +62,17 @@ export function PhaseColumn({
     if (subRes.status === "fulfilled" && subRes.value.ok) {
       const d = (await subRes.value.json()) as {
         phases: PhaseSubmissionItem[];
+        totalPostRegPhases?: number;
       };
       setSubmissions(d.phases);
+      setTotalPhases(
+        typeof d.totalPostRegPhases === "number"
+          ? d.totalPostRegPhases
+          : d.phases.length
+      );
     } else {
       setSubmissions([]);
+      setTotalPhases(0);
     }
 
     // selections 403s when the postRegPhases module is off and 404s
@@ -195,12 +207,23 @@ export function PhaseColumn({
         )}
       </div>
 
+      {/* Open Q2 default: the filtering hint shows only when the
+          category filter actually reduces the visible count. */}
+      {totalPhases !== null && total < totalPhases && (
+        <p className="px-1 text-xs text-muted-foreground">
+          Showing {total} of {totalPhases} phases
+          {attendeeCategory
+            ? ` (filtered by category: ${attendeeCategory})`
+            : " (filtered by category)"}
+        </p>
+      )}
+
       {total === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center">
           <p className="text-sm text-muted-foreground">
-            {hasRegistration
-              ? "No phases configured for this event."
-              : "No phases yet — this attendee has not registered."}
+            {totalPhases && totalPhases > 0
+              ? "No phases apply to this attendee — they may need a category assigned."
+              : "No phases configured for this event."}
           </p>
         </div>
       ) : (
