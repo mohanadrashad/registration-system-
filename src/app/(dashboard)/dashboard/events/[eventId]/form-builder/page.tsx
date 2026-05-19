@@ -1315,6 +1315,23 @@ export default function FormBuilderPage() {
                           <Lock className="inline h-3 w-3 mr-1 opacity-60" />
                         )}
                         {p.title}
+                        {p.type !== "REGISTRATION" &&
+                          (p.appliesToCategories?.length ? (
+                            <span
+                              className="ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium align-middle"
+                              style={{
+                                backgroundColor: "#EEEDFE",
+                                color: "#3C3489",
+                              }}
+                              title={p.appliesToCategories.join(", ")}
+                            >
+                              {p.appliesToCategories.join(", ")}
+                            </span>
+                          ) : (
+                            <span className="ml-1.5 inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground align-middle">
+                              All categories
+                            </span>
+                          ))}
                       </button>
                     )}
                     {active && p.type !== "REGISTRATION" && !isRenaming && (
