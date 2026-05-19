@@ -108,6 +108,8 @@ export type CreatePhaseInput = {
   closesAt?: Date | null;
   isRequired?: boolean;
   reminderTemplateId?: string | null;
+  // Per-category visibility. Empty/omitted = visible to everyone.
+  appliesToCategories?: string[];
 };
 
 export async function createPostRegistrationPhase(
@@ -183,6 +185,9 @@ export async function updatePhase(
     }),
     ...(input.requiresReceiptUpload !== undefined && {
       requiresReceiptUpload: input.requiresReceiptUpload,
+    }),
+    ...(input.appliesToCategories !== undefined && {
+      appliesToCategories: { set: input.appliesToCategories },
     }),
   };
 
