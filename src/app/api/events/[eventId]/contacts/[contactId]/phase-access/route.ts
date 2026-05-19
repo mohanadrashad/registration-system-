@@ -11,15 +11,16 @@ import { setPhaseAccessSchema } from "@/lib/validations/phase";
 // Look up the registration for this (event, contact) pair. The override
 // is keyed by registration, but the dashboard navigates by contact, so
 // we resolve it here and reject if there's no registration to override.
-async function resolveRegistrationId(
+async function resolveRegistration(
   eventId: string,
   contactId: string
-): Promise<string | null> {
+): Promise<{ id: string; category: string | null } | null> {
   const reg = await prisma.registration.findFirst({
     where: { eventId, contactId },
-    select: { id: true },
+    select: { id: true, contact: { select: { category: true } } },
   });
-  return reg?.id ?? null;
+  if (!reg) return null;
+  return { id: reg.id, category: reg.contact.category };
 }
 
 export async function GET(
@@ -30,14 +31,18 @@ export async function GET(
   const auth = await authorizeEvent(eventId);
   if (auth instanceof NextResponse) return auth;
 
-  const registrationId = await resolveRegistrationId(eventId, contactId);
-  if (!registrationId) {
+  const registration = await resolveRegistration(eventId, contactId);
+  if (!registration) {
     // No registration yet → no phases to override. Return an empty list
     // rather than 404 so the UI can render "no phases" state cleanly.
     return NextResponse.json({ phases: [] });
   }
 
-  const phases = await listPhaseAccessForRegistration(eventId, registrationId);
+  const phases = await listPhaseAccessForRegistration(
+    eventId,
+    registration.id,
+    registration.category
+  );
   return NextResponse.json({ phases });
 }
 
@@ -49,10 +54,11 @@ export async function PUT(
   const auth = await authorizeEvent(eventId, { role: "editor" });
   if (auth instanceof NextResponse) return auth;
 
-  const registrationId = await resolveRegistrationId(eventId, contactId);
-  if (!registrationId) {
+  const registration = await resolveRegistration(eventId, contactId);
+  if (!registration) {
     return apiError("Attendee has no registration to override.", 400);
   }
+  const registrationId = registration.id;
 
   const body = await req.json();
   const parsed = setPhaseAccessSchema.safeParse(body);
@@ -89,6 +95,10 @@ export async function PUT(
     );
   }
 
-  const phases = await listPhaseAccessForRegistration(eventId, registrationId);
+  const phases = await listPhaseAccessForRegistration(
+    eventId,
+    registrationId,
+    registration.category
+  );
   return NextResponse.json({ phases });
 }

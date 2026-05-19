@@ -269,6 +269,7 @@ export default function AttendeeDetailPage() {
             contactId={contactId}
             canEdit={userCanEdit}
             hasRegistration={!!contact.registration}
+            attendeeCategory={contact.category}
           />
         </div>
 

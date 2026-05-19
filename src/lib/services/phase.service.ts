@@ -413,7 +413,8 @@ export async function deleteStep(stepId: string): Promise<void> {
  */
 export async function listPhaseAccessForRegistration(
   eventId: string,
-  registrationId: string
+  registrationId: string,
+  attendeeCategory: string | null
 ) {
   const phases = await prisma.phase.findMany({
     where: { eventId, type: "POST_REGISTRATION" },
@@ -425,6 +426,7 @@ export async function listPhaseAccessForRegistration(
       opensAt: true,
       closesAt: true,
       isRequired: true,
+      appliesToCategories: true,
       accessOverrides: {
         where: { registrationId },
         select: {
@@ -438,7 +440,20 @@ export async function listPhaseAccessForRegistration(
   });
 
   const now = new Date();
-  return phases.map((p) => {
+  return phases
+    // Stage 2: per-category visibility. A PhaseAccess override (OPEN or
+    // LOCKED) is an explicit per-attendee admin decision and wins over
+    // the category filter (open Q5 default).
+    .filter((p) => {
+      const ov = p.accessOverrides[0]?.status ?? null;
+      if (ov === "OPEN" || ov === "LOCKED") return true;
+      return (
+        p.appliesToCategories.length === 0 ||
+        (attendeeCategory != null &&
+          p.appliesToCategories.includes(attendeeCategory))
+      );
+    })
+    .map((p) => {
     const override = p.accessOverrides[0] ?? null;
     return {
       id: p.id,

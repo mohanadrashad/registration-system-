@@ -21,13 +21,19 @@ export async function GET(
   // submissions to show; return an empty list so the UI can hide the card.
   const registration = await prisma.registration.findFirst({
     where: { eventId, contactId },
-    select: { id: true },
+    select: { id: true, contact: { select: { category: true } } },
   });
 
   const phases = await prisma.phase.findMany({
     where: { eventId, type: "POST_REGISTRATION", isActive: true },
     orderBy: { order: "asc" },
     include: {
+      accessOverrides: registration
+        ? {
+            where: { registrationId: registration.id },
+            select: { status: true },
+          }
+        : false,
       steps: {
         orderBy: { order: "asc" },
         include: {
@@ -54,7 +60,27 @@ export async function GET(
     },
   });
 
-  const result = phases.map((p) => {
+  // Stage 2: per-category visibility. M = every active POST_REG phase;
+  // a phase is visible to this attendee iff it is unrestricted, lists
+  // the attendee's category, or carries a PhaseAccess override (OPEN or
+  // LOCKED) — an explicit per-attendee admin decision that wins over
+  // the category filter (open Q5 default).
+  const totalPostRegPhases = phases.length;
+  const attendeeCategory = registration?.contact?.category ?? null;
+  const visiblePhases = phases.filter((p) => {
+    const override = registration
+      ? (p as { accessOverrides?: { status: string }[] }).accessOverrides?.[0]
+          ?.status ?? null
+      : null;
+    if (override === "OPEN" || override === "LOCKED") return true;
+    return (
+      p.appliesToCategories.length === 0 ||
+      (attendeeCategory != null &&
+        p.appliesToCategories.includes(attendeeCategory))
+    );
+  });
+
+  const result = visiblePhases.map((p) => {
     const sub = registration && p.submissions.length > 0 ? p.submissions[0] : undefined;
     return {
       id: p.id,
@@ -72,5 +98,5 @@ export async function GET(
     };
   });
 
-  return NextResponse.json({ phases: result });
+  return NextResponse.json({ phases: result, totalPostRegPhases });
 }
