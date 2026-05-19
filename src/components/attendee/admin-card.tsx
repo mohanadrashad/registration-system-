@@ -5,7 +5,6 @@ import { Check, Copy, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -19,6 +18,10 @@ import {
   type ContactStatus,
   deriveSource,
 } from "./field-display";
+
+// Radix Select can't use "" as an item value; this sentinel maps to a
+// cleared (null) category.
+const NONE_VALUE = "__none__";
 
 function fmtDate(d: string) {
   return new Date(d).toLocaleDateString("en-US", {
@@ -79,11 +82,17 @@ export function AdminCard({
             <div className="space-y-1.5">
               <Label>Category</Label>
               {contact.event.categories.length > 0 ? (
-                <Select value={editCategory} onValueChange={setEditCategory}>
+                <Select
+                  value={editCategory === "" ? NONE_VALUE : editCategory}
+                  onValueChange={(v) =>
+                    setEditCategory(v === NONE_VALUE ? "" : v)
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={NONE_VALUE}>None</SelectItem>
                     {contact.event.categories.map((cat) => (
                       <SelectItem key={cat} value={cat}>
                         {cat}
@@ -92,10 +101,19 @@ export function AdminCard({
                   </SelectContent>
                 </Select>
               ) : (
-                <Input
-                  value={editCategory}
-                  onChange={(e) => setEditCategory(e.target.value)}
-                />
+                <>
+                  {/* No free-text fallback. Category is a constrained
+                      value — when the event has no categories defined
+                      there is nothing valid to pick. */}
+                  <Select disabled value={NONE_VALUE}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="No categories defined" />
+                    </SelectTrigger>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Define categories in event settings first.
+                  </p>
+                </>
               )}
             </div>
             <div className="space-y-1.5">

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { getRole, canEdit } from "@/lib/permissions";
+import { validateCategoryForEvent } from "@/lib/validations/contact";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { nanoid } from "nanoid";
@@ -42,19 +43,72 @@ export async function POST(
     return NextResponse.json({ error: "Unsupported file format. Use CSV or Excel." }, { status: 400 });
   }
 
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    select: { categories: true },
+  });
+  if (!event) {
+    return NextResponse.json({ error: "Event not found" }, { status: 404 });
+  }
+
   const importBatch = nanoid(10);
   let created = 0;
   let skipped = 0;
   const errors: string[] = [];
 
-  for (const row of rows) {
-    const firstName = row[mappings.firstName || "firstName"] || row["First Name"] || row["first_name"] || "";
-    const lastName = row[mappings.lastName || "lastName"] || row["Last Name"] || row["last_name"] || "";
-    const email = row[mappings.email || "email"] || row["Email"] || row["email"] || "";
-    const phone = row[mappings.phone || "phone"] || row["Phone"] || row["phone"] || "";
-    const organization = row[mappings.organization || "organization"] || row["Organization"] || row["Company"] || "";
-    const designation = row[mappings.designation || "designation"] || row["Designation"] || row["Title"] || "";
-    const category = defaultCategory || row[mappings.category || "category"] || row["Category"] || row["Type"] || "";
+  // Resolve every cell up front so the category pre-validation pass and
+  // the create pass agree on exactly the same values.
+  const resolved = rows.map((row) => ({
+    row,
+    firstName: row[mappings.firstName || "firstName"] || row["First Name"] || row["first_name"] || "",
+    lastName: row[mappings.lastName || "lastName"] || row["Last Name"] || row["last_name"] || "",
+    email: row[mappings.email || "email"] || row["Email"] || row["email"] || "",
+    phone: row[mappings.phone || "phone"] || row["Phone"] || row["phone"] || "",
+    organization: row[mappings.organization || "organization"] || row["Organization"] || row["Company"] || "",
+    designation: row[mappings.designation || "designation"] || row["Designation"] || row["Title"] || "",
+    rawCategory: defaultCategory || row[mappings.category || "category"] || row["Category"] || row["Type"] || "",
+  }));
+
+  // ── Pass 1: category pre-validation. Whole-file failure on ANY
+  // invalid category — nothing is written. Empty string coerces to
+  // null (consistent with the create/update paths and the spec's
+  // Behavior section); only a non-empty value absent from
+  // Event.categories is an error. Soft-skip conditions (missing
+  // email/name, duplicates) are NOT evaluated here — they stay
+  // per-row in pass 2 exactly as before.
+  const categoryErrors: string[] = [];
+  const normalizedCategories: (string | null)[] = [];
+  resolved.forEach((r, i) => {
+    const check = validateCategoryForEvent(r.rawCategory, event.categories);
+    if (!check.ok) {
+      // 1-based data-row number (excludes the header line).
+      categoryErrors.push(
+        `Row ${i + 1}: category '${r.rawCategory.trim()}' not in event categories.`
+      );
+      normalizedCategories.push(null);
+    } else {
+      normalizedCategories.push(check.value ?? null);
+    }
+  });
+
+  if (categoryErrors.length > 0) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "Import aborted — fix the category values below and re-upload. Nothing was imported.",
+        errors: categoryErrors,
+      },
+      { status: 400 }
+    );
+  }
+
+  // ── Pass 2: create loop. Unchanged soft-skip behaviour — missing
+  // email/first name and duplicate emails skip the row and the rest
+  // still commit.
+  for (let i = 0; i < resolved.length; i++) {
+    const { row, firstName, lastName, email, phone, organization, designation } =
+      resolved[i];
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email || !firstName || !emailRegex.test(email.trim())) {
@@ -72,7 +126,7 @@ export async function POST(
           phone: phone?.trim() || null,
           organization: organization?.trim() || null,
           designation: designation?.trim() || null,
-          category: category?.trim() || null,
+          category: normalizedCategories[i],
           inviteToken: randomBytes(16).toString("hex"),
           importBatch,
           metadata: row,

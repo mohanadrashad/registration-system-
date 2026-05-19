@@ -100,17 +100,50 @@ export const contactService = {
     });
   },
 
-  async getCategories(eventId: string) {
-    const result = await prisma.contact.groupBy({
+  /**
+   * Canonical category list for an event. The source of truth is
+   * `Event.categories` (not whatever happens to be on Contact rows),
+   * returned in the admin-defined order, each with its live row count
+   * joined from a single groupBy. A trailing `{ category: null }` entry
+   * is the "Uncategorized" bucket: contacts with no category, plus any
+   * stray value not in `Event.categories` (which shouldn't exist once
+   * enforcement is on, but is folded in defensively rather than shown
+   * as a rogue tab).
+   */
+  async getCategories(
+    eventId: string
+  ): Promise<{ category: string | null; count: number }[]> {
+    const event = await prisma.event.findUnique({
+      where: { id: eventId },
+      select: { categories: true },
+    });
+    const defined = event?.categories ?? [];
+
+    const grouped = await prisma.contact.groupBy({
       by: ["category"],
-      where: { eventId, category: { not: null } },
+      where: { eventId },
       _count: true,
     });
+    const countByCategory = new Map<string | null, number>();
+    for (const g of grouped) countByCategory.set(g.category, g._count);
 
-    return result.map((r) => ({
-      category: r.category,
-      count: r._count,
-    }));
+    const definedSet = new Set(defined);
+    const list: { category: string | null; count: number }[] = defined.map(
+      (category) => ({
+        category,
+        count: countByCategory.get(category) ?? 0,
+      })
+    );
+
+    let uncategorized = countByCategory.get(null) ?? 0;
+    for (const [category, count] of countByCategory) {
+      if (category !== null && !definedSet.has(category)) {
+        uncategorized += count;
+      }
+    }
+    list.push({ category: null, count: uncategorized });
+
+    return list;
   },
 
   async getStatusCounts(eventId: string) {

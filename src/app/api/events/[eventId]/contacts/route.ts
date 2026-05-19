@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { createContactSchema } from "@/lib/validations/contact";
+import {
+  createContactSchema,
+  validateCategoryForEvent,
+} from "@/lib/validations/contact";
 import { randomBytes } from "crypto";
 import { getRole, canEdit } from "@/lib/permissions";
+import { contactService } from "@/lib/services/contact.service";
 
 export async function GET(
   req: NextRequest,
@@ -50,12 +54,35 @@ export async function GET(
         orderBy: [{ category: "asc" }, { createdAt: "desc" }],
       });
 
-      const groups: Record<string, typeof contacts> = {};
+      // Canonical, ordered category spine from Event.categories (via
+      // the service) — not derived from whatever is on Contact rows.
+      // Defined categories always appear (even with zero matches under
+      // the active search/status filter); any stray or null category
+      // folds into the trailing "Uncategorized" tab.
+      const spine = await contactService.getCategories(eventId);
+      const UNCAT = "Uncategorized";
+      const definedSet = new Set(
+        spine
+          .map((s) => s.category)
+          .filter((c): c is string => c !== null)
+      );
+
+      const buckets = new Map<string, typeof contacts>();
       for (const contact of contacts) {
-        const key = contact.category || "Uncategorized";
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(contact);
+        const key =
+          contact.category && definedSet.has(contact.category)
+            ? contact.category
+            : UNCAT;
+        const list = buckets.get(key);
+        if (list) list.push(contact);
+        else buckets.set(key, [contact]);
       }
+
+      const groups = spine.map(({ category }) => {
+        const key = category ?? UNCAT;
+        const items = buckets.get(key) ?? [];
+        return { category: key, count: items.length, contacts: items };
+      });
 
       const statusCounts = {
         IMPORTED: 0,
@@ -68,11 +95,7 @@ export async function GET(
       }
 
       return NextResponse.json({
-        groups: Object.entries(groups).map(([cat, items]) => ({
-          category: cat,
-          count: items.length,
-          contacts: items,
-        })),
+        groups,
         statusCounts,
         total: contacts.length,
       });
@@ -119,10 +142,27 @@ export async function POST(
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
   }
 
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    select: { categories: true },
+  });
+  if (!event) {
+    return NextResponse.json({ error: "Event not found" }, { status: 404 });
+  }
+
+  const categoryCheck = validateCategoryForEvent(
+    result.data.category,
+    event.categories
+  );
+  if (!categoryCheck.ok) {
+    return NextResponse.json({ error: categoryCheck.error }, { status: 400 });
+  }
+
   const { metadata, ...rest } = result.data;
   const contact = await prisma.contact.create({
     data: {
       ...rest,
+      category: categoryCheck.value ?? null,
       eventId,
       inviteToken: randomBytes(16).toString("hex"),
       ...(metadata === null

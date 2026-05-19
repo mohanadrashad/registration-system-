@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { updateContactSchema } from "@/lib/validations/contact";
+import {
+  updateContactSchema,
+  validateCategoryForEvent,
+} from "@/lib/validations/contact";
 import { getRole, canEdit, canDelete } from "@/lib/permissions";
 
 export async function GET(
@@ -53,7 +56,7 @@ export async function PUT(
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!canEdit(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const { contactId } = await params;
+  const { eventId, contactId } = await params;
   const body = await req.json();
   const result = updateContactSchema.safeParse(body);
 
@@ -61,8 +64,29 @@ export async function PUT(
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
   }
 
-  const { metadata, ...rest } = result.data;
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    select: { categories: true },
+  });
+  if (!event) {
+    return NextResponse.json({ error: "Event not found" }, { status: 404 });
+  }
+
+  const categoryCheck = validateCategoryForEvent(
+    result.data.category,
+    event.categories
+  );
+  if (!categoryCheck.ok) {
+    return NextResponse.json({ error: categoryCheck.error }, { status: 400 });
+  }
+
+  const { metadata, category, ...rest } = result.data;
   const data: Prisma.ContactUpdateInput = { ...rest };
+  // Only write category when the field was present in the payload;
+  // an omitted field must not clear an existing category.
+  if (category !== undefined) {
+    data.category = categoryCheck.value ?? null;
+  }
   if (metadata !== undefined) {
     data.metadata = metadata === null ? Prisma.DbNull : (metadata as Prisma.InputJsonValue);
   }
