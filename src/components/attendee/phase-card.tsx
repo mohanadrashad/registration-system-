@@ -104,7 +104,7 @@ export function PhaseCard({
   return (
     <div className="rounded-lg border bg-card">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3 px-4 py-3 border-b">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 px-4 py-3 border-b">
         <div className="flex items-center gap-2 min-w-0">
           <ClipboardList className="h-4 w-4 shrink-0 text-muted-foreground" />
           <p className="font-medium text-sm truncate">{phase.title}</p>
@@ -171,7 +171,7 @@ function SubmissionRow({ phase }: { phase: MergedPhase }) {
 
   return (
     <div className="px-4 py-3">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">
             Submission
@@ -369,7 +369,7 @@ function SelectionRow({
 
   return (
     <div className="px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">
             Selection
@@ -583,7 +583,7 @@ function ReceiptRow({
 
   return (
     <div className="px-4 py-3">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">
             Receipt
@@ -682,7 +682,7 @@ function AccessRow({
 
   return (
     <div className="px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">
             Access
@@ -708,7 +708,7 @@ function AccessRow({
           </div>
         </div>
         {canEdit && (
-          <div className="flex flex-wrap gap-1.5 shrink-0 justify-end">
+          <div className="flex flex-wrap gap-1.5 shrink-0 justify-start sm:justify-end">
             {a.override !== null && (
               <Button
                 variant="outline"

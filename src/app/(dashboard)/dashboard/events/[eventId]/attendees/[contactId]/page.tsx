@@ -171,7 +171,7 @@ export default function AttendeeDetailPage() {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-start gap-3 min-w-0 flex-1">
           <Link href={`/dashboard/events/${eventId}/attendees`}>
             <Button variant="ghost" size="sm">
               <ArrowLeft className="mr-2 h-4 w-4" />
@@ -182,23 +182,24 @@ export default function AttendeeDetailPage() {
             {initialsFor(displayName.primary)}
           </div>
           <div className="min-w-0">
-            <h1 className="text-xl font-bold truncate">{displayName.primary}</h1>
+            <h1 className="text-xl font-bold break-words">{displayName.primary}</h1>
             {displayName.secondary && (
-              <p className="text-sm text-muted-foreground truncate">
+              <p className="text-sm text-muted-foreground break-words">
                 {displayName.secondary}
               </p>
             )}
+            {/* Badges sit on their own line so a long name is never
+                squeezed/truncated by them at narrow widths. */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <Badge variant={statusCfg?.variant || "secondary"}>
+                {statusCfg?.label || contact.status}
+              </Badge>
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                <Tag className="h-3 w-3" />
+                {contact.category || "Uncategorized"}
+              </span>
+            </div>
           </div>
-          <Badge
-            variant={statusCfg?.variant || "secondary"}
-            className="ml-1 shrink-0"
-          >
-            {statusCfg?.label || contact.status}
-          </Badge>
-          <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground shrink-0">
-            <Tag className="h-3 w-3" />
-            {contact.category || "Uncategorized"}
-          </span>
         </div>
         {userCanEdit && (
           <div className="flex items-center gap-2">
