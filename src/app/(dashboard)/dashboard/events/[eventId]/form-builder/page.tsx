@@ -27,8 +27,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
   Plus,
@@ -57,6 +59,7 @@ import {
   FileText,
   ArrowRightLeft,
   Lock,
+  X,
 } from "lucide-react";
 import { FieldType, FieldWidth, PhaseType } from "@prisma/client";
 import type { PhaseSelectionMode } from "@prisma/client";
@@ -122,6 +125,9 @@ interface Phase {
   maxSelections: number;
   allowChangeAfterSubmit: boolean;
   requiresReceiptUpload: boolean;
+  // Stage 2 (category phases): empty = visible to everyone; non-empty
+  // = only attendees whose category is in this list.
+  appliesToCategories: string[];
   // Concurrency token for the phase row. Used by the Options panel as
   // expectedUpdatedAt on its phase-level PATCH calls.
   updatedAt: string;
@@ -359,6 +365,7 @@ function ConditionalEditor({
 function PhaseSettingsCard({
   phase,
   eventId,
+  eventCategories,
   multiLanguageEnabled,
   emailTemplates,
   onUpdate,
@@ -366,6 +373,7 @@ function PhaseSettingsCard({
 }: {
   phase: Phase;
   eventId: string;
+  eventCategories: string[];
   multiLanguageEnabled: boolean;
   emailTemplates: EmailTemplateOption[];
   onUpdate: (patch: Partial<Phase>) => void;
@@ -383,6 +391,10 @@ function PhaseSettingsCard({
   const [reminderTemplateId, setReminderTemplateId] = useState(
     phase.reminderTemplateId ?? "__none__"
   );
+  const [appliesTo, setAppliesTo] = useState<string[]>(
+    phase.appliesToCategories ?? []
+  );
+  const appliesToKey = (phase.appliesToCategories ?? []).join("");
 
   // Reset local state when the selected phase changes.
   useEffect(() => {
@@ -394,7 +406,15 @@ function PhaseSettingsCard({
     setClosesAt(toDateTimeLocal(phase.closesAt));
     setIsRequired(phase.isRequired);
     setReminderTemplateId(phase.reminderTemplateId ?? "__none__");
-  }, [phase.id, phase.title, phase.titleAr, phase.description, phase.descriptionAr, phase.opensAt, phase.closesAt, phase.isRequired, phase.reminderTemplateId]);
+    setAppliesTo(phase.appliesToCategories ?? []);
+  }, [phase.id, phase.title, phase.titleAr, phase.description, phase.descriptionAr, phase.opensAt, phase.closesAt, phase.isRequired, phase.reminderTemplateId, appliesToKey]);
+
+  // Commit a new applies-to set: optimistic local update + PATCH.
+  function commitAppliesTo(next: string[]) {
+    setAppliesTo(next);
+    onUpdate({ appliesToCategories: next });
+  }
+  const noCategoriesDefined = eventCategories.length === 0;
 
   return (
     <Card>
@@ -402,6 +422,82 @@ function PhaseSettingsCard({
         <CardTitle className="text-lg">Phase settings · {phase.title}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Stage 2: per-category visibility. Own full-width row at the
+            top of the card (kept off the Title row so it never collides
+            with the bilingual Title EN/AR 2-col grid). */}
+        <div className="space-y-2">
+          <Label>Applies to</Label>
+          {noCategoriesDefined ? (
+            <div className="rounded-md border border-dashed p-3">
+              <p className="text-sm text-muted-foreground">
+                Define categories in event settings first.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+              {appliesTo.length === 0 ? (
+                <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                  All categories
+                </span>
+              ) : (
+                appliesTo.map((cat) => (
+                  <span
+                    key={cat}
+                    className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
+                    style={{ backgroundColor: "#EEEDFE", color: "#3C3489" }}
+                  >
+                    {cat}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${cat}`}
+                      className="hover:opacity-70"
+                      onClick={() =>
+                        commitAppliesTo(appliesTo.filter((c) => c !== cat))
+                      }
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="outline" size="sm" className="h-7">
+                    <Plus className="mr-1 h-3 w-3" />
+                    {appliesTo.length === 0 ? "Restrict" : "Add"}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {/* Defined order from Event.categories (open Q1). */}
+                  {eventCategories.map((cat) => {
+                    const checked = appliesTo.includes(cat);
+                    return (
+                      <DropdownMenuCheckboxItem
+                        key={cat}
+                        checked={checked}
+                        onSelect={(e) => e.preventDefault()}
+                        onCheckedChange={() =>
+                          commitAppliesTo(
+                            checked
+                              ? appliesTo.filter((c) => c !== cat)
+                              : [...appliesTo, cat]
+                          )
+                        }
+                      >
+                        {cat}
+                      </DropdownMenuCheckboxItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Empty = visible to every attendee. Restricting shows this phase
+            only to attendees in the selected categories.
+          </p>
+        </div>
+
         <div className={multiLanguageEnabled ? "grid grid-cols-2 gap-4" : ""}>
           <div className="space-y-2">
             <Label>Title (English)</Label>
@@ -580,6 +676,7 @@ export default function FormBuilderPage() {
   const [multiLanguageEnabled, setMultiLanguageEnabled] = useState(false);
   const [emailTemplates, setEmailTemplates] = useState<EmailTemplateOption[]>([]);
   const [eventSlug, setEventSlug] = useState<string>("");
+  const [eventCategories, setEventCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [editingField, setEditingField] = useState<FormField | null>(null);
@@ -624,6 +721,9 @@ export default function FormBuilderPage() {
       if (eventRes.ok) {
         const event = await eventRes.json();
         setEventSlug(event.slug);
+        setEventCategories(
+          Array.isArray(event.categories) ? event.categories : []
+        );
       }
       if (modulesRes.ok) {
         const modules: ModulesPayload = await modulesRes.json();
@@ -1534,6 +1634,7 @@ export default function FormBuilderPage() {
         <PhaseSettingsCard
           phase={selectedPhase}
           eventId={eventId}
+          eventCategories={eventCategories}
           multiLanguageEnabled={multiLanguageEnabled}
           emailTemplates={emailTemplates}
           onUpdate={(patch) => updatePhaseSettings(selectedPhase.id, patch)}
