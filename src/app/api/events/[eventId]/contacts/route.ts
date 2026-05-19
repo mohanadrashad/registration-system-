@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { createContactSchema } from "@/lib/validations/contact";
+import {
+  createContactSchema,
+  validateCategoryForEvent,
+} from "@/lib/validations/contact";
 import { randomBytes } from "crypto";
 import { getRole, canEdit } from "@/lib/permissions";
 
@@ -119,10 +122,27 @@ export async function POST(
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
   }
 
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    select: { categories: true },
+  });
+  if (!event) {
+    return NextResponse.json({ error: "Event not found" }, { status: 404 });
+  }
+
+  const categoryCheck = validateCategoryForEvent(
+    result.data.category,
+    event.categories
+  );
+  if (!categoryCheck.ok) {
+    return NextResponse.json({ error: categoryCheck.error }, { status: 400 });
+  }
+
   const { metadata, ...rest } = result.data;
   const contact = await prisma.contact.create({
     data: {
       ...rest,
+      category: categoryCheck.value ?? null,
       eventId,
       inviteToken: randomBytes(16).toString("hex"),
       ...(metadata === null
