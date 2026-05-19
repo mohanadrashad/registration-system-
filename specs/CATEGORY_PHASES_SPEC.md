@@ -80,15 +80,23 @@ model PhaseOption {
 
 Bilingual fields follow the existing pattern (`labelAr`, `descriptionAr`). The portal renders Arabic when the `multiLanguage` module is on.
 
-### Migration
+### Migration mechanism
 
-Single Prisma migration. Adds the new columns with safe defaults. No data backfill needed for the Phase change. One-line SQL fix for the empty-string Contact.category row:
+**This repo has no Prisma migration history** — it ships schema changes via `prisma db push` and applies data changes through committed, idempotent one-off scripts in `prisma/scripts/` run with `tsx` (e.g. `migrate-to-phase-step-model.ts`, `add-modules-to-existing-events.ts`). There is no `prisma/migrations/` directory and `prisma migrate` has never been run. The "single Prisma migration" framing in earlier drafts of this spec was incorrect; this section is the correction.
 
-```sql
-UPDATE "Contact" SET category = NULL WHERE category = '';
+Per stage, therefore:
+
+- **Schema changes** (Stage 2's `Phase.appliesToCategories`, Stage 3's `PhaseOption` receipt fields): applied via `prisma db push` against staging, then production, after a DB snapshot. The new columns have safe defaults, so existing rows are unaffected.
+- **Data changes** (Stage 1's empty-string normalization): a committed, idempotent script in `prisma/scripts/`, not an embedded migration SQL.
+
+Stage 1 has **no schema change** — only the data normalization. It ships as `prisma/scripts/normalize-empty-category.ts`:
+
+```ts
+// idempotent: UPDATE "Contact" SET category = NULL WHERE category = '';
+// logs affected row count; reads DATABASE_URL from env (staging or prod)
 ```
 
-This runs as part of the same migration. Production audit confirmed exactly one row matches this condition (test data).
+Run on staging first, verify the count, snapshot production, then run against production with the Vercel production `DATABASE_URL`. Production audit confirmed exactly one row matches this condition (test data); the script is safe to re-run (second pass affects zero rows).
 
 ---
 
