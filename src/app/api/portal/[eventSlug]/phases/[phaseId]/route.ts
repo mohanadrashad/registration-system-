@@ -5,16 +5,6 @@ import { computePhaseStatus } from "@/lib/services/phase.service";
 import { isFieldRequiredByCondition } from "@/lib/form-conditional";
 import { getPortalSessionFromRequest } from "@/lib/portal/session";
 import { submitPhasePortalSchema } from "@/lib/validations/selection";
-
-// Belt-and-braces: this route reads cookies via getPortalSessionFromRequest,
-// so Next.js should already mark it dynamic — but stating it explicitly
-// closes off every static-analysis edge case and any Vercel edge cache
-// that might serve a stale shape after a schema-shaped response change.
-// Stage 3's QA caught the new option fields missing from the response on
-// a deployment that, per file & deploy verification, should have included
-// them; force-dynamic is the no-trade-off way to rule caching out.
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
 import {
   computePhaseCompletion,
   OptionFullError,
