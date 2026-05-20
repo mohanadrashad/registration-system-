@@ -67,6 +67,7 @@ import {
   PhaseOptionsPanel,
   type PhaseOption,
 } from "./phase-options-panel";
+import { OptionsEditor } from "@/components/admin/options-editor";
 
 interface FieldOption {
   value: string;
@@ -691,8 +692,6 @@ export default function FormBuilderPage() {
     options: [] as FieldOption[],
     conditional: null as ConditionalRule | null,
   });
-  const [newOption, setNewOption] = useState({ value: "", label: "" });
-  const [editOption, setEditOption] = useState({ value: "", label: "" });
 
   // Inline rename state — null when not editing, draft string when editing.
   const [renamingPhaseId, setRenamingPhaseId] = useState<string | null>(null);
@@ -827,7 +826,6 @@ export default function FormBuilderPage() {
         options: [],
         conditional: null,
       });
-      setNewOption({ value: "", label: "" });
       toast.success("Field added");
       fetchEverything();
     } else {
@@ -1201,71 +1199,12 @@ export default function FormBuilderPage() {
               {OPTION_FIELD_TYPES.includes(newField.type) && (
                 <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
                   <Label className="text-sm font-medium">Options</Label>
-                  {newField.options.length > 0 && (
-                    <div className="space-y-2">
-                      {newField.options.map((opt, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center gap-2 text-sm bg-white rounded px-3 py-2 border"
-                        >
-                          <span className="flex-1 truncate">{opt.label}</span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => {
-                              const opts = [...newField.options];
-                              opts.splice(idx, 1);
-                              setNewField({ ...newField, options: opts });
-                            }}
-                          >
-                            <Trash2 className="h-3 w-3 text-destructive" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Type option and press Enter or +"
-                      value={newOption.label}
-                      onChange={(e) =>
-                        setNewOption({
-                          label: e.target.value,
-                          value: e.target.value
-                            .replace(/\s/g, "_")
-                            .toLowerCase(),
-                        })
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && newOption.label) {
-                          e.preventDefault();
-                          setNewField({
-                            ...newField,
-                            options: [...newField.options, { ...newOption }],
-                          });
-                          setNewOption({ value: "", label: "" });
-                        }
-                      }}
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => {
-                        if (newOption.label) {
-                          setNewField({
-                            ...newField,
-                            options: [...newField.options, { ...newOption }],
-                          });
-                          setNewOption({ value: "", label: "" });
-                        }
-                      }}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  <OptionsEditor
+                    options={newField.options}
+                    onChange={(opts) =>
+                      setNewField({ ...newField, options: opts })
+                    }
+                  />
                 </div>
               )}
 
@@ -1755,77 +1694,12 @@ export default function FormBuilderPage() {
               {OPTION_FIELD_TYPES.includes(editingField.type) && (
                 <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
                   <Label className="text-sm font-medium">Options</Label>
-                  {(editingField.options || []).length > 0 && (
-                    <div className="space-y-2">
-                      {(editingField.options || []).map((opt, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center gap-2 text-sm bg-white rounded px-3 py-2 border"
-                        >
-                          <span className="flex-1 truncate">{opt.label}</span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => {
-                              const opts = [...(editingField.options || [])];
-                              opts.splice(idx, 1);
-                              setEditingField({ ...editingField, options: opts });
-                            }}
-                          >
-                            <Trash2 className="h-3 w-3 text-destructive" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Type option and press Enter or +"
-                      value={editOption.label}
-                      onChange={(e) =>
-                        setEditOption({
-                          label: e.target.value,
-                          value: e.target.value
-                            .replace(/\s/g, "_")
-                            .toLowerCase(),
-                        })
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && editOption.label) {
-                          e.preventDefault();
-                          setEditingField({
-                            ...editingField,
-                            options: [
-                              ...(editingField.options || []),
-                              { ...editOption },
-                            ],
-                          });
-                          setEditOption({ value: "", label: "" });
-                        }
-                      }}
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => {
-                        if (editOption.label) {
-                          setEditingField({
-                            ...editingField,
-                            options: [
-                              ...(editingField.options || []),
-                              { ...editOption },
-                            ],
-                          });
-                          setEditOption({ value: "", label: "" });
-                        }
-                      }}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  <OptionsEditor
+                    options={editingField.options ?? []}
+                    onChange={(opts) =>
+                      setEditingField({ ...editingField, options: opts })
+                    }
+                  />
                 </div>
               )}
 
