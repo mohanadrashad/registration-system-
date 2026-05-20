@@ -659,6 +659,7 @@ function PhaseSettingsCard({
             options: phase.options,
           }}
           onRefetch={onRefetch}
+          multiLanguageEnabled={multiLanguageEnabled}
         />
       </CardContent>
     </Card>
