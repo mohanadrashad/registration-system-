@@ -59,6 +59,12 @@ export interface PhaseOption {
   capacity: number | null;
   metadata: Record<string, string> | null;
   requiresReceipt: boolean | null;
+  // Category-Phases stage 3: per-option receipt copy rendered above the
+  // file picker on the portal upload screen. All four optional.
+  receiptLabel: string | null;
+  receiptInstructions: string | null;
+  receiptLabelAr: string | null;
+  receiptInstructionsAr: string | null;
   isActive: boolean;
   order: number;
   // updatedAt is the optimistic-concurrency token. Kept in ISO-string form
@@ -114,6 +120,14 @@ interface PhaseOptionsPanelProps {
    * path — optimistic updates handle that.
    */
   onRefetch: () => Promise<void> | void;
+  /**
+   * Whether the event has the `multiLanguage` module on. Threaded through
+   * to OptionEditor so the new (Category-Phases stage 3) receipt-label /
+   * receipt-instructions Arabic inputs hide on monolingual events. The
+   * existing labelAr / descriptionAr inputs intentionally stay always-on
+   * — that pre-Stage-3 quirk is out of scope for this PR.
+   */
+  multiLanguageEnabled: boolean;
 }
 
 /**
@@ -134,6 +148,7 @@ export function PhaseOptionsPanel({
   eventId,
   phase,
   onRefetch,
+  multiLanguageEnabled,
 }: PhaseOptionsPanelProps) {
   // ── Local optimistic state. Source of truth for the rendered UI. ──
   const [localPhase, setLocalPhase] = useState(() => extractPhaseState(phase));
@@ -455,6 +470,10 @@ export function PhaseOptionsPanel({
       capacity: null,
       metadata: null,
       requiresReceipt: null,
+      receiptLabel: null,
+      receiptInstructions: null,
+      receiptLabelAr: null,
+      receiptInstructionsAr: null,
       isActive: true,
       order: localOptions.length,
       updatedAt: new Date().toISOString(),
@@ -785,6 +804,7 @@ export function PhaseOptionsPanel({
                     isPending={pendingOptions.has(option.id)}
                     error={errorOptions[option.id] ?? null}
                     phaseRequiresReceipt={localPhase.requiresReceiptUpload}
+                    multiLanguageEnabled={multiLanguageEnabled}
                     onToggleEdit={() =>
                       setEditingOptionId((current) =>
                         current === option.id ? null : option.id
@@ -860,6 +880,7 @@ interface OptionRowProps {
   isPending: boolean;
   error: string | null;
   phaseRequiresReceipt: boolean;
+  multiLanguageEnabled: boolean;
   onToggleEdit: () => void;
   onMove: (direction: "up" | "down") => void;
   onDelete: () => void;
@@ -878,6 +899,7 @@ function OptionRow({
   isPending,
   error,
   phaseRequiresReceipt,
+  multiLanguageEnabled,
   onToggleEdit,
   onMove,
   onDelete,
@@ -1001,6 +1023,7 @@ function OptionRow({
           option={option}
           isPending={isPending}
           phaseRequiresReceipt={phaseRequiresReceipt}
+          multiLanguageEnabled={multiLanguageEnabled}
           onPatch={onPatch}
           onDelete={onDelete}
         />
@@ -1016,6 +1039,7 @@ interface OptionEditorProps {
   option: PhaseOption;
   isPending: boolean;
   phaseRequiresReceipt: boolean;
+  multiLanguageEnabled: boolean;
   onPatch: (
     patch: Partial<PhaseOption>,
     optimistic: Partial<PhaseOption>
@@ -1027,6 +1051,7 @@ function OptionEditor({
   option,
   isPending,
   phaseRequiresReceipt,
+  multiLanguageEnabled,
   onPatch,
   onDelete,
 }: OptionEditorProps) {
@@ -1040,6 +1065,17 @@ function OptionEditor({
   const [capacity, setCapacity] = useState(
     option.capacity == null ? "" : String(option.capacity)
   );
+  // Category-Phases stage 3 — per-option receipt copy drafts.
+  const [receiptLabel, setReceiptLabel] = useState(option.receiptLabel ?? "");
+  const [receiptInstructions, setReceiptInstructions] = useState(
+    option.receiptInstructions ?? ""
+  );
+  const [receiptLabelAr, setReceiptLabelAr] = useState(
+    option.receiptLabelAr ?? ""
+  );
+  const [receiptInstructionsAr, setReceiptInstructionsAr] = useState(
+    option.receiptInstructionsAr ?? ""
+  );
 
   // Re-sync drafts only when the option identity changes (open editor on a
   // different row). We deliberately don't re-sync on every prop change so a
@@ -1052,6 +1088,10 @@ function OptionEditor({
     setDescriptionAr(option.descriptionAr ?? "");
     setExternalUrl(option.externalUrl ?? "");
     setCapacity(option.capacity == null ? "" : String(option.capacity));
+    setReceiptLabel(option.receiptLabel ?? "");
+    setReceiptInstructions(option.receiptInstructions ?? "");
+    setReceiptLabelAr(option.receiptLabelAr ?? "");
+    setReceiptInstructionsAr(option.receiptInstructionsAr ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [option.id]);
 
@@ -1271,6 +1311,121 @@ function OptionEditor({
           </RadioGroup>
         </div>
       </div>
+
+      {/* Category-Phases stage 3 — Receipt label & instructions.
+          Visibility (Decision A1, "effective requirement"):
+            • requiresReceipt === true                                → show
+            • requiresReceipt === null AND phase default is true      → show
+            • everything else (false, or inherit-off-by-phase)        → hide
+          Hidden inputs keep their drafts so a stray toggle off-then-on
+          doesn't wipe the user's typing. The AR siblings additionally
+          gate on multiLanguageEnabled (Decision B1). */}
+      {(option.requiresReceipt === true ||
+        (option.requiresReceipt === null && phaseRequiresReceipt)) && (
+        <div className="space-y-4 rounded-md border bg-background p-3">
+          <div>
+            <Label className="font-medium">Receipt context</Label>
+            <p className="text-xs text-muted-foreground">
+              Shown above the file picker on the portal upload screen. Leave
+              both fields blank to render the upload control with no extra
+              copy.
+            </p>
+          </div>
+
+          <div
+            className={multiLanguageEnabled ? "grid gap-4 sm:grid-cols-2" : ""}
+          >
+            <div className="space-y-2">
+              <Label htmlFor={`receipt-label-${option.id}`}>
+                Receipt label (English)
+              </Label>
+              <Input
+                id={`receipt-label-${option.id}`}
+                placeholder="e.g. Flight ticket"
+                value={receiptLabel}
+                onChange={(e) => setReceiptLabel(e.target.value)}
+                onBlur={() => {
+                  const next = receiptLabel.trim() || null;
+                  if (next !== (option.receiptLabel ?? null)) {
+                    onPatch({ receiptLabel: next }, { receiptLabel: next });
+                  }
+                }}
+              />
+            </div>
+            {multiLanguageEnabled && (
+              <div className="space-y-2">
+                <Label htmlFor={`receipt-label-ar-${option.id}`}>
+                  Receipt label (Arabic)
+                </Label>
+                <Input
+                  id={`receipt-label-ar-${option.id}`}
+                  dir="rtl"
+                  value={receiptLabelAr}
+                  onChange={(e) => setReceiptLabelAr(e.target.value)}
+                  onBlur={() => {
+                    const next = receiptLabelAr.trim() || null;
+                    if (next !== (option.receiptLabelAr ?? null)) {
+                      onPatch(
+                        { receiptLabelAr: next },
+                        { receiptLabelAr: next }
+                      );
+                    }
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          <div
+            className={multiLanguageEnabled ? "grid gap-4 sm:grid-cols-2" : ""}
+          >
+            <div className="space-y-2">
+              <Label htmlFor={`receipt-instructions-${option.id}`}>
+                Receipt instructions (English)
+              </Label>
+              <Textarea
+                id={`receipt-instructions-${option.id}`}
+                rows={3}
+                placeholder="e.g. Upload a PDF or photo of your flight confirmation showing arrival date in Riyadh."
+                value={receiptInstructions}
+                onChange={(e) => setReceiptInstructions(e.target.value)}
+                onBlur={() => {
+                  const next = receiptInstructions.trim() || null;
+                  if (next !== (option.receiptInstructions ?? null)) {
+                    onPatch(
+                      { receiptInstructions: next },
+                      { receiptInstructions: next }
+                    );
+                  }
+                }}
+              />
+            </div>
+            {multiLanguageEnabled && (
+              <div className="space-y-2">
+                <Label htmlFor={`receipt-instructions-ar-${option.id}`}>
+                  Receipt instructions (Arabic)
+                </Label>
+                <Textarea
+                  id={`receipt-instructions-ar-${option.id}`}
+                  dir="rtl"
+                  rows={3}
+                  value={receiptInstructionsAr}
+                  onChange={(e) => setReceiptInstructionsAr(e.target.value)}
+                  onBlur={() => {
+                    const next = receiptInstructionsAr.trim() || null;
+                    if (next !== (option.receiptInstructionsAr ?? null)) {
+                      onPatch(
+                        { receiptInstructionsAr: next },
+                        { receiptInstructionsAr: next }
+                      );
+                    }
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">

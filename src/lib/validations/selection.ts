@@ -94,6 +94,14 @@ export const createOptionSchema = z.object({
   capacity: optionalCapacity,
   metadata: optionMetadata,
   requiresReceipt: optionalRequiresReceipt,
+  // Category-Phases stage 3: per-option receipt copy. All four are
+  // optional nullable strings; the admin editor sends `null` on empty
+  // input via its onBlur handlers. Instructions have no length cap by
+  // design (open question #4 of CATEGORY_PHASES_SPEC).
+  receiptLabel: optionalNullableString,
+  receiptInstructions: optionalNullableString,
+  receiptLabelAr: optionalNullableString,
+  receiptInstructionsAr: optionalNullableString,
   isActive: z.boolean().optional(),
 });
 

@@ -39,6 +39,14 @@ export interface PortalPhaseOption {
   capacity: number | null;
   metadata: Record<string, string> | null;
   requiresReceipt: boolean | null;
+  // Category-Phases stage 3 — per-option receipt copy. Rendered above
+  // the file picker on the ReceiptUploadControl when present. When all
+  // four are null (or all four in the active language are null) the
+  // control renders unchanged.
+  receiptLabel: string | null;
+  receiptInstructions: string | null;
+  receiptLabelAr: string | null;
+  receiptInstructionsAr: string | null;
   isActive: boolean;
   order: number;
   taken: number;
@@ -490,6 +498,10 @@ function SubmittedSelectionCard({
                         allowReplace={canChange}
                         required={!!effectiveRequiresReceipt}
                         lang={lang}
+                        receiptLabel={opt.receiptLabel}
+                        receiptInstructions={opt.receiptInstructions}
+                        receiptLabelAr={opt.receiptLabelAr}
+                        receiptInstructionsAr={opt.receiptInstructionsAr}
                         onUploaded={onReceiptChange}
                         onDeleted={onReceiptChange}
                       />
@@ -604,6 +616,10 @@ function ExternalBookingCard({
                   allowReplace={allowChangeAfterSubmit}
                   required
                   lang={lang}
+                  receiptLabel={pickedOption.receiptLabel}
+                  receiptInstructions={pickedOption.receiptInstructions}
+                  receiptLabelAr={pickedOption.receiptLabelAr}
+                  receiptInstructionsAr={pickedOption.receiptInstructionsAr}
                   onUploaded={onReceiptChange}
                   onDeleted={onReceiptChange}
                 />
@@ -704,18 +720,30 @@ function ExternalBookingCard({
           // Dropdown chose an option → show the upload control bound
           // to that option. The control's success path creates the
           // selection AND links the receipt in one server transaction
-          // (see writeReceiptIdempotent).
-          <ReceiptUploadControl
-            eventSlug={eventSlug}
-            phaseId={phaseId}
-            optionId={pendingOptionId}
-            existingReceipt={null}
-            allowReplace={false}
-            required
-            lang={lang}
-            onUploaded={onReceiptChange}
-            onDeleted={onReceiptChange}
-          />
+          // (see writeReceiptIdempotent). Look up the option so we can
+          // pass its receipt copy through.
+          (() => {
+            const pendingOpt = optById.get(pendingOptionId);
+            return (
+              <ReceiptUploadControl
+                eventSlug={eventSlug}
+                phaseId={phaseId}
+                optionId={pendingOptionId}
+                existingReceipt={null}
+                allowReplace={false}
+                required
+                lang={lang}
+                receiptLabel={pendingOpt?.receiptLabel ?? null}
+                receiptInstructions={pendingOpt?.receiptInstructions ?? null}
+                receiptLabelAr={pendingOpt?.receiptLabelAr ?? null}
+                receiptInstructionsAr={
+                  pendingOpt?.receiptInstructionsAr ?? null
+                }
+                onUploaded={onReceiptChange}
+                onDeleted={onReceiptChange}
+              />
+            );
+          })()
         ) : (
           // No option picked yet — show the disabled CTA placeholder
           // so the layout doesn't jump when the user picks one.

@@ -22,6 +22,12 @@ export type OptionInput = {
   // 3-state: true = always require receipt for this option, false = never,
   // null = inherit from Phase.requiresReceiptUpload, undefined = leave alone.
   requiresReceipt?: boolean | null;
+  // Category-Phases stage 3 — per-option receipt copy. All four nullable.
+  // `undefined` means "leave alone" on PATCH; explicit `null` clears.
+  receiptLabel?: string | null;
+  receiptInstructions?: string | null;
+  receiptLabelAr?: string | null;
+  receiptInstructionsAr?: string | null;
   isActive?: boolean;
 };
 
@@ -60,6 +66,10 @@ export async function createOption(
       // Prisma requires `JsonNull` rather than `null` for nullable Json columns.
       metadata: metadata ?? Prisma.JsonNull,
       requiresReceipt: input.requiresReceipt ?? null,
+      receiptLabel: input.receiptLabel ?? null,
+      receiptInstructions: input.receiptInstructions ?? null,
+      receiptLabelAr: input.receiptLabelAr ?? null,
+      receiptInstructionsAr: input.receiptInstructionsAr ?? null,
       isActive: input.isActive ?? true,
       order,
     },
@@ -91,6 +101,18 @@ export async function updateOption(
     }),
     ...(input.requiresReceipt !== undefined && {
       requiresReceipt: input.requiresReceipt,
+    }),
+    ...(input.receiptLabel !== undefined && {
+      receiptLabel: input.receiptLabel,
+    }),
+    ...(input.receiptInstructions !== undefined && {
+      receiptInstructions: input.receiptInstructions,
+    }),
+    ...(input.receiptLabelAr !== undefined && {
+      receiptLabelAr: input.receiptLabelAr,
+    }),
+    ...(input.receiptInstructionsAr !== undefined && {
+      receiptInstructionsAr: input.receiptInstructionsAr,
     }),
     ...(input.isActive !== undefined && { isActive: input.isActive }),
   };

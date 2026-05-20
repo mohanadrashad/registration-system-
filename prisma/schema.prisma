@@ -816,6 +816,16 @@ model PhaseOption {
   metadata        Json? // free-form: { price, address, checkIn, ... }
   requiresReceipt Boolean? // null = inherit from Phase.requiresReceiptUpload
 
+  // Stage 3 — per-option receipt copy. Rendered above the file picker on
+  // the portal upload screen when the option requires a receipt. All four
+  // are nullable; when both EN fields are null the upload control renders
+  // unchanged. The Ar siblings follow the existing bilingual pattern and
+  // are surfaced when the event's multiLanguage module is on.
+  receiptLabel          String?
+  receiptInstructions   String? @db.Text
+  receiptLabelAr        String?
+  receiptInstructionsAr String? @db.Text
+
   order    Int     @default(0)
   isActive Boolean @default(true)
 
@@ -872,7 +882,7 @@ model PhaseReceipt {
   // webhook up to 5 times if it doesn't get a 200, and the addRandomSuffix
   // pathname is deterministic per upload — so two retries for the same blob
   // hit the unique constraint and the second one no-ops cleanly.
-  blobPath     String   @unique
+  blobPath     String @unique
   mimeType     String
   sizeBytes    Int
   originalName String // for display ("flight-ticket.pdf")

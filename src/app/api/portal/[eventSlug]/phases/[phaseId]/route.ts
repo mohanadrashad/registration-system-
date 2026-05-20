@@ -128,6 +128,12 @@ async function loadAuthorizedContext(
           capacity: true,
           metadata: true,
           requiresReceipt: true,
+          // Category-Phases stage 3 — per-option receipt copy. Rendered
+          // above the file picker on the upload control when present.
+          receiptLabel: true,
+          receiptInstructions: true,
+          receiptLabelAr: true,
+          receiptInstructionsAr: true,
           isActive: true,
           order: true,
           updatedAt: true,
@@ -244,6 +250,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         capacity: o.capacity,
         metadata: o.metadata,
         requiresReceipt: o.requiresReceipt,
+        receiptLabel: o.receiptLabel,
+        receiptInstructions: o.receiptInstructions,
+        receiptLabelAr: o.receiptLabelAr,
+        receiptInstructionsAr: o.receiptInstructionsAr,
         isActive: o.isActive,
         order: o.order,
         taken: o._count.selections,

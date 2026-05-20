@@ -19,14 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  localeTag,
-  pickText as _pickText,
-  type PortalLang,
-} from "@/lib/portal/i18n";
-// We only need the language type for the strings table; pickText is used
-// elsewhere on this page but not in this component.
-void _pickText;
+import { localeTag, pickText, type PortalLang } from "@/lib/portal/i18n";
 
 // Mirror of receipt.service constants so the client enforces the same
 // thresholds before bytes leave the browser. Duplicated deliberately —
@@ -152,6 +145,17 @@ interface ReceiptUploadControlProps {
   /** Whether the option / phase requires a receipt — drives the warning banner. */
   required: boolean;
   lang: PortalLang;
+  /**
+   * Category-Phases stage 3 — per-option receipt copy rendered above
+   * the file picker (and above every other state) when present. The
+   * component picks EN or AR via `pickText(lang, en, ar)`; when both
+   * resolve to empty the header block renders nothing and the control
+   * looks exactly like it did before.
+   */
+  receiptLabel?: string | null;
+  receiptInstructions?: string | null;
+  receiptLabelAr?: string | null;
+  receiptInstructionsAr?: string | null;
   /** Called after a successful upload completes (post finalising). Parent should refetch. */
   onUploaded: () => Promise<void> | void;
   /** Called after a successful delete. Parent should refetch. */
@@ -188,11 +192,23 @@ export function ReceiptUploadControl({
   allowReplace,
   required,
   lang,
+  receiptLabel,
+  receiptInstructions,
+  receiptLabelAr,
+  receiptInstructionsAr,
   onUploaded,
   onDeleted,
 }: ReceiptUploadControlProps) {
   const t = STRINGS[lang];
   const tag = localeTag(lang);
+
+  // Pick the active-language strings. pickText returns "" when the
+  // active-language value is null/empty AND there's no fallback — turn
+  // those into nullish so the header conditional below is symmetric.
+  const pickedLabel = pickText(lang, receiptLabel, receiptLabelAr) || null;
+  const pickedInstructions =
+    pickText(lang, receiptInstructions, receiptInstructionsAr) || null;
+  const hasCopy = pickedLabel || pickedInstructions;
   const inputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -430,6 +446,24 @@ export function ReceiptUploadControl({
         className="hidden"
         onChange={handleFilePicked}
       />
+
+      {/* Category-Phases stage 3 — per-option receipt copy. Sits above
+          every state (idle / uploading / finalising / error / success)
+          so the attendee sees the instructions throughout the upload
+          flow. When neither field is set in the active language, this
+          block renders nothing and the control looks unchanged. */}
+      {hasCopy && (
+        <div className="space-y-1">
+          {pickedLabel && (
+            <p className="text-sm font-semibold">{pickedLabel}</p>
+          )}
+          {pickedInstructions && (
+            <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+              {pickedInstructions}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Soft timeout banner — shown when the post-upload polling
           gave up. Auto-clears the moment the parent surfaces a newer
