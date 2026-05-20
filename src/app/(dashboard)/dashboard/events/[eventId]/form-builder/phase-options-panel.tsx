@@ -46,6 +46,7 @@ import {
 import { toast } from "sonner";
 import type { PhaseSelectionMode } from "@prisma/client";
 import { fetchJson, type FriendlyError } from "@/lib/api-errors-client";
+import { BilingualInput } from "@/components/admin/bilingual-input";
 
 // ─── Types — kept local so page.tsx doesn't bloat. ──────────────────
 
@@ -1164,69 +1165,51 @@ function OptionEditor({
 
   return (
     <div className="space-y-4 border-t bg-muted/20 p-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label>Label (English)</Label>
-          <Input
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            onBlur={() => {
-              const trimmed = label.trim();
-              if (trimmed && trimmed !== option.label) {
-                onPatch({ label: trimmed }, { label: trimmed });
-              } else if (!trimmed) {
-                setLabel(option.label);
-              }
-            }}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>Label (Arabic)</Label>
-          <Input
-            dir="rtl"
-            value={labelAr}
-            onChange={(e) => setLabelAr(e.target.value)}
-            onBlur={() => {
-              const next = labelAr.trim() || null;
-              if (next !== (option.labelAr ?? null)) {
-                onPatch({ labelAr: next }, { labelAr: next });
-              }
-            }}
-          />
-        </div>
-      </div>
+      <BilingualInput
+        label="Label"
+        idPrefix={`option-label-${option.id}`}
+        valueEn={label}
+        valueAr={labelAr}
+        onChangeEn={setLabel}
+        onChangeAr={setLabelAr}
+        onBlurEn={() => {
+          const trimmed = label.trim();
+          if (trimmed && trimmed !== option.label) {
+            onPatch({ label: trimmed }, { label: trimmed });
+          } else if (!trimmed) {
+            setLabel(option.label);
+          }
+        }}
+        onBlurAr={() => {
+          const next = labelAr.trim() || null;
+          if (next !== (option.labelAr ?? null)) {
+            onPatch({ labelAr: next }, { labelAr: next });
+          }
+        }}
+      />
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label>Description (English)</Label>
-          <Textarea
-            rows={2}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onBlur={() => {
-              const next = description.trim() || null;
-              if (next !== (option.description ?? null)) {
-                onPatch({ description: next }, { description: next });
-              }
-            }}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>Description (Arabic)</Label>
-          <Textarea
-            dir="rtl"
-            rows={2}
-            value={descriptionAr}
-            onChange={(e) => setDescriptionAr(e.target.value)}
-            onBlur={() => {
-              const next = descriptionAr.trim() || null;
-              if (next !== (option.descriptionAr ?? null)) {
-                onPatch({ descriptionAr: next }, { descriptionAr: next });
-              }
-            }}
-          />
-        </div>
-      </div>
+      <BilingualInput
+        label="Description"
+        idPrefix={`option-description-${option.id}`}
+        multiline
+        rows={2}
+        valueEn={description}
+        valueAr={descriptionAr}
+        onChangeEn={setDescription}
+        onChangeAr={setDescriptionAr}
+        onBlurEn={() => {
+          const next = description.trim() || null;
+          if (next !== (option.description ?? null)) {
+            onPatch({ description: next }, { description: next });
+          }
+        }}
+        onBlurAr={() => {
+          const next = descriptionAr.trim() || null;
+          if (next !== (option.descriptionAr ?? null)) {
+            onPatch({ descriptionAr: next }, { descriptionAr: next });
+          }
+        }}
+      />
 
       <div className="space-y-2">
         <Label>External link (optional)</Label>
@@ -1332,12 +1315,35 @@ function OptionEditor({
             </p>
           </div>
 
-          <div
-            className={multiLanguageEnabled ? "grid gap-4 sm:grid-cols-2" : ""}
-          >
+          {multiLanguageEnabled ? (
+            <BilingualInput
+              label="Receipt label"
+              idPrefix={`receipt-label-${option.id}`}
+              placeholderEn="e.g. Flight ticket"
+              valueEn={receiptLabel}
+              valueAr={receiptLabelAr}
+              onChangeEn={setReceiptLabel}
+              onChangeAr={setReceiptLabelAr}
+              onBlurEn={() => {
+                const next = receiptLabel.trim() || null;
+                if (next !== (option.receiptLabel ?? null)) {
+                  onPatch({ receiptLabel: next }, { receiptLabel: next });
+                }
+              }}
+              onBlurAr={() => {
+                const next = receiptLabelAr.trim() || null;
+                if (next !== (option.receiptLabelAr ?? null)) {
+                  onPatch(
+                    { receiptLabelAr: next },
+                    { receiptLabelAr: next }
+                  );
+                }
+              }}
+            />
+          ) : (
             <div className="space-y-2">
               <Label htmlFor={`receipt-label-${option.id}`}>
-                Receipt label (English)
+                Receipt label
               </Label>
               <Input
                 id={`receipt-label-${option.id}`}
@@ -1352,36 +1358,42 @@ function OptionEditor({
                 }}
               />
             </div>
-            {multiLanguageEnabled && (
-              <div className="space-y-2">
-                <Label htmlFor={`receipt-label-ar-${option.id}`}>
-                  Receipt label (Arabic)
-                </Label>
-                <Input
-                  id={`receipt-label-ar-${option.id}`}
-                  dir="rtl"
-                  value={receiptLabelAr}
-                  onChange={(e) => setReceiptLabelAr(e.target.value)}
-                  onBlur={() => {
-                    const next = receiptLabelAr.trim() || null;
-                    if (next !== (option.receiptLabelAr ?? null)) {
-                      onPatch(
-                        { receiptLabelAr: next },
-                        { receiptLabelAr: next }
-                      );
-                    }
-                  }}
-                />
-              </div>
-            )}
-          </div>
+          )}
 
-          <div
-            className={multiLanguageEnabled ? "grid gap-4 sm:grid-cols-2" : ""}
-          >
+          {multiLanguageEnabled ? (
+            <BilingualInput
+              label="Receipt instructions"
+              idPrefix={`receipt-instructions-${option.id}`}
+              multiline
+              rows={3}
+              placeholderEn="e.g. Upload a PDF or photo of your flight confirmation showing arrival date in Riyadh."
+              valueEn={receiptInstructions}
+              valueAr={receiptInstructionsAr}
+              onChangeEn={setReceiptInstructions}
+              onChangeAr={setReceiptInstructionsAr}
+              onBlurEn={() => {
+                const next = receiptInstructions.trim() || null;
+                if (next !== (option.receiptInstructions ?? null)) {
+                  onPatch(
+                    { receiptInstructions: next },
+                    { receiptInstructions: next }
+                  );
+                }
+              }}
+              onBlurAr={() => {
+                const next = receiptInstructionsAr.trim() || null;
+                if (next !== (option.receiptInstructionsAr ?? null)) {
+                  onPatch(
+                    { receiptInstructionsAr: next },
+                    { receiptInstructionsAr: next }
+                  );
+                }
+              }}
+            />
+          ) : (
             <div className="space-y-2">
               <Label htmlFor={`receipt-instructions-${option.id}`}>
-                Receipt instructions (English)
+                Receipt instructions
               </Label>
               <Textarea
                 id={`receipt-instructions-${option.id}`}
@@ -1400,30 +1412,7 @@ function OptionEditor({
                 }}
               />
             </div>
-            {multiLanguageEnabled && (
-              <div className="space-y-2">
-                <Label htmlFor={`receipt-instructions-ar-${option.id}`}>
-                  Receipt instructions (Arabic)
-                </Label>
-                <Textarea
-                  id={`receipt-instructions-ar-${option.id}`}
-                  dir="rtl"
-                  rows={3}
-                  value={receiptInstructionsAr}
-                  onChange={(e) => setReceiptInstructionsAr(e.target.value)}
-                  onBlur={() => {
-                    const next = receiptInstructionsAr.trim() || null;
-                    if (next !== (option.receiptInstructionsAr ?? null)) {
-                      onPatch(
-                        { receiptInstructionsAr: next },
-                        { receiptInstructionsAr: next }
-                      );
-                    }
-                  }}
-                />
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
 
