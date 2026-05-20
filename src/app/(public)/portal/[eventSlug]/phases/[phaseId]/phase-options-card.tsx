@@ -39,6 +39,14 @@ export interface PortalPhaseOption {
   capacity: number | null;
   metadata: Record<string, string> | null;
   requiresReceipt: boolean | null;
+  // Category-Phases stage 3 — per-option receipt copy. Rendered above
+  // the file picker on the ReceiptUploadControl when present. When all
+  // four are null (or all four in the active language are null) the
+  // control renders unchanged.
+  receiptLabel: string | null;
+  receiptInstructions: string | null;
+  receiptLabelAr: string | null;
+  receiptInstructionsAr: string | null;
   isActive: boolean;
   order: number;
   taken: number;
