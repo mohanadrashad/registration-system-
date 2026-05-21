@@ -27,6 +27,19 @@ import {
 } from "lucide-react";
 import { COUNTRIES } from "@/lib/form-builder/countries";
 import { isFieldVisible } from "@/lib/form-conditional";
+import {
+  parseFormFieldOptions,
+  resolveOtherLabel,
+  resolveOtherPlaceholder,
+  OTHER_VALUE,
+  OTHER_SUFFIX,
+} from "@/lib/form-builder/options-parse";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface FormField {
   id: string;
@@ -96,6 +109,42 @@ interface DraftPayload {
 
 const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+interface OtherTextInputProps {
+  fieldName: string;
+  value: string;
+  onChange: (next: string) => void;
+  label: string;
+  placeholder: string;
+  required: boolean;
+}
+
+function OtherTextInput({
+  fieldName,
+  value,
+  onChange,
+  label,
+  placeholder,
+  required,
+}: OtherTextInputProps) {
+  return (
+    <div className="mt-2 space-y-1">
+      <Label
+        htmlFor={`${fieldName}${OTHER_SUFFIX}`}
+        className="text-xs font-medium text-gray-500"
+      >
+        {label} {required && <span className="text-red-400">*</span>}
+      </Label>
+      <Input
+        id={`${fieldName}${OTHER_SUFFIX}`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+      />
+    </div>
+  );
+}
+
 const translations = {
   ar: {
     title: "تسجيل الحضور",
@@ -114,6 +163,13 @@ const translations = {
     draftRestored: "تم استرجاع بياناتك من زيارتك السابقة.",
     startOver: "البدء من جديد",
     fillRequired: "يرجى إكمال الحقول المطلوبة قبل المتابعة.",
+    pleaseSpecify: "يرجى التحديد",
+    pleaseSpecifyError: "يرجى تحديد إجابتك",
+    counterBelow: (n: number, max: number) => `${n} من ${max} محدد`,
+    counterAtLimit: (max: number) =>
+      `تم بلوغ الحد الأقصى — ${max} من ${max}`,
+    maxReachedTooltip: (max: number) =>
+      `تم بلوغ الحد الأقصى ${max}. ألغِ خيارًا لاختيار آخر.`,
   },
   en: {
     title: "Event Registration",
@@ -132,6 +188,12 @@ const translations = {
     draftRestored: "Resumed from your last visit.",
     startOver: "Start over",
     fillRequired: "Please complete the required fields before continuing.",
+    pleaseSpecify: "Please specify",
+    pleaseSpecifyError: "Please specify your answer",
+    counterBelow: (n: number, max: number) => `${n} of ${max} selected`,
+    counterAtLimit: (max: number) => `Maximum reached — ${max} of ${max}`,
+    maxReachedTooltip: (max: number) =>
+      `Maximum ${max} selections reached. Uncheck one to choose a different option.`,
   },
 };
 
@@ -326,17 +388,35 @@ export default function RegisterPage() {
   function validateCurrentStep(): boolean {
     if (!activeStep) return false;
     for (const field of activeStep.fields) {
-      if (!field.required) continue;
-      if (!isFieldVisible(field.conditional, formValues)) continue;
+      const visible = isFieldVisible(field.conditional, formValues);
       const value = formValues[field.name];
-      const empty =
-        value === undefined ||
-        value === null ||
-        value === "" ||
-        (Array.isArray(value) && value.length === 0);
-      if (empty) {
-        setError(t.fillRequired);
-        return false;
+
+      if (field.required && visible) {
+        const empty =
+          value === undefined ||
+          value === null ||
+          value === "" ||
+          (Array.isArray(value) && value.length === 0);
+        if (empty) {
+          setError(t.fillRequired);
+          return false;
+        }
+      }
+
+      // Other custom text required when Other is selected on a required
+      // option-bearing field.
+      if (visible && field.required) {
+        const selectedOther =
+          value === OTHER_VALUE ||
+          (Array.isArray(value) && (value as string[]).includes(OTHER_VALUE));
+        if (selectedOther) {
+          const sibling = formValues[`${field.name}${OTHER_SUFFIX}`];
+          const text = typeof sibling === "string" ? sibling.trim() : "";
+          if (!text) {
+            setError(t.pleaseSpecifyError);
+            return false;
+          }
+        }
       }
     }
     setError("");
@@ -437,7 +517,7 @@ export default function RegisterPage() {
   function getOptionLabel(option: {
     value: string;
     label: string;
-    labelAr?: string;
+    labelAr?: string | null;
   }) {
     return isRtl && option.labelAr ? option.labelAr : option.label;
   }
@@ -546,24 +626,54 @@ export default function RegisterPage() {
           />
         )}
 
-        {field.type === "SELECT" && (
-          <Select
-            value={value as string}
-            onValueChange={(v) => handleFieldChange(field.name, v)}
-            required={field.required}
-          >
-            <SelectTrigger className="h-11 rounded-lg border-gray-200 bg-gray-50/50">
-              <SelectValue placeholder={placeholder || "Select..."} />
-            </SelectTrigger>
-            <SelectContent>
-              {(field.options || []).map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {getOptionLabel(option)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
+        {field.type === "SELECT" && (() => {
+          const parsed = parseFormFieldOptions(field.options);
+          const otherSelected = (value as string) === OTHER_VALUE;
+          return (
+            <>
+              <Select
+                value={value as string}
+                onValueChange={(v) => {
+                  handleFieldChange(field.name, v);
+                  if (v !== OTHER_VALUE) {
+                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, "");
+                  }
+                }}
+                required={field.required}
+              >
+                <SelectTrigger className="h-11 rounded-lg border-gray-200 bg-gray-50/50">
+                  <SelectValue placeholder={placeholder || "Select..."} />
+                </SelectTrigger>
+                <SelectContent>
+                  {parsed.options.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {getOptionLabel(option)}
+                    </SelectItem>
+                  ))}
+                  {parsed.other && (
+                    <SelectItem value={OTHER_VALUE}>
+                      {resolveOtherLabel(parsed.other, lang)}
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+              {parsed.other && otherSelected && (
+                <OtherTextInput
+                  fieldName={field.name}
+                  value={
+                    (formValues[`${field.name}${OTHER_SUFFIX}`] as string) ?? ""
+                  }
+                  onChange={(v) =>
+                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, v)
+                  }
+                  label={t.pleaseSpecify}
+                  placeholder={resolveOtherPlaceholder(parsed.other, lang)}
+                  required={field.required}
+                />
+              )}
+            </>
+          );
+        })()}
 
         {field.type === "COUNTRY" && (
           <Select
@@ -589,28 +699,67 @@ export default function RegisterPage() {
           </Select>
         )}
 
-        {field.type === "RADIO" && (
-          <RadioGroup
-            value={value as string}
-            onValueChange={(v) => handleFieldChange(field.name, v)}
-            className="flex flex-wrap gap-4"
-          >
-            {(field.options || []).map((option) => (
-              <div key={option.value} className="flex items-center space-x-2">
-                <RadioGroupItem
-                  value={option.value}
-                  id={`${field.name}-${option.value}`}
+        {field.type === "RADIO" && (() => {
+          const parsed = parseFormFieldOptions(field.options);
+          const otherSelected = (value as string) === OTHER_VALUE;
+          return (
+            <>
+              <RadioGroup
+                value={value as string}
+                onValueChange={(v) => {
+                  handleFieldChange(field.name, v);
+                  if (v !== OTHER_VALUE) {
+                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, "");
+                  }
+                }}
+                className="flex flex-wrap gap-4"
+              >
+                {parsed.options.map((option) => (
+                  <div key={option.value} className="flex items-center space-x-2">
+                    <RadioGroupItem
+                      value={option.value}
+                      id={`${field.name}-${option.value}`}
+                    />
+                    <Label
+                      htmlFor={`${field.name}-${option.value}`}
+                      className="text-sm"
+                    >
+                      {getOptionLabel(option)}
+                    </Label>
+                  </div>
+                ))}
+                {parsed.other && (
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem
+                      value={OTHER_VALUE}
+                      id={`${field.name}-${OTHER_VALUE}`}
+                    />
+                    <Label
+                      htmlFor={`${field.name}-${OTHER_VALUE}`}
+                      className="text-sm"
+                    >
+                      {resolveOtherLabel(parsed.other, lang)}
+                    </Label>
+                  </div>
+                )}
+              </RadioGroup>
+              {parsed.other && otherSelected && (
+                <OtherTextInput
+                  fieldName={field.name}
+                  value={
+                    (formValues[`${field.name}${OTHER_SUFFIX}`] as string) ?? ""
+                  }
+                  onChange={(v) =>
+                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, v)
+                  }
+                  label={t.pleaseSpecify}
+                  placeholder={resolveOtherPlaceholder(parsed.other, lang)}
+                  required={field.required}
                 />
-                <Label
-                  htmlFor={`${field.name}-${option.value}`}
-                  className="text-sm"
-                >
-                  {getOptionLabel(option)}
-                </Label>
-              </div>
-            ))}
-          </RadioGroup>
-        )}
+              )}
+            </>
+          );
+        })()}
 
         {field.type === "CHECKBOX" && (
           <div className="flex items-center space-x-2">
@@ -627,36 +776,106 @@ export default function RegisterPage() {
           </div>
         )}
 
-        {field.type === "MULTISELECT" && (
-          <div className="flex flex-wrap gap-2">
-            {(field.options || []).map((option) => {
-              const arr = Array.isArray(value) ? (value as string[]) : [];
-              const selected = arr.includes(option.value);
-              return (
-                <button
-                  type="button"
-                  key={option.value}
-                  onClick={() => {
-                    const next = selected
-                      ? arr.filter((v) => v !== option.value)
-                      : [...arr, option.value];
-                    handleFieldChange(field.name, next);
-                  }}
-                  className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                    selected
-                      ? "border-transparent text-white"
-                      : "border-gray-200 bg-gray-50/50 text-gray-600 hover:bg-gray-100"
+        {field.type === "MULTISELECT" && (() => {
+          const parsed = parseFormFieldOptions(field.options);
+          const arr = Array.isArray(value) ? (value as string[]) : [];
+          const max = parsed.maxSelections;
+          const atLimit =
+            typeof max === "number" && max > 0 && arr.length >= max;
+          const showCounter =
+            typeof max === "number" && max > 0 && parsed.showSelectionCounter !== false;
+          const otherSelected = arr.includes(OTHER_VALUE);
+
+          const renderPill = (
+            optionValue: string,
+            labelText: string
+          ) => {
+            const selected = arr.includes(optionValue);
+            const disabled = !selected && atLimit;
+            const handleClick = () => {
+              if (disabled) return;
+              const next = selected
+                ? arr.filter((v) => v !== optionValue)
+                : [...arr, optionValue];
+              handleFieldChange(field.name, next);
+              // Deselecting Other clears the sibling text.
+              if (selected && optionValue === OTHER_VALUE) {
+                handleFieldChange(`${field.name}${OTHER_SUFFIX}`, "");
+              }
+            };
+            const btn = (
+              <button
+                type="button"
+                key={optionValue}
+                aria-disabled={disabled}
+                onClick={handleClick}
+                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                  selected
+                    ? "border-transparent text-white"
+                    : disabled
+                    ? "border-gray-200 bg-gray-50/50 text-gray-400 cursor-not-allowed opacity-60"
+                    : "border-gray-200 bg-gray-50/50 text-gray-600 hover:bg-gray-100"
+                }`}
+                style={
+                  selected ? { backgroundColor: primaryColor } : undefined
+                }
+              >
+                {labelText}
+              </button>
+            );
+            if (!disabled || typeof max !== "number") return btn;
+            return (
+              <Tooltip key={optionValue}>
+                <TooltipTrigger asChild>
+                  <span>{btn}</span>
+                </TooltipTrigger>
+                <TooltipContent>{t.maxReachedTooltip(max)}</TooltipContent>
+              </Tooltip>
+            );
+          };
+
+          return (
+            <TooltipProvider delayDuration={150}>
+              <div className="flex flex-wrap gap-2">
+                {parsed.options.map((option) =>
+                  renderPill(option.value, getOptionLabel(option))
+                )}
+                {parsed.other &&
+                  renderPill(
+                    OTHER_VALUE,
+                    resolveOtherLabel(parsed.other, lang)
+                  )}
+              </div>
+
+              {showCounter && (
+                <p
+                  className={`mt-2 text-xs ${
+                    atLimit ? "text-foreground" : "text-muted-foreground"
                   }`}
-                  style={
-                    selected ? { backgroundColor: primaryColor } : undefined
-                  }
                 >
-                  {getOptionLabel(option)}
-                </button>
-              );
-            })}
-          </div>
-        )}
+                  {atLimit
+                    ? t.counterAtLimit(max!)
+                    : t.counterBelow(arr.length, max!)}
+                </p>
+              )}
+
+              {parsed.other && otherSelected && (
+                <OtherTextInput
+                  fieldName={field.name}
+                  value={
+                    (formValues[`${field.name}${OTHER_SUFFIX}`] as string) ?? ""
+                  }
+                  onChange={(v) =>
+                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, v)
+                  }
+                  label={t.pleaseSpecify}
+                  placeholder={resolveOtherPlaceholder(parsed.other, lang)}
+                  required={field.required}
+                />
+              )}
+            </TooltipProvider>
+          );
+        })()}
 
         {field.type === "DATE" && (
           <Input

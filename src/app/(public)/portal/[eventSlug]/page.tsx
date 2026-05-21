@@ -43,6 +43,13 @@ import {
 } from "lucide-react";
 import { COUNTRIES } from "@/lib/form-builder/countries";
 import { localeTag, pickText, type PortalLang } from "@/lib/portal/i18n";
+import {
+  parseFormFieldOptions,
+  resolveOtherLabel,
+  resolveOtherPlaceholder,
+  OTHER_VALUE,
+  OTHER_SUFFIX,
+} from "@/lib/form-builder/options-parse";
 
 // ─── Bilingual UI strings (page-local). ───────────────────────────────
 //
@@ -415,6 +422,8 @@ export default function PortalPage() {
 
   function seedEditValues(contactData: ContactInfo, fields: FormFieldDef[]) {
     const values: Record<string, unknown> = {};
+    const metadata = (contactData as { metadata?: Record<string, unknown> })
+      .metadata;
     for (const field of fields || []) {
       if (LAYOUT_TYPES.has(field.type)) continue;
       const raw = getFieldValue(contactData, field);
@@ -424,6 +433,12 @@ export default function PortalPage() {
         values[field.name] = Array.isArray(raw) ? raw : [];
       } else {
         values[field.name] = raw ?? "";
+      }
+      // Seed sibling _other text so editing an Other-selected field
+      // doesn't drop the custom text the visitor previously typed.
+      const sibling = metadata?.[`${field.name}${OTHER_SUFFIX}`];
+      if (typeof sibling === "string") {
+        values[`${field.name}${OTHER_SUFFIX}`] = sibling;
       }
     }
     setEditValues(values);
@@ -677,19 +692,54 @@ export default function PortalPage() {
       );
     }
     if (field.type === "SELECT") {
+      const parsed = parseFormFieldOptions(field.options);
+      const otherSelected = (value as string) === OTHER_VALUE;
       return (
-        <Select value={(value as string) || ""} onValueChange={setValue}>
-          <SelectTrigger>
-            <SelectValue placeholder={t.selectPlaceholder} />
-          </SelectTrigger>
-          <SelectContent>
-            {(field.options || []).map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {fieldOptionLabel(o)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <>
+          <Select
+            value={(value as string) || ""}
+            onValueChange={(v) => {
+              setValue(v);
+              if (v !== OTHER_VALUE) {
+                setEditValues((prev) => ({
+                  ...prev,
+                  [`${field.name}${OTHER_SUFFIX}`]: "",
+                }));
+              }
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={t.selectPlaceholder} />
+            </SelectTrigger>
+            <SelectContent>
+              {parsed.options.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {fieldOptionLabel(o)}
+                </SelectItem>
+              ))}
+              {parsed.other && (
+                <SelectItem value={OTHER_VALUE}>
+                  {resolveOtherLabel(parsed.other, lang)}
+                </SelectItem>
+              )}
+            </SelectContent>
+          </Select>
+          {parsed.other && otherSelected && (
+            <Input
+              className="mt-2"
+              value={
+                (editValues[`${field.name}${OTHER_SUFFIX}`] as string) ?? ""
+              }
+              onChange={(e) =>
+                setEditValues((prev) => ({
+                  ...prev,
+                  [`${field.name}${OTHER_SUFFIX}`]: e.target.value,
+                }))
+              }
+              placeholder={resolveOtherPlaceholder(parsed.other, lang)}
+            />
+          )}
+        </>
       );
     }
     if (field.type === "COUNTRY") {
@@ -709,17 +759,65 @@ export default function PortalPage() {
       );
     }
     if (field.type === "RADIO") {
+      const parsed = parseFormFieldOptions(field.options);
+      const otherSelected = (value as string) === OTHER_VALUE;
       return (
-        <RadioGroup value={(value as string) || ""} onValueChange={setValue} className="flex flex-wrap gap-4">
-          {(field.options || []).map((o) => (
-            <div key={o.value} className="flex items-center space-x-2">
-              <RadioGroupItem value={o.value} id={`${field.name}-${o.value}`} />
-              <Label htmlFor={`${field.name}-${o.value}`} className="text-sm">
-                {fieldOptionLabel(o)}
-              </Label>
-            </div>
-          ))}
-        </RadioGroup>
+        <>
+          <RadioGroup
+            value={(value as string) || ""}
+            onValueChange={(v) => {
+              setValue(v);
+              if (v !== OTHER_VALUE) {
+                setEditValues((prev) => ({
+                  ...prev,
+                  [`${field.name}${OTHER_SUFFIX}`]: "",
+                }));
+              }
+            }}
+            className="flex flex-wrap gap-4"
+          >
+            {parsed.options.map((o) => (
+              <div key={o.value} className="flex items-center space-x-2">
+                <RadioGroupItem value={o.value} id={`${field.name}-${o.value}`} />
+                <Label
+                  htmlFor={`${field.name}-${o.value}`}
+                  className="text-sm"
+                >
+                  {fieldOptionLabel(o)}
+                </Label>
+              </div>
+            ))}
+            {parsed.other && (
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem
+                  value={OTHER_VALUE}
+                  id={`${field.name}-${OTHER_VALUE}`}
+                />
+                <Label
+                  htmlFor={`${field.name}-${OTHER_VALUE}`}
+                  className="text-sm"
+                >
+                  {resolveOtherLabel(parsed.other, lang)}
+                </Label>
+              </div>
+            )}
+          </RadioGroup>
+          {parsed.other && otherSelected && (
+            <Input
+              className="mt-2"
+              value={
+                (editValues[`${field.name}${OTHER_SUFFIX}`] as string) ?? ""
+              }
+              onChange={(e) =>
+                setEditValues((prev) => ({
+                  ...prev,
+                  [`${field.name}${OTHER_SUFFIX}`]: e.target.value,
+                }))
+              }
+              placeholder={resolveOtherPlaceholder(parsed.other, lang)}
+            />
+          )}
+        </>
       );
     }
     if (field.type === "CHECKBOX") {
@@ -737,27 +835,79 @@ export default function PortalPage() {
       );
     }
     if (field.type === "MULTISELECT") {
+      const parsed = parseFormFieldOptions(field.options);
       const arr = Array.isArray(value) ? (value as string[]) : [];
+      const max = parsed.maxSelections;
+      const atLimit = typeof max === "number" && max > 0 && arr.length >= max;
+      const otherSelected = arr.includes(OTHER_VALUE);
+
+      const renderRow = (
+        optValue: string,
+        labelText: string,
+        isOther: boolean
+      ) => {
+        const checked = arr.includes(optValue);
+        const disabled = !checked && atLimit;
+        return (
+          <div
+            key={optValue}
+            className={`flex items-center space-x-2 ${
+              disabled ? "opacity-60" : ""
+            }`}
+          >
+            <Checkbox
+              id={`${field.name}-${optValue}`}
+              checked={checked}
+              disabled={disabled}
+              onCheckedChange={(c) => {
+                const next = c
+                  ? [...arr, optValue]
+                  : arr.filter((v) => v !== optValue);
+                setValue(next);
+                if (!c && isOther) {
+                  setEditValues((prev) => ({
+                    ...prev,
+                    [`${field.name}${OTHER_SUFFIX}`]: "",
+                  }));
+                }
+              }}
+            />
+            <Label
+              htmlFor={`${field.name}-${optValue}`}
+              className="text-sm"
+            >
+              {labelText}
+            </Label>
+          </div>
+        );
+      };
+
       return (
         <div className="space-y-1">
-          {(field.options || []).map((o) => {
-            const checked = arr.includes(o.value);
-            return (
-              <div key={o.value} className="flex items-center space-x-2">
-                <Checkbox
-                  id={`${field.name}-${o.value}`}
-                  checked={checked}
-                  onCheckedChange={(c) => {
-                    const next = c ? [...arr, o.value] : arr.filter((v) => v !== o.value);
-                    setValue(next);
-                  }}
-                />
-                <Label htmlFor={`${field.name}-${o.value}`} className="text-sm">
-                  {fieldOptionLabel(o)}
-                </Label>
-              </div>
-            );
-          })}
+          {parsed.options.map((o) =>
+            renderRow(o.value, fieldOptionLabel(o), false)
+          )}
+          {parsed.other &&
+            renderRow(
+              OTHER_VALUE,
+              resolveOtherLabel(parsed.other, lang),
+              true
+            )}
+          {parsed.other && otherSelected && (
+            <Input
+              className="mt-2"
+              value={
+                (editValues[`${field.name}${OTHER_SUFFIX}`] as string) ?? ""
+              }
+              onChange={(e) =>
+                setEditValues((prev) => ({
+                  ...prev,
+                  [`${field.name}${OTHER_SUFFIX}`]: e.target.value,
+                }))
+              }
+              placeholder={resolveOtherPlaceholder(parsed.other, lang)}
+            />
+          )}
         </div>
       );
     }
