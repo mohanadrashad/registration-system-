@@ -155,7 +155,7 @@ Public registration is unauthenticated. We can't tie uploads to a user session. 
    - Server deletes the blob via `del()` and the row.
    - Client then initiates the new upload from scratch.
 
-7. **Reading the file (admin).** From the attendee detail page, admin clicks the file link. Client calls `GET /api/events/[eventId]/files/[fileId]/signed-url`. Server validates admin's access (via `authorizeEvent`), then generates a short-lived signed URL (5 minutes) via `head(blobPath)`. Returns to client. Client opens in a new tab.
+7. **Reading the file (admin).** From the attendee detail page, admin clicks the file link, which opens `GET /api/events/[eventId]/files/[fileId]/stream` in a new tab. The server re-validates `authorizeEvent` per request, fetches the blob via `streamPrivateBlob(blobPath)`, and pipes the bytes back with the original content-type and a `Content-Disposition` matching the stored filename. There is no URL the client retains — access is gated by the admin's live session on every request, and revoking the admin's session immediately invalidates further reads.
 
 ### Orphan cleanup
 
@@ -172,6 +172,14 @@ For each deleted row, also delete the blob via `del(blobPath)`. Same defensive p
 1. **Client-side.** File picker `accept` attribute matches `metadata.allowedMimeTypes`. Size check on `<input>` change before initiating upload.
 2. **Vercel Blob (`handleUpload`).** `onBeforeGenerateToken` callback receives `allowedContentTypes` and `maximumSizeInBytes`. Blob enforces these server-side before accepting the upload.
 3. **`onUploadCompleted`.** Re-validates `mimeType` and `sizeBytes` against the field's metadata. Defense-in-depth.
+
+### Admin read path: stream-through, not signed URLs
+
+`@vercel/blob` v2.3.3 does not expose a `getSignedReadUrl` helper or a TTL-bound download URL for private blobs. `getDownloadUrl(blobUrl)` only appends `?download=1` to an existing URL — it does not sign or set an expiry. For private blobs, the URLs that `put` / `head` / `get` return still require authentication to fetch, so they can't be handed to a browser directly.
+
+The canonical read path is therefore **stream-through**: the admin's "View" click hits an API route under `/api/events/[eventId]/files/[fileId]/stream`, the server re-validates `authorizeEvent` per request, calls `streamPrivateBlob(blobPath)` to fetch the bytes, and pipes them back with the original content-type and a `Content-Disposition` derived from the stored filename.
+
+This matches the existing `PhaseReceipt` read pattern at `src/app/api/portal/[eventSlug]/receipts/[receiptId]/route.ts`. The privacy posture is strictly stronger than a signed URL with a TTL: there is no URL the client retains, no replay window, and revoking the admin's session immediately stops further reads. If the SDK ever ships a stable signed-URL helper, the route can be swapped out without changing the spec's API contract.
 
 ---
 
@@ -267,7 +275,7 @@ Commercial Registration
   [View]  [Replace]  [Remove]
 ```
 
-- **View** — calls `/api/events/[eventId]/files/[fileId]/signed-url`. Server validates admin auth and returns a short-lived (5-min) signed Blob URL. Client opens in a new tab.
+- **View** — opens `GET /api/events/[eventId]/files/[fileId]/stream` in a new tab. The server re-validates the admin's `authorizeEvent` access per request and pipes the blob bytes back. The browser renders inline or downloads based on the response's `Content-Disposition` (filename) + content-type. No URL the client retains; every read goes through a live admin session.
 - **Replace** — out of scope for v1 (admin-side replacement is a non-goal). Button hidden in v1; document as v2.
 - **Remove** — out of scope for v1. Button hidden in v1.
 
@@ -365,8 +373,7 @@ The migration is purely additive — no changes to existing columns, no data bac
 ### Stage 3 — Admin display + integrations
 
 - Attendee detail page (`registration-answers-card.tsx`): render FILE fields with filename + size + View button.
-- New API endpoint `GET /api/events/[eventId]/files/[fileId]/signed-url` (admin-only, scoped by event membership).
-- Streaming-through endpoint as fallback if SDK signed-URL helpers are unavailable: `GET /api/events/[eventId]/files/[fileId]/stream`.
+- New API endpoint `GET /api/events/[eventId]/files/[fileId]/stream` (admin-only, scoped by event membership via `authorizeEvent`). Re-validates per request and pipes the blob bytes back from `streamPrivateBlob` with the original content-type and a `Content-Disposition` derived from the stored filename. Matches the existing `PhaseReceipt` read endpoint at `src/app/api/portal/[eventSlug]/receipts/[receiptId]/route.ts`.
 - CSV export: emit one column per FILE field with the filename.
 - Email template variable substitution: `{{fieldName}}` → filename.
 - Badge generator: same, truncated.
@@ -443,7 +450,7 @@ The unauthenticated upload pipeline is the architecturally novel part. Stage 1 e
 ### Stage 3
 
 - [ ] Attendee detail page renders FILE fields with filename, size, mime-type, and View button.
-- [ ] View button opens a signed URL in a new tab. URL works for ~5 minutes, expires after.
+- [ ] View opens a stream-through URL in a new tab. The server re-validates the admin's `authorizeEvent` access per request and pipes the bytes back. Closing the tab or revoking the admin's session immediately invalidates further access.
 - [ ] CSV export emits filename column for each FILE field.
 - [ ] Email template `{{fieldName}}` substitution renders the filename.
 - [ ] Badge template substitution renders the filename, truncated if needed.
