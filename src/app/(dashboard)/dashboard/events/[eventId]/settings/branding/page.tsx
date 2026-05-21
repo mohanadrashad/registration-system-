@@ -651,7 +651,19 @@ export default function BrandingPage() {
                   className="font-mono text-sm"
                 />
                 <p className="text-xs text-muted-foreground">
-                  CSS will be applied to the public registration page only
+                  CSS will be applied to the public registration page only.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Stable selectors you can target:{" "}
+                  <code className="font-mono">[data-event-date]</code>,{" "}
+                  <code className="font-mono">[data-event-time]</code>, and{" "}
+                  <code className="font-mono">[data-event-venue]</code> wrap
+                  the event date, time, and venue displayed below the banner —
+                  use{" "}
+                  <code className="font-mono">
+                    {`[data-event-date], [data-event-time], [data-event-venue] { display: none; }`}
+                  </code>{" "}
+                  to hide them.
                 </p>
               </div>
             </CardContent>
