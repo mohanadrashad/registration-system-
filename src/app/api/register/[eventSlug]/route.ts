@@ -5,6 +5,12 @@ import { randomBytes } from "crypto";
 import { approvalService } from "@/lib/services/approval.service";
 import { sanitizeCss } from "@/lib/security/sanitize-css";
 import { isFieldRequiredByCondition } from "@/lib/form-conditional";
+import {
+  parseFormFieldOptions,
+  OTHER_VALUE,
+  OTHER_SUFFIX,
+} from "@/lib/form-builder/options-parse";
+import { FieldType } from "@prisma/client";
 
 // GET: Look up contact by invite token to pre-fill the registration form
 // Also returns event details and branding for the registration page
@@ -172,6 +178,89 @@ export async function POST(
       return NextResponse.json({
         error: `${field.label} is required`
       }, { status: 400 });
+    }
+  }
+
+  // Option-aware validation for SELECT/RADIO/MULTISELECT: every submitted
+  // value must either be a real option value or the reserved __other (only
+  // if the field has Other enabled); MULTISELECT respects maxSelections;
+  // Other-on-required-with-empty-text fails.
+  for (const field of registrationFields) {
+    const isOption =
+      field.type === FieldType.SELECT ||
+      field.type === FieldType.RADIO ||
+      field.type === FieldType.MULTISELECT;
+    if (!isOption) continue;
+
+    const value = body[field.name];
+    if (value === undefined || value === null || value === "") continue;
+
+    const parsed = parseFormFieldOptions(field.options);
+    const allowed = new Set(parsed.options.map((o) => o.value));
+    if (parsed.other) allowed.add(OTHER_VALUE);
+
+    const submitted: string[] = Array.isArray(value)
+      ? value.filter((v): v is string => typeof v === "string")
+      : typeof value === "string"
+      ? [value]
+      : [];
+
+    for (const v of submitted) {
+      if (!allowed.has(v)) {
+        return NextResponse.json(
+          { error: `${field.label}: invalid choice "${v}"` },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (
+      field.type === FieldType.MULTISELECT &&
+      typeof parsed.maxSelections === "number" &&
+      parsed.maxSelections > 0 &&
+      Array.isArray(value) &&
+      value.length > parsed.maxSelections
+    ) {
+      return NextResponse.json(
+        {
+          error: `${field.label}: maximum ${parsed.maxSelections} selections allowed`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      parsed.other &&
+      submitted.includes(OTHER_VALUE) &&
+      field.required &&
+      isFieldRequiredByCondition(field.conditional, body)
+    ) {
+      const sibling = body[`${field.name}${OTHER_SUFFIX}`];
+      const text = typeof sibling === "string" ? sibling.trim() : "";
+      if (!text) {
+        return NextResponse.json(
+          { error: `${field.label}: please specify your answer` },
+          { status: 400 }
+        );
+      }
+    }
+  }
+
+  // Trim whitespace on any __other sibling text so empty-after-trim is
+  // not persisted; if visitor unselected Other in another field but a
+  // stale sibling remained, drop it entirely.
+  for (const field of registrationFields) {
+    const siblingKey = `${field.name}${OTHER_SUFFIX}`;
+    if (typeof body[siblingKey] !== "string") continue;
+    const trimmed = (body[siblingKey] as string).trim();
+    const value = body[field.name];
+    const stillSelected =
+      value === OTHER_VALUE ||
+      (Array.isArray(value) && value.includes(OTHER_VALUE));
+    if (!stillSelected || !trimmed) {
+      delete body[siblingKey];
+    } else {
+      body[siblingKey] = trimmed;
     }
   }
 

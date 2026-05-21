@@ -3,7 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { getOrCreateDefaultRegistrationStep } from "@/lib/services/phase.service";
 import { FieldType, FieldWidth } from "@prisma/client";
-import { fieldOptionsArrayUniqueSchema } from "@/lib/validations/form-field";
+import { fieldOptionsInputSchema } from "@/lib/validations/form-field";
+import {
+  parseFormFieldOptions,
+  serializeFormFieldOptions,
+} from "@/lib/form-builder/options-parse";
 
 interface RouteParams {
   params: Promise<{ eventId: string }>;
@@ -94,11 +98,13 @@ export async function POST(request: Request, { params }: RouteParams) {
       stepId = step.id;
     }
 
-    // Validate options array shape if present. No value-lock on create —
-    // there are no existing registrations to lock against.
+    // Validate options shape if present. Accepts legacy array or wrapped
+    // { options, other?, maxSelections? } shape; either way we serialize
+    // back to the compact on-disk form (legacy when no new features are
+    // enabled). No value-lock on create — no existing registrations.
     let validatedOptions: unknown = undefined;
     if (body.options !== undefined) {
-      const parsed = fieldOptionsArrayUniqueSchema.safeParse(body.options);
+      const parsed = fieldOptionsInputSchema.safeParse(body.options);
       if (!parsed.success) {
         return NextResponse.json(
           {
@@ -108,7 +114,9 @@ export async function POST(request: Request, { params }: RouteParams) {
           { status: 400 }
         );
       }
-      validatedOptions = parsed.data;
+      validatedOptions = serializeFormFieldOptions(
+        parseFormFieldOptions(parsed.data)
+      );
     }
 
     const field = await prisma.formField.create({
