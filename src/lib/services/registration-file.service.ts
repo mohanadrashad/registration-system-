@@ -27,34 +27,6 @@ import type { RegistrationFile } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { deleteBlob, streamPrivateBlob } from "@/lib/blob";
 
-// ─── Server-controlled pathname builder ──────────────────────────────
-//
-// Pathname scheme is server-controlled; the client never picks where
-// its file lands. Mirrors receipt.service.ts's buildReceiptPathname.
-//
-//   events/<eventId>/registration-files/<sessionId>/<formFieldId>-<ts><ext>
-//
-// addRandomSuffix is applied by the SDK at the put-token-mint side, so
-// concurrent uploads from the same session/field don't collide at the
-// blob layer even before this server function runs.
-
-const CONTENT_TYPE_EXT: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "application/pdf": ".pdf",
-};
-
-export function buildRegistrationFilePathname(args: {
-  eventId: string;
-  formFieldId: string;
-  uploadSessionId: string;
-  contentType: string;
-}): string {
-  const ext = CONTENT_TYPE_EXT[args.contentType] ?? "";
-  const ts = Date.now();
-  return `events/${args.eventId}/registration-files/${args.uploadSessionId}/${args.formFieldId}-${ts}${ext}`;
-}
-
 // ─── Idempotent write (called from onUploadCompleted) ────────────────
 
 export interface WriteRegistrationFileInput {
