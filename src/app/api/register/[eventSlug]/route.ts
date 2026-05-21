@@ -11,6 +11,7 @@ import {
   OTHER_SUFFIX,
 } from "@/lib/form-builder/options-parse";
 import { FieldType } from "@prisma/client";
+import { getOrCreateUploadSessionId } from "@/lib/registration/upload-session";
 
 // GET: Look up contact by invite token to pre-fill the registration form
 // Also returns event details and branding for the registration page
@@ -126,7 +127,15 @@ export async function GET(
     }
   }
 
-  return NextResponse.json(response);
+  // Attach the visitor's reg_upload_session cookie before returning.
+  // Establishing it on the first GET means FILE-field upload tokens
+  // can be minted as soon as the visitor selects a file — no separate
+  // "open a session" round-trip. The cookie value (signed UUID) is
+  // never echoed into the response JSON, only set as an HttpOnly
+  // Set-Cookie header.
+  const res = NextResponse.json(response);
+  getOrCreateUploadSessionId(req, res);
+  return res;
 }
 
 export async function POST(
