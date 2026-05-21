@@ -11,7 +11,11 @@ import {
   OTHER_SUFFIX,
 } from "@/lib/form-builder/options-parse";
 import { FieldType } from "@prisma/client";
-import { getOrCreateUploadSessionId } from "@/lib/registration/upload-session";
+import {
+  getOrCreateUploadSessionId,
+  readUploadSessionId,
+} from "@/lib/registration/upload-session";
+import { getRegistrationFileById } from "@/lib/services/registration-file.service";
 
 // GET: Look up contact by invite token to pre-fill the registration form
 // Also returns event details and branding for the registration page
@@ -188,11 +192,112 @@ export async function POST(
     if (!field.required) continue;
     if (!isFieldRequiredByCondition(field.conditional, body)) continue;
     const value = body[field.name];
+    // FILE fields carry their value as { fileId, ... } when present and
+    // null when absent. The plain-empty check below covers null; we add
+    // a defensive shape check so a malformed object (missing fileId)
+    // also rejects rather than slipping through and failing on link.
+    if (field.type === FieldType.FILE) {
+      const isUploaded =
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        typeof (value as { fileId?: unknown }).fileId === "string";
+      if (!isUploaded) {
+        return NextResponse.json(
+          { error: `${field.label} is required` },
+          { status: 400 }
+        );
+      }
+      continue;
+    }
     if (value === undefined || value === null || value === "") {
       return NextResponse.json({
         error: `${field.label} is required`
       }, { status: 400 });
     }
+  }
+
+  // FILE-field claim check: every submitted file ref must point at a row
+  // we (a) own through the reg_upload_session cookie, (b) uploaded for
+  // this specific FormField, and (c) haven't already linked to another
+  // registration. Files survive across submission attempts inside the
+  // 24h cookie window, but each row can only be linked once.
+  //
+  // We collect the validated rows here and replay them inside the
+  // transaction so a successful registration atomically claims every
+  // file. Cleaner than doing the lookup twice.
+  type ClaimedFile = {
+    field: (typeof registrationFields)[number];
+    fileId: string;
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+  };
+  const claimedFiles: ClaimedFile[] = [];
+  const uploadSessionForClaim = readUploadSessionId(req);
+
+  for (const field of registrationFields) {
+    if (field.type !== FieldType.FILE) continue;
+    const raw = body[field.name];
+    if (raw === undefined || raw === null) continue;
+
+    if (
+      typeof raw !== "object" ||
+      Array.isArray(raw) ||
+      typeof (raw as { fileId?: unknown }).fileId !== "string"
+    ) {
+      return NextResponse.json(
+        { error: `${field.label}: invalid file value` },
+        { status: 400 }
+      );
+    }
+    if (!uploadSessionForClaim) {
+      // Cookie missing — the visitor would have been unable to upload
+      // in the first place. Most likely a stale form left open across
+      // a cookie expiry.
+      return NextResponse.json(
+        { error: "Upload session expired. Please reload and re-upload." },
+        { status: 401 }
+      );
+    }
+    const fileId = (raw as { fileId: string }).fileId;
+    const file = await getRegistrationFileById(fileId);
+    if (
+      !file ||
+      file.uploadSessionId !== uploadSessionForClaim ||
+      file.formFieldId !== field.id ||
+      file.registrationId !== null
+    ) {
+      // Any of: row gone, session mismatch (probe), wrong field
+      // (replaced and pointing at the old id), or already claimed.
+      return NextResponse.json(
+        {
+          error: `${field.label}: file no longer available; please re-upload`,
+        },
+        { status: 400 }
+      );
+    }
+    claimedFiles.push({
+      field,
+      fileId: file.id,
+      filename: file.originalName,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+    });
+  }
+
+  // Replace each FILE field's body value with the server-canonical
+  // denormalized ref so Registration.formData carries the
+  // DB-authoritative filename/size, not whatever the client claimed.
+  // Drops the uploadedAt the client sends — formData is a per-row cache,
+  // not a copy of the RegistrationFile timestamps.
+  for (const claim of claimedFiles) {
+    body[claim.field.name] = {
+      fileId: claim.fileId,
+      filename: claim.filename,
+      mimeType: claim.mimeType,
+      sizeBytes: claim.sizeBytes,
+    };
   }
 
   // Option-aware validation for SELECT/RADIO/MULTISELECT: every submitted
@@ -385,6 +490,31 @@ export async function POST(
         },
       });
 
+      // Claim each uploaded file by linking its row to the new
+      // registration. The where clause includes `registrationId: null`
+      // so a concurrent submission can't double-claim — if the count is
+      // anything other than 1 we throw and the tx rolls back.
+      for (const claim of claimedFiles) {
+        const linkRes = await tx.registrationFile.updateMany({
+          where: {
+            id: claim.fileId,
+            uploadSessionId: uploadSessionForClaim ?? "",
+            formFieldId: claim.field.id,
+            registrationId: null,
+          },
+          data: {
+            registrationId: created.id,
+            uploadedBy: `registration:${created.id}`,
+          },
+        });
+        if (linkRes.count !== 1) {
+          // Race: another submission or orphan cleanup beat us between
+          // the pre-tx validation and the update. Roll back so neither
+          // the registration nor partial file links survive.
+          throw new FileClaimRaceError(claim.field.label);
+        }
+      }
+
       await tx.contact.update({
         where: { id: upsertedContact.id },
         data: { status: isConfirmed ? "REGISTERED" : "INVITED" },
@@ -414,6 +544,15 @@ export async function POST(
       );
     }
 
+    if (err instanceof FileClaimRaceError) {
+      return NextResponse.json(
+        {
+          error: `${err.fieldLabel}: file no longer available; please re-upload`,
+        },
+        { status: 409 }
+      );
+    }
+
     // Concurrent submit raced us on the unique (contactId) or (eventId, email) constraint
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -433,5 +572,12 @@ class AlreadyRegisteredError extends Error {
   constructor(public readonly confirmationCode: string) {
     super("ALREADY_REGISTERED");
     this.name = "AlreadyRegisteredError";
+  }
+}
+
+class FileClaimRaceError extends Error {
+  constructor(public readonly fieldLabel: string) {
+    super("FILE_CLAIM_RACE");
+    this.name = "FileClaimRaceError";
   }
 }
