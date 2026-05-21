@@ -47,6 +47,19 @@ function formatCell(
       .join(", ");
   }
   if (typeof value === "boolean") return value ? "Yes" : "No";
+  // FILE field stub (Stage 2). The cell emits just the original
+  // filename; Stage 3 adds size/mime columns if anyone needs them.
+  // Without this branch a FILE column would serialize as
+  // "[object Object]" in the downloaded CSV.
+  if (
+    field.type === FieldType.FILE &&
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as { filename?: unknown }).filename === "string"
+  ) {
+    return (value as { filename: string }).filename;
+  }
   if (value === OTHER_VALUE) return renderOther();
   if (parsed.options.length > 0) {
     const opt = parsed.options.find((o) => o.value === value);

@@ -4,6 +4,7 @@ import { authorize } from "@/lib/api-auth";
 import { FieldType, FieldWidth } from "@prisma/client";
 import { FIELD_TYPES } from "@/lib/form-builder/field-types";
 import { fieldOptionsInputSchema } from "@/lib/validations/form-field";
+import { validateFileFieldMetadataInput } from "@/lib/validations/file-field-metadata";
 import { findReferencedOptionValues } from "@/lib/form-builder/option-value-lock";
 import {
   parseFormFieldOptions,
@@ -149,7 +150,21 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (body.conditional !== undefined) updateData.conditional = body.conditional;
     if (body.isActive !== undefined) updateData.isActive = body.isActive;
     if (body.defaultValue !== undefined) updateData.defaultValue = body.defaultValue;
-    if (body.metadata !== undefined) updateData.metadata = body.metadata;
+    if (body.metadata !== undefined) {
+      // Type-scoped validation: only FILE owns a metadata schema today.
+      // Effective type = body.type if changing, else the existing row.
+      // `null` is "clear the column" (used on FILE → other-type
+      // transitions to drop stale FILE keys) and always passes.
+      const effectiveType =
+        (body.type as FieldType | undefined) ?? existing.type;
+      if (effectiveType === "FILE" && body.metadata !== null) {
+        const check = validateFileFieldMetadataInput(body.metadata);
+        if (!check.ok) {
+          return NextResponse.json({ error: check.message }, { status: 400 });
+        }
+      }
+      updateData.metadata = body.metadata;
+    }
 
     const field = await prisma.formField.update({
       where: { id: fieldId },

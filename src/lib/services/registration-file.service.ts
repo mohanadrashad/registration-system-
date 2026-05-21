@@ -314,3 +314,44 @@ export async function getRegistrationFileById(
     },
   });
 }
+
+export interface PreSubmissionFile {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: Date;
+}
+
+/**
+ * Visitor-facing lookup: returns the most-recent not-yet-submitted file
+ * for a given (uploadSessionId, formFieldId) pair, or null when none
+ * exists. Used by the public upload control to poll after a Vercel Blob
+ * upload finishes so it can read back the fileId the onUploadCompleted
+ * webhook just minted.
+ *
+ * The DELETE-then-upload replace flow guarantees at most one matching
+ * row at any time, but we still order DESC + take(1) to be defensive
+ * against a stale row that hasn't been swept yet.
+ */
+export async function getCurrentPreSubmissionFile(args: {
+  uploadSessionId: string;
+  formFieldId: string;
+}): Promise<PreSubmissionFile | null> {
+  const row = await prisma.registrationFile.findFirst({
+    where: {
+      uploadSessionId: args.uploadSessionId,
+      formFieldId: args.formFieldId,
+      registrationId: null,
+    },
+    orderBy: { uploadedAt: "desc" },
+    select: {
+      id: true,
+      originalName: true,
+      mimeType: true,
+      sizeBytes: true,
+      uploadedAt: true,
+    },
+  });
+  return row;
+}

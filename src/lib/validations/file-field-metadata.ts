@@ -17,17 +17,50 @@
 import { z } from "zod";
 
 /**
- * Allowed MIME types for v1. Adding more is a one-line change here
- * plus a corresponding checkbox in the Stage 2 admin UI. JPEG / PNG /
- * PDF cover ~95% of registration use cases per the spec.
+ * Allowed MIME types the admin can configure for a FILE field. Adding
+ * more is a one-line change here plus a corresponding checkbox row in
+ * the admin UI (file-field-settings.tsx). JPEG / PNG / PDF cover ~95%
+ * of registration use cases; .docx / .xlsx are available but unchecked
+ * by default.
  */
 export const ALLOWED_FILE_MIME_TYPES = [
   "image/jpeg",
   "image/png",
   "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ] as const;
 
 export type AllowedFileMimeType = (typeof ALLOWED_FILE_MIME_TYPES)[number];
+
+/**
+ * Display metadata for each allowed MIME type. The admin UI iterates
+ * this list to render checkbox rows; the upload-control hint text and
+ * Stage 3 admin display can also reuse the friendly labels.
+ *
+ * `shortLabel` is the user-facing extension list shown in checkbox
+ * rows ("JPEG image (.jpg, .jpeg)"). `acceptExt` is the comma-joined
+ * extension form for client-side `<input accept>`.
+ */
+export const FILE_MIME_OPTIONS: ReadonlyArray<{
+  mime: AllowedFileMimeType;
+  shortLabel: string;
+  acceptExt: string;
+}> = [
+  { mime: "image/jpeg", shortLabel: "JPEG image (.jpg, .jpeg)", acceptExt: ".jpg,.jpeg" },
+  { mime: "image/png", shortLabel: "PNG image (.png)", acceptExt: ".png" },
+  { mime: "application/pdf", shortLabel: "PDF document (.pdf)", acceptExt: ".pdf" },
+  {
+    mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    shortLabel: "Word document (.docx)",
+    acceptExt: ".docx",
+  },
+  {
+    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    shortLabel: "Excel spreadsheet (.xlsx)",
+    acceptExt: ".xlsx",
+  },
+];
 
 export const MIN_FILE_MAX_SIZE_MB = 1;
 export const MAX_FILE_MAX_SIZE_MB = 25;
@@ -84,4 +117,35 @@ export function parseFileFieldMetadata(raw: unknown): FileFieldMetadata {
 /** Convenience: maxSizeMB → bytes. The Vercel Blob SDK takes bytes. */
 export function maxSizeMBToBytes(maxSizeMB: number): number {
   return maxSizeMB * 1024 * 1024;
+}
+
+/**
+ * Strict validation for the FormField write path (POST + PATCH).
+ *
+ * Returns `{ ok: true, value }` when the payload is a valid FileFieldMetadata,
+ * or `{ ok: false, message }` when it isn't. Callers should reject the
+ * request with HTTP 400 and the returned message.
+ *
+ * The route layer should only invoke this when the effective field type
+ * is FILE — for other types, `FormField.metadata` stays a free-form
+ * `Json?` with no per-type schema, leaving room for future field types
+ * to claim their own keys. The route also passes `null` through
+ * untouched as "clear the column", which is the correct behavior on
+ * type-change-away-from-FILE.
+ */
+export function validateFileFieldMetadataInput(
+  raw: unknown
+): { ok: true; value: FileFieldMetadata } | { ok: false; message: string } {
+  const parsed = fileFieldMetadataSchema.safeParse(raw);
+  if (parsed.success) return { ok: true, value: parsed.data };
+
+  // Surface a short, actionable message rather than the full Zod issue
+  // tree — the admin UI already prevents most bad inputs at the source.
+  const first = parsed.error.issues[0];
+  const path = first?.path.join(".") || "metadata";
+  const message =
+    first?.message
+      ? `Invalid FILE field metadata (${path}): ${first.message}`
+      : "Invalid FILE field metadata";
+  return { ok: false, message };
 }

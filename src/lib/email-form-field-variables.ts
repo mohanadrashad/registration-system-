@@ -79,6 +79,20 @@ export function buildFormFieldVariables(
       continue;
     }
 
+    // FILE field stub (Stage 2). Email body variable `{{fieldName}}` for
+    // a FILE field renders just the filename. The spec deliberately does
+    // not expose a download URL in emails (signed URLs expire in 5 min
+    // — dead by the time the email arrives) so this is the final shape.
+    if (
+      field.type === "FILE" &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      typeof (value as { filename?: unknown }).filename === "string"
+    ) {
+      out[field.name] = (value as { filename: string }).filename;
+      continue;
+    }
+
     if (value === OTHER_VALUE) {
       out[field.name] = renderOther();
       continue;
