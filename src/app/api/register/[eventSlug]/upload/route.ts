@@ -175,8 +175,21 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         // Vercel's upload-completed payload doesn't carry the size;
         // HEAD the blob to populate it. ~50ms round-trip, worth it so
         // admins see "(482 KB)" in the UI without a second query at
-        // render time. SDK delta from PhaseReceipt: receipts store 0
-        // here because the size isn't rendered for them.
+        // render time.
+        //
+        // Deliberate deviation from PhaseReceipt. PhaseReceipt's
+        // onUploadCompleted (src/app/api/portal/.../receipts/upload/route.ts)
+        // writes sizeBytes: 0 because nothing in the portal/admin UI
+        // renders the size of a receipt — admins see a filename and a
+        // View button, that's it. FILE field is the opposite: Stage 2's
+        // visitor upload control shows "(482 KB)" inline next to the
+        // filename in the uploaded state, and Stage 3's attendee detail
+        // page shows the same. Querying the blob at render time would
+        // be a per-row N+1 against Vercel Blob; HEADing once on upload
+        // and caching the result on the RegistrationFile row is
+        // strictly cheaper. If the SDK ever surfaces size in the
+        // upload-completed payload, drop this HEAD and use the
+        // payload field instead.
         let sizeBytes = 0;
         try {
           const headResult = await head(blob.url);
