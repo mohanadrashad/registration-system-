@@ -431,7 +431,21 @@ export default function AttendeesPage() {
   }
 
   function handleExport() {
-    window.open(`/api/events/${eventId}/contacts/export?format=csv`, "_blank");
+    // Stage 2: switched from the contacts/export route to the
+    // generalized registrations/export. The old route only emitted
+    // Contact columns, missing every FormField column on the form (a
+    // pre-existing UI/route mismatch that masked itself because admins
+    // still got a CSV — just a narrow one). The registrations route
+    // emits the same Contact columns plus one column per FormField,
+    // ordered by FormField.order, and carries the Stage 2 FILE-field
+    // filename stub.
+    //
+    // Side effect of switching: only REGISTERED contacts appear in the
+    // CSV — IMPORTED/INVITED contacts who never registered no longer
+    // show up. Reasonable on an "Attendees" page; if the broader list
+    // is needed, contacts/export still exists but is no longer wired
+    // to any UI button.
+    window.open(`/api/events/${eventId}/registrations/export?format=csv`, "_blank");
   }
 
   if (loading) {
