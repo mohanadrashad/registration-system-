@@ -118,3 +118,34 @@ export function parseFileFieldMetadata(raw: unknown): FileFieldMetadata {
 export function maxSizeMBToBytes(maxSizeMB: number): number {
   return maxSizeMB * 1024 * 1024;
 }
+
+/**
+ * Strict validation for the FormField write path (POST + PATCH).
+ *
+ * Returns `{ ok: true, value }` when the payload is a valid FileFieldMetadata,
+ * or `{ ok: false, message }` when it isn't. Callers should reject the
+ * request with HTTP 400 and the returned message.
+ *
+ * The route layer should only invoke this when the effective field type
+ * is FILE — for other types, `FormField.metadata` stays a free-form
+ * `Json?` with no per-type schema, leaving room for future field types
+ * to claim their own keys. The route also passes `null` through
+ * untouched as "clear the column", which is the correct behavior on
+ * type-change-away-from-FILE.
+ */
+export function validateFileFieldMetadataInput(
+  raw: unknown
+): { ok: true; value: FileFieldMetadata } | { ok: false; message: string } {
+  const parsed = fileFieldMetadataSchema.safeParse(raw);
+  if (parsed.success) return { ok: true, value: parsed.data };
+
+  // Surface a short, actionable message rather than the full Zod issue
+  // tree — the admin UI already prevents most bad inputs at the source.
+  const first = parsed.error.issues[0];
+  const path = first?.path.join(".") || "metadata";
+  const message =
+    first?.message
+      ? `Invalid FILE field metadata (${path}): ${first.message}`
+      : "Invalid FILE field metadata";
+  return { ok: false, message };
+}

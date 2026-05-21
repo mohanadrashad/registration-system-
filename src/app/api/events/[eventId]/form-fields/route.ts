@@ -4,6 +4,7 @@ import { authorize } from "@/lib/api-auth";
 import { getOrCreateDefaultRegistrationStep } from "@/lib/services/phase.service";
 import { FieldType, FieldWidth } from "@prisma/client";
 import { fieldOptionsInputSchema } from "@/lib/validations/form-field";
+import { validateFileFieldMetadataInput } from "@/lib/validations/file-field-metadata";
 import {
   parseFormFieldOptions,
   serializeFormFieldOptions,
@@ -117,6 +118,17 @@ export async function POST(request: Request, { params }: RouteParams) {
       validatedOptions = serializeFormFieldOptions(
         parseFormFieldOptions(parsed.data)
       );
+    }
+
+    // Type-scoped metadata validation. Only FILE owns a schema today;
+    // other types pass through unchanged (free-form Json?). A null
+    // metadata for FILE is allowed and means "use defaults" — the
+    // permissive read in parseFileFieldMetadata handles that case.
+    if (body.type === "FILE" && body.metadata !== undefined && body.metadata !== null) {
+      const check = validateFileFieldMetadataInput(body.metadata);
+      if (!check.ok) {
+        return NextResponse.json({ error: check.message }, { status: 400 });
+      }
     }
 
     const field = await prisma.formField.create({
