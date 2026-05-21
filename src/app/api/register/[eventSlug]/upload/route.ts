@@ -144,6 +144,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           maxSizeBytes,
         };
 
+        // Note on the missing `pathname` field below. We deliberately
+        // do NOT return a server-controlled pathname here — not because
+        // we don't want one, but because the @vercel/blob v2.3.3 SDK
+        // doesn't accept it from this callback. The return type at
+        // node_modules/@vercel/blob/dist/client.d.ts:298 is:
+        //
+        //   Pick<GenerateClientTokenOptions,
+        //     'allowedContentTypes' | 'maximumSizeInBytes' |
+        //     'validUntil' | 'addRandomSuffix' | 'allowOverwrite' |
+        //     'cacheControlMaxAge' | 'ifMatch'> & { ... }
+        //
+        // `pathname` is omitted from the Pick<>. Returning one is a
+        // no-op; the SDK uses the client-supplied basename plus the
+        // random suffix instead. So blob paths land flat at the bucket
+        // root as `<basename>-<random-suffix><ext>` rather than at the
+        // helper's intended `events/<eventId>/registration-files/...`
+        // scheme. PhaseReceipt's matching upload route hit the same
+        // ceiling — see the tombstone comment block at
+        // src/app/api/portal/[eventSlug]/phases/[phaseId]/receipts/upload/route.ts:214-221.
+        //
+        // Cross-event isolation lives at the application layer instead:
+        // the stream route's getRegistrationFileForAdmin guards on
+        // formField.eventId so a fileId from event A cannot be streamed
+        // by an admin of event B even though storage paths intermingle.
+        //
+        // Revisit if the SDK ever exposes pathname override here. At
+        // that point the `buildRegistrationFilePathname` helper (deleted
+        // in Stage 3) can be reintroduced and wired.
         return {
           allowedContentTypes: allowedMimeTypes,
           maximumSizeInBytes: maxSizeBytes,

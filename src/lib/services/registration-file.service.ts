@@ -25,35 +25,7 @@
 import { Prisma } from "@prisma/client";
 import type { RegistrationFile } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { deleteBlob } from "@/lib/blob";
-
-// ─── Server-controlled pathname builder ──────────────────────────────
-//
-// Pathname scheme is server-controlled; the client never picks where
-// its file lands. Mirrors receipt.service.ts's buildReceiptPathname.
-//
-//   events/<eventId>/registration-files/<sessionId>/<formFieldId>-<ts><ext>
-//
-// addRandomSuffix is applied by the SDK at the put-token-mint side, so
-// concurrent uploads from the same session/field don't collide at the
-// blob layer even before this server function runs.
-
-const CONTENT_TYPE_EXT: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "application/pdf": ".pdf",
-};
-
-export function buildRegistrationFilePathname(args: {
-  eventId: string;
-  formFieldId: string;
-  uploadSessionId: string;
-  contentType: string;
-}): string {
-  const ext = CONTENT_TYPE_EXT[args.contentType] ?? "";
-  const ts = Date.now();
-  return `events/${args.eventId}/registration-files/${args.uploadSessionId}/${args.formFieldId}-${ts}${ext}`;
-}
+import { deleteBlob, streamPrivateBlob } from "@/lib/blob";
 
 // ─── Idempotent write (called from onUploadCompleted) ────────────────
 
@@ -313,6 +285,64 @@ export async function getRegistrationFileById(
       originalName: true,
     },
   });
+}
+
+export interface RegistrationFileForAdminStreaming {
+  id: string;
+  blobPath: string;
+  mimeType: string;
+  originalName: string;
+  sizeBytes: number;
+}
+
+/**
+ * Admin-side lookup for the stream-through read route. Returns the
+ * minimal row data needed to pipe the blob bytes back, only if the
+ * file's FormField belongs to the supplied event (cross-event guard).
+ * Returns null on missing-or-cross-event so the route caller can map
+ * either to a 404 without leaking existence.
+ *
+ * Mirrors the PhaseReceipt admin pattern at
+ * src/lib/services/receipt.service.ts:getReceiptForAdmin — same shape,
+ * same null-on-mismatch behavior, just different cascade chain
+ * (RegistrationFile → FormField → Event rather than
+ * PhaseReceipt → AttendeeSelection → Phase → Event).
+ *
+ * The caller is responsible for invoking authorizeEvent() before
+ * calling this; the service does not re-validate the admin session.
+ */
+export async function getRegistrationFileForAdmin(
+  fileId: string,
+  eventId: string
+): Promise<RegistrationFileForAdminStreaming | null> {
+  const row = await prisma.registrationFile.findUnique({
+    where: { id: fileId },
+    include: {
+      formField: { select: { eventId: true } },
+    },
+  });
+  if (!row) return null;
+  if (row.formField.eventId !== eventId) return null;
+  return {
+    id: row.id,
+    blobPath: row.blobPath,
+    mimeType: row.mimeType,
+    originalName: row.originalName,
+    sizeBytes: row.sizeBytes,
+  };
+}
+
+/**
+ * Convenience for the stream route — fetches the SDK stream object for
+ * a private blob. Throws if the blob is missing (orphan-cleanup window
+ * or manual delete); the route handler maps that to 410 Gone.
+ *
+ * Same convenience wrapper as openReceiptStream in receipt.service.ts.
+ */
+export async function openRegistrationFileStream(
+  file: RegistrationFileForAdminStreaming
+) {
+  return streamPrivateBlob(file.blobPath);
 }
 
 export interface PreSubmissionFile {

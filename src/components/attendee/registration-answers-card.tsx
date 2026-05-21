@@ -4,6 +4,7 @@ import { ClipboardList } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { FieldEditInput } from "./field-edit-input";
+import { FileViewerInline, isFileRef } from "./file-viewer-inline";
 import {
   type ContactDetail,
   type FormFieldDef,
@@ -23,12 +24,17 @@ export function RegistrationAnswersCard({
   editing,
   editValues,
   onChangeValue,
+  eventId,
 }: {
   contact: ContactDetail;
   fields: FormFieldDef[];
   editing: boolean;
   editValues: Record<string, unknown>;
   onChangeValue: (name: string, v: unknown) => void;
+  // Stage 3: needed to build the FILE stream-through URL on view-mode
+  // rendering. The route param at the page level is the source of
+  // truth — passed in rather than re-derived here.
+  eventId: string;
 }) {
   return (
     <Card>
@@ -64,18 +70,34 @@ export function RegistrationAnswersCard({
           </div>
         ) : (
           <div className="space-y-3">
-            {fields.map((field) => (
-              <div key={field.name} className="flex items-start gap-3 text-sm">
-                <span className="text-muted-foreground w-28 shrink-0">{field.label}</span>
-                <span className="font-medium break-words">
-                  {formatFieldValue(
-                    field,
-                    getFieldValue(contact, field),
-                    contact.metadata
+            {fields.map((field) => {
+              const raw = getFieldValue(contact, field);
+              // Stage 3: FILE fields render a rich one-liner with an
+              // inline View button instead of the bare filename string
+              // formatFieldValue returns. Falls back to formatFieldValue
+              // when the value isn't a well-formed FILE ref (orphan
+              // cleanup edge case, malformed legacy data) so the row
+              // still shows the filename rather than nothing.
+              const showRichFile =
+                field.type === "FILE" && isFileRef(raw);
+              return (
+                <div
+                  key={field.name}
+                  className="flex items-start gap-3 text-sm"
+                >
+                  <span className="text-muted-foreground w-28 shrink-0">
+                    {field.label}
+                  </span>
+                  {showRichFile ? (
+                    <FileViewerInline file={raw} eventId={eventId} />
+                  ) : (
+                    <span className="font-medium break-words">
+                      {formatFieldValue(field, raw, contact.metadata)}
+                    </span>
                   )}
-                </span>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </CardContent>

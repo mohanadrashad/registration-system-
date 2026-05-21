@@ -247,6 +247,7 @@ export default function AttendeeDetailPage() {
             editing={editing}
             editValues={editValues}
             onChangeValue={onChangeValue}
+            eventId={eventId}
           />
           <AdminCard
             contact={contact}
