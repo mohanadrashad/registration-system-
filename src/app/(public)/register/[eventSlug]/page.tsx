@@ -40,6 +40,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { FileUploadControl } from "@/components/public/file-upload-control";
+import { parseFileFieldMetadata } from "@/lib/validations/file-field-metadata";
 
 interface FormField {
   id: string;
@@ -60,6 +62,9 @@ interface FormField {
   conditional?: Record<string, unknown>;
   isSystem: boolean;
   defaultValue?: string;
+  // FILE fields carry { maxSizeMB, allowedMimeTypes } here. Other types
+  // may leave it null/undefined. Always read via parseFileFieldMetadata.
+  metadata?: unknown;
 }
 
 interface FormStep {
@@ -99,7 +104,18 @@ interface EventData {
   contact?: Record<string, string | null>;
 }
 
-type FormValueMap = Record<string, string | boolean | string[]>;
+// FILE fields store the denormalized upload ref directly under the
+// field name; non-FILE types continue to use the original primitive
+// shapes. The submission handler reads either shape per field type.
+type UploadedFileRef = {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+};
+type FormFieldValue = string | boolean | string[] | UploadedFileRef | null;
+type FormValueMap = Record<string, FormFieldValue>;
 
 interface DraftPayload {
   currentStep: number;
@@ -255,6 +271,8 @@ export default function RegisterPage() {
               initial[field.name] = false;
             } else if (field.type === "MULTISELECT") {
               initial[field.name] = [];
+            } else if (field.type === "FILE") {
+              initial[field.name] = null;
             } else {
               initial[field.name] = "";
             }
@@ -379,7 +397,7 @@ export default function RegisterPage() {
     setCurrentStep(0);
   }
 
-  function handleFieldChange(name: string, value: string | boolean | string[]) {
+  function handleFieldChange(name: string, value: FormFieldValue) {
     setFormValues((prev) => ({ ...prev, [name]: value }));
     setError("");
   }
@@ -914,6 +932,22 @@ export default function RegisterPage() {
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.required}
             className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+          />
+        )}
+
+        {field.type === "FILE" && (
+          <FileUploadControl
+            eventSlug={eventSlug}
+            formFieldId={field.id}
+            metadata={parseFileFieldMetadata(field.metadata)}
+            required={field.required}
+            lang={lang}
+            value={
+              value && typeof value === "object" && !Array.isArray(value)
+                ? (value as UploadedFileRef)
+                : null
+            }
+            onChange={(next) => handleFieldChange(field.name, next)}
           />
         )}
 

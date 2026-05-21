@@ -80,6 +80,11 @@ export async function GET(
       conditional: field.conditional,
       isSystem: field.isSystem,
       defaultValue: field.defaultValue,
+      // FILE fields need `{ maxSizeMB, allowedMimeTypes }` client-side to
+      // render the upload control with the configured limits. Other
+      // field types ignore this. parseFileFieldMetadata handles the
+      // null/legacy case transparently.
+      metadata: field.metadata,
     })),
   }));
 
