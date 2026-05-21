@@ -655,11 +655,13 @@ export default function BrandingPage() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Stable selectors you can target:{" "}
-                  <code className="font-mono">[data-event-date]</code> and{" "}
-                  <code className="font-mono">[data-event-time]</code> wrap the
-                  event date and time displayed below the banner — use{" "}
+                  <code className="font-mono">[data-event-date]</code>,{" "}
+                  <code className="font-mono">[data-event-time]</code>, and{" "}
+                  <code className="font-mono">[data-event-venue]</code> wrap
+                  the event date, time, and venue displayed below the banner —
+                  use{" "}
                   <code className="font-mono">
-                    {`[data-event-date], [data-event-time] { display: none; }`}
+                    {`[data-event-date], [data-event-time], [data-event-venue] { display: none; }`}
                   </code>{" "}
                   to hide them.
                 </p>

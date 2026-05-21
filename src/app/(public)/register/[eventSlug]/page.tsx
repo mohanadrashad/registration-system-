@@ -1073,7 +1073,10 @@ export default function RegisterPage() {
               </span>
             </div>
             {eventData.venue && (
-              <div className="flex items-center justify-center gap-3 text-gray-300">
+              <div
+                data-event-venue
+                className="flex items-center justify-center gap-3 text-gray-300"
+              >
                 <MapPin className="h-5 w-5" style={{ color: primaryColor }} />
                 <span className="text-base">{eventData.venue}</span>
               </div>
@@ -1150,7 +1153,10 @@ export default function RegisterPage() {
                   {formatTime(eventData.startDate)}
                 </span>
                 {eventData.venue && (
-                  <span className="flex items-center gap-1">
+                  <span
+                    data-event-venue
+                    className="flex items-center gap-1"
+                  >
                     <MapPin
                       className="h-3.5 w-3.5"
                       style={{ color: primaryColor }}
