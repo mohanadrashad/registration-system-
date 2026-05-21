@@ -252,15 +252,39 @@ export function FileUploadControl({
   }
 
   // Client-side validation. Returns null on success; otherwise the
-  // localised error string the empty-state error banner will show.
+  // localised error string the error banner will show.
+  //
+  // We trust `file.type` from the browser when it's present, but some
+  // browsers (older Safari, FF on Linux for less-common extensions)
+  // report an empty string for valid files. In that case we fall back
+  // to the file extension before rejecting outright — matches the
+  // server-side enforcement which the SDK does against the actual
+  // Content-Type header the upload sends anyway.
   function validateClientSide(file: File): string | null {
-    if (
-      !(metadata.allowedMimeTypes as readonly string[]).includes(file.type)
-    ) {
-      const selectedExt =
-        file.name.split(".").pop()?.toUpperCase() || file.type || "?";
-      return t.wrongType(selectedExt, shortExtsLabel);
+    if (file.size === 0) {
+      // Zero-byte file means the OS cancelled the read, the file was
+      // deleted between picker open and submit, or the user actually
+      // picked an empty file. None of these should hit the upload.
+      return t.wrongType(
+        file.name.split(".").pop()?.toUpperCase() || "?",
+        shortExtsLabel
+      );
     }
+
+    const acceptedMimes = metadata.allowedMimeTypes as readonly string[];
+    const acceptedExts = enabledMimeOpts
+      .flatMap((o) => o.acceptExt.split(","))
+      .map((e) => e.toLowerCase());
+    const ext = `.${(file.name.split(".").pop() ?? "").toLowerCase()}`;
+
+    const mimeMatches = file.type && acceptedMimes.includes(file.type);
+    const extMatches = ext !== "." && acceptedExts.includes(ext);
+    if (!mimeMatches && !extMatches) {
+      const selected =
+        ext !== "." ? ext.slice(1).toUpperCase() : file.type || "?";
+      return t.wrongType(selected, shortExtsLabel);
+    }
+
     if (file.size > maxSizeBytes) {
       return t.tooLarge(file.size / (1024 * 1024), metadata.maxSizeMB);
     }
