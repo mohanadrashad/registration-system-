@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { FieldType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { computePhaseStatus } from "@/lib/services/phase.service";
 import { isFieldRequiredByCondition } from "@/lib/form-conditional";
 import { getPortalSessionFromRequest } from "@/lib/portal/session";
 import { submitPhasePortalSchema } from "@/lib/validations/selection";
+import {
+  parseFormFieldOptions,
+  OTHER_VALUE,
+  OTHER_SUFFIX,
+} from "@/lib/form-builder/options-parse";
 import {
   computePhaseCompletion,
   OptionFullError,
@@ -397,6 +402,90 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
           { error: `${f.label} is required` },
           { status: 400 }
         );
+      }
+    }
+
+    // Option-aware validation for SELECT/RADIO/MULTISELECT inside a
+    // POST_REGISTRATION phase. Mirrors the registration POST handler.
+    const mutableData = data as Record<string, unknown>;
+    for (const f of allFields) {
+      const isOption =
+        f.type === FieldType.SELECT ||
+        f.type === FieldType.RADIO ||
+        f.type === FieldType.MULTISELECT;
+      if (!isOption) continue;
+
+      const value = mutableData[f.name];
+      if (value === undefined || value === null || value === "") continue;
+
+      const fOpts = parseFormFieldOptions(f.options);
+      const allowed = new Set(fOpts.options.map((o) => o.value));
+      if (fOpts.other) allowed.add(OTHER_VALUE);
+
+      const submitted: string[] = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === "string")
+        : typeof value === "string"
+        ? [value]
+        : [];
+
+      for (const v of submitted) {
+        if (!allowed.has(v)) {
+          return NextResponse.json(
+            { error: `${f.label}: invalid choice "${v}"` },
+            { status: 400 }
+          );
+        }
+      }
+
+      if (
+        f.type === FieldType.MULTISELECT &&
+        typeof fOpts.maxSelections === "number" &&
+        fOpts.maxSelections > 0 &&
+        Array.isArray(value) &&
+        value.length > fOpts.maxSelections
+      ) {
+        return NextResponse.json(
+          {
+            error: `${f.label}: maximum ${fOpts.maxSelections} selections allowed`,
+          },
+          { status: 400 }
+        );
+      }
+
+      if (
+        fOpts.other &&
+        submitted.includes(OTHER_VALUE) &&
+        f.required &&
+        isFieldRequiredByCondition(f.conditional, mutableData)
+      ) {
+        const sibling = mutableData[`${f.name}${OTHER_SUFFIX}`];
+        const text = typeof sibling === "string" ? sibling.trim() : "";
+        if (!text) {
+          return NextResponse.json(
+            {
+              error: `${f.label}: please specify your answer`,
+              code: "OTHER_TEXT_REQUIRED",
+              fieldLabel: f.label,
+            },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
+    // Trim/drop stale __other sibling text so storage stays clean.
+    for (const f of allFields) {
+      const siblingKey = `${f.name}${OTHER_SUFFIX}`;
+      if (typeof mutableData[siblingKey] !== "string") continue;
+      const trimmed = (mutableData[siblingKey] as string).trim();
+      const value = mutableData[f.name];
+      const stillSelected =
+        value === OTHER_VALUE ||
+        (Array.isArray(value) && value.includes(OTHER_VALUE));
+      if (!stillSelected || !trimmed) {
+        delete mutableData[siblingKey];
+      } else {
+        mutableData[siblingKey] = trimmed;
       }
     }
   }

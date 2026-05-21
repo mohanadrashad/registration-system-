@@ -3,8 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { FieldType, FieldWidth } from "@prisma/client";
 import { FIELD_TYPES } from "@/lib/form-builder/field-types";
-import { fieldOptionsArrayUniqueSchema } from "@/lib/validations/form-field";
+import { fieldOptionsInputSchema } from "@/lib/validations/form-field";
 import { findReferencedOptionValues } from "@/lib/form-builder/option-value-lock";
+import {
+  parseFormFieldOptions,
+  serializeFormFieldOptions,
+} from "@/lib/form-builder/options-parse";
 
 interface RouteParams {
   params: Promise<{ eventId: string; fieldId: string }>;
@@ -74,8 +78,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (body.required !== undefined) updateData.required = body.required;
     if (body.validation !== undefined) updateData.validation = body.validation;
     if (body.options !== undefined) {
-      // Validate shape (every entry has a value+label, values unique).
-      const parsed = fieldOptionsArrayUniqueSchema.safeParse(body.options);
+      // Accepts legacy array or wrapped { options, other?, maxSelections? }.
+      const parsed = fieldOptionsInputSchema.safeParse(body.options);
       if (!parsed.success) {
         return NextResponse.json(
           {
@@ -85,6 +89,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
           { status: 400 }
         );
       }
+      const normalizedNew = parseFormFieldOptions(parsed.data);
 
       // Value-lock guard — only meaningful for option-bearing field
       // types. For non-option types the `options` column is ignored by
@@ -92,15 +97,9 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       // admin tooling may pass an empty array for cleanup).
       const fieldTypeForLock = (updateData.type as FieldType | undefined) ?? existing.type;
       if (FIELD_TYPES[fieldTypeForLock]?.hasOptions) {
-        const oldOptions = Array.isArray(existing.options)
-          ? (existing.options as Array<{ value?: unknown }>)
-          : [];
-        const oldValues = new Set(
-          oldOptions
-            .map((o) => o?.value)
-            .filter((v): v is string => typeof v === "string")
-        );
-        const newValues = new Set(parsed.data.map((o) => o.value));
+        const normalizedOld = parseFormFieldOptions(existing.options);
+        const oldValues = new Set(normalizedOld.options.map((o) => o.value));
+        const newValues = new Set(normalizedNew.options.map((o) => o.value));
         const removed = [...oldValues].filter((v) => !newValues.has(v));
 
         if (removed.length > 0) {
@@ -136,7 +135,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         }
       }
 
-      updateData.options = parsed.data;
+      updateData.options = serializeFormFieldOptions(normalizedNew);
     }
     if (body.order !== undefined) updateData.order = body.order;
     if (body.width !== undefined) {

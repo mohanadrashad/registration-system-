@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { OTHER_VALUE } from "@/lib/form-builder/options-parse";
 
 /**
  * Shape of a single FormField option as stored in FormField.options (Json).
@@ -13,7 +14,13 @@ import { z } from "zod";
  *             without an Arabic translation continue to validate.
  */
 export const fieldOptionSchema = z.object({
-  value: z.string().min(1, "Option value is required").max(100),
+  value: z
+    .string()
+    .min(1, "Option value is required")
+    .max(100)
+    .refine((v) => v !== OTHER_VALUE, {
+      message: `"${OTHER_VALUE}" is a reserved value for the Other choice`,
+    }),
   label: z.string().min(1, "Option label is required").max(200),
   labelAr: z
     .union([z.string().max(200), z.null()])
@@ -52,3 +59,33 @@ export const fieldOptionsArrayUniqueSchema = fieldOptionsArraySchema.superRefine
     });
   }
 );
+
+/**
+ * Wrapped options shape: same options array plus optional "Other" config
+ * and max-selections. Either feature being set turns the on-disk shape
+ * from legacy array into the wrapped object — see options-parse.ts.
+ */
+export const otherConfigSchema = z.object({
+  enabled: z.literal(true),
+  label: z.string().max(200).optional(),
+  labelAr: z.string().max(200).optional(),
+  placeholder: z.string().max(200).optional(),
+  placeholderAr: z.string().max(200).optional(),
+});
+
+export const fieldOptionsWrappedSchema = z.object({
+  options: fieldOptionsArrayUniqueSchema,
+  other: otherConfigSchema.optional(),
+  maxSelections: z.number().int().min(0).max(500).optional(),
+  showSelectionCounter: z.boolean().optional(),
+});
+
+/**
+ * Accepts either legacy array or new wrapped shape. PUT/POST handlers
+ * for form fields should validate against this and let the serializer
+ * decide which shape to persist.
+ */
+export const fieldOptionsInputSchema = z.union([
+  fieldOptionsArrayUniqueSchema,
+  fieldOptionsWrappedSchema,
+]);

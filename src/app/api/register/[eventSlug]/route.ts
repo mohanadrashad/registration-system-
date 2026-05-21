@@ -5,6 +5,12 @@ import { randomBytes } from "crypto";
 import { approvalService } from "@/lib/services/approval.service";
 import { sanitizeCss } from "@/lib/security/sanitize-css";
 import { isFieldRequiredByCondition } from "@/lib/form-conditional";
+import {
+  parseFormFieldOptions,
+  OTHER_VALUE,
+  OTHER_SUFFIX,
+} from "@/lib/form-builder/options-parse";
+import { FieldType } from "@prisma/client";
 
 // GET: Look up contact by invite token to pre-fill the registration form
 // Also returns event details and branding for the registration page
@@ -175,6 +181,97 @@ export async function POST(
     }
   }
 
+  // Option-aware validation for SELECT/RADIO/MULTISELECT: every submitted
+  // value must either be a real option value or the reserved __other (only
+  // if the field has Other enabled); MULTISELECT respects maxSelections;
+  // Other-on-required-with-empty-text fails.
+  for (const field of registrationFields) {
+    const isOption =
+      field.type === FieldType.SELECT ||
+      field.type === FieldType.RADIO ||
+      field.type === FieldType.MULTISELECT;
+    if (!isOption) continue;
+
+    const value = body[field.name];
+    if (value === undefined || value === null || value === "") continue;
+
+    const parsed = parseFormFieldOptions(field.options);
+    const allowed = new Set(parsed.options.map((o) => o.value));
+    if (parsed.other) allowed.add(OTHER_VALUE);
+
+    const submitted: string[] = Array.isArray(value)
+      ? value.filter((v): v is string => typeof v === "string")
+      : typeof value === "string"
+      ? [value]
+      : [];
+
+    for (const v of submitted) {
+      if (!allowed.has(v)) {
+        return NextResponse.json(
+          { error: `${field.label}: invalid choice "${v}"` },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (
+      field.type === FieldType.MULTISELECT &&
+      typeof parsed.maxSelections === "number" &&
+      parsed.maxSelections > 0 &&
+      Array.isArray(value) &&
+      value.length > parsed.maxSelections
+    ) {
+      return NextResponse.json(
+        {
+          error: `${field.label}: maximum ${parsed.maxSelections} selections allowed`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      parsed.other &&
+      submitted.includes(OTHER_VALUE) &&
+      field.required &&
+      isFieldRequiredByCondition(field.conditional, body)
+    ) {
+      const sibling = body[`${field.name}${OTHER_SUFFIX}`];
+      const text = typeof sibling === "string" ? sibling.trim() : "";
+      if (!text) {
+        // Stable code so the client can render the localized message
+        // even when the server-side validation fires (e.g., multi-step
+        // form where the broken field is on an earlier step and the
+        // current-step client validation didn't catch it).
+        return NextResponse.json(
+          {
+            error: `${field.label}: please specify your answer`,
+            code: "OTHER_TEXT_REQUIRED",
+            fieldLabel: field.label,
+          },
+          { status: 400 }
+        );
+      }
+    }
+  }
+
+  // Trim whitespace on any __other sibling text so empty-after-trim is
+  // not persisted; if visitor unselected Other in another field but a
+  // stale sibling remained, drop it entirely.
+  for (const field of registrationFields) {
+    const siblingKey = `${field.name}${OTHER_SUFFIX}`;
+    if (typeof body[siblingKey] !== "string") continue;
+    const trimmed = (body[siblingKey] as string).trim();
+    const value = body[field.name];
+    const stillSelected =
+      value === OTHER_VALUE ||
+      (Array.isArray(value) && value.includes(OTHER_VALUE));
+    if (!stillSelected || !trimmed) {
+      delete body[siblingKey];
+    } else {
+      body[siblingKey] = trimmed;
+    }
+  }
+
   // Determine registration status based on event settings (reads only; safe outside tx)
   const registrationStatus = await approvalService.determineRegistrationStatus(event.id);
   const isConfirmed = registrationStatus === "CONFIRMED";
@@ -184,8 +281,31 @@ export async function POST(
   const normalizedEmail = hasEmail
     ? email.toLowerCase()
     : `guest-${randomBytes(8).toString("hex")}@noemail.local`;
-  const safeFirstName = firstName || "";
-  const safeLastName = lastName || "";
+  // fullName fallback. Some events (notably system-protected forms
+  // configured before firstName/lastName were standardized) submit a
+  // single `fullName` field instead of split first/last. When both
+  // explicit columns are absent or empty AND fullName is present, split
+  // on the first whitespace: head → firstName, remainder → lastName.
+  // Explicit firstName/lastName from the body always win.
+  const firstEmpty =
+    typeof firstName !== "string" || firstName.trim() === "";
+  const lastEmpty =
+    typeof lastName !== "string" || lastName.trim() === "";
+  let safeFirstName = typeof firstName === "string" ? firstName : "";
+  let safeLastName = typeof lastName === "string" ? lastName : "";
+  if (firstEmpty && lastEmpty && typeof body.fullName === "string") {
+    const trimmed = body.fullName.trim();
+    if (trimmed) {
+      const idx = trimmed.search(/\s/);
+      if (idx === -1) {
+        safeFirstName = trimmed;
+        safeLastName = "";
+      } else {
+        safeFirstName = trimmed.slice(0, idx);
+        safeLastName = trimmed.slice(idx + 1).trim();
+      }
+    }
+  }
 
   try {
     const registration = await prisma.$transaction(async (tx) => {

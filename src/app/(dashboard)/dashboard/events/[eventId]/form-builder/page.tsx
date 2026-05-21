@@ -69,7 +69,14 @@ import {
   type PhaseOption,
 } from "./phase-options-panel";
 import { OptionsEditor } from "@/components/admin/options-editor";
+import { OtherOptionEditor } from "@/components/admin/other-option-editor";
+import { MaxSelectionsEditor } from "@/components/admin/max-selections-editor";
 import { FieldTextFields } from "@/components/admin/field-text-fields";
+import {
+  parseFormFieldOptions,
+  serializeFormFieldOptions,
+  type OtherConfig,
+} from "@/lib/form-builder/options-parse";
 
 interface FieldOption {
   value: string;
@@ -100,7 +107,14 @@ interface FormField {
   width: FieldWidth;
   isSystem: boolean;
   isActive: boolean;
+  // `options` is the option array for SELECT/RADIO/MULTISELECT only. The
+  // server may persist a wrapped shape with extra config; we always
+  // normalize to the array on load and keep `other` + `maxSelections` as
+  // siblings on this interface for editor state.
   options?: FieldOption[];
+  other?: OtherConfig;
+  maxSelections?: number;
+  showSelectionCounter?: boolean;
   stepId: string;
   conditional?: ConditionalRule | null;
 }
@@ -700,6 +714,9 @@ export default function FormBuilderPage() {
     required: false,
     width: "FULL" as FieldWidth,
     options: [] as FieldOption[],
+    other: undefined as OtherConfig | undefined,
+    maxSelections: undefined as number | undefined,
+    showSelectionCounter: undefined as boolean | undefined,
     conditional: null as ConditionalRule | null,
   });
 
@@ -721,7 +738,36 @@ export default function FormBuilderPage() {
       ]);
 
       if (phasesRes.ok) {
-        const data: Phase[] = await phasesRes.json();
+        const raw: Phase[] = await phasesRes.json();
+        // Normalize FormField.options: server may return either legacy
+        // array or wrapped { options, other?, maxSelections?, ... }. We
+        // always work with the parsed pieces internally so every editor
+        // reads consistent state.
+        const data: Phase[] = raw.map((phase) => ({
+          ...phase,
+          steps: phase.steps.map((step) => ({
+            ...step,
+            fields: step.fields.map((field) => {
+              const parsed = parseFormFieldOptions(field.options);
+              // Parser's FieldOption permits labelAr: null (matches the DB
+              // Json column); this component's interface uses string | undefined.
+              const normalized: FieldOption[] = parsed.options.map((o) => ({
+                value: o.value,
+                label: o.label,
+                ...(typeof o.labelAr === "string" && o.labelAr
+                  ? { labelAr: o.labelAr }
+                  : {}),
+              }));
+              return {
+                ...field,
+                options: normalized,
+                other: parsed.other,
+                maxSelections: parsed.maxSelections,
+                showSelectionCounter: parsed.showSelectionCounter,
+              };
+            }),
+          })),
+        }));
         setPhases(data);
         setSelectedPhaseId((current) => {
           const stillExists = data.find((p) => p.id === current);
@@ -829,10 +875,28 @@ export default function FormBuilderPage() {
       return;
     }
 
+    // Compose wrapped options (or legacy array) from the editor pieces.
+    const optionsPayload = OPTION_FIELD_TYPES.includes(newField.type)
+      ? serializeFormFieldOptions({
+          options: newField.options,
+          other: newField.other,
+          maxSelections:
+            newField.type === "MULTISELECT" ? newField.maxSelections : undefined,
+          showSelectionCounter:
+            newField.type === "MULTISELECT"
+              ? newField.showSelectionCounter
+              : undefined,
+        })
+      : undefined;
+
     const res = await fetch(`/api/events/${eventId}/form-fields`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...newField, stepId: selectedStepId }),
+      body: JSON.stringify({
+        ...newField,
+        options: optionsPayload,
+        stepId: selectedStepId,
+      }),
     });
     if (res.ok) {
       setIsAddDialogOpen(false);
@@ -848,6 +912,9 @@ export default function FormBuilderPage() {
         required: false,
         width: "FULL",
         options: [],
+        other: undefined,
+        maxSelections: undefined,
+        showSelectionCounter: undefined,
         conditional: null,
       });
       toast.success("Field added");
@@ -859,12 +926,25 @@ export default function FormBuilderPage() {
   }
 
   async function updateField(field: FormField) {
+    // Re-wrap options if this is an option-bearing field; for everything
+    // else we send the existing options through unchanged.
+    const optionsPayload = OPTION_FIELD_TYPES.includes(field.type)
+      ? serializeFormFieldOptions({
+          options: field.options ?? [],
+          other: field.other,
+          maxSelections:
+            field.type === "MULTISELECT" ? field.maxSelections : undefined,
+          showSelectionCounter:
+            field.type === "MULTISELECT" ? field.showSelectionCounter : undefined,
+        })
+      : field.options;
+
     const res = await fetch(
       `/api/events/${eventId}/form-fields/${field.id}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(field),
+        body: JSON.stringify({ ...field, options: optionsPayload }),
       }
     );
     if (res.ok) {
@@ -872,7 +952,8 @@ export default function FormBuilderPage() {
       toast.success("Field updated");
       fetchEverything();
     } else {
-      toast.error("Failed to update field");
+      const err = await res.json().catch(() => null);
+      toast.error(err?.error || "Failed to update field");
     }
   }
 
@@ -1224,15 +1305,38 @@ export default function FormBuilderPage() {
               />
 
               {OPTION_FIELD_TYPES.includes(newField.type) && (
-                <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
-                  <Label className="text-sm font-medium">Options</Label>
-                  <OptionsEditor
-                    options={newField.options}
-                    onChange={(opts) =>
-                      setNewField({ ...newField, options: opts })
-                    }
+                <>
+                  <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
+                    <Label className="text-sm font-medium">Options</Label>
+                    <OptionsEditor
+                      options={newField.options}
+                      onChange={(opts) =>
+                        setNewField({ ...newField, options: opts })
+                      }
+                    />
+                  </div>
+
+                  <OtherOptionEditor
+                    value={newField.other}
+                    onChange={(other) => setNewField({ ...newField, other })}
                   />
-                </div>
+
+                  {newField.type === "MULTISELECT" && (
+                    <MaxSelectionsEditor
+                      maxSelections={newField.maxSelections}
+                      showCounter={newField.showSelectionCounter}
+                      optionCount={newField.options.length}
+                      hasOther={!!newField.other}
+                      onChange={({ maxSelections, showCounter }) =>
+                        setNewField({
+                          ...newField,
+                          maxSelections,
+                          showSelectionCounter: showCounter,
+                        })
+                      }
+                    />
+                  )}
+                </>
               )}
             </div>
             <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
@@ -1724,15 +1828,40 @@ export default function FormBuilderPage() {
               />
 
               {OPTION_FIELD_TYPES.includes(editingField.type) && (
-                <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
-                  <Label className="text-sm font-medium">Options</Label>
-                  <OptionsEditor
-                    options={editingField.options ?? []}
-                    onChange={(opts) =>
-                      setEditingField({ ...editingField, options: opts })
+                <>
+                  <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
+                    <Label className="text-sm font-medium">Options</Label>
+                    <OptionsEditor
+                      options={editingField.options ?? []}
+                      onChange={(opts) =>
+                        setEditingField({ ...editingField, options: opts })
+                      }
+                    />
+                  </div>
+
+                  <OtherOptionEditor
+                    value={editingField.other}
+                    onChange={(other) =>
+                      setEditingField({ ...editingField, other })
                     }
                   />
-                </div>
+
+                  {editingField.type === "MULTISELECT" && (
+                    <MaxSelectionsEditor
+                      maxSelections={editingField.maxSelections}
+                      showCounter={editingField.showSelectionCounter}
+                      optionCount={(editingField.options ?? []).length}
+                      hasOther={!!editingField.other}
+                      onChange={({ maxSelections, showCounter }) =>
+                        setEditingField({
+                          ...editingField,
+                          maxSelections,
+                          showSelectionCounter: showCounter,
+                        })
+                      }
+                    />
+                  )}
+                </>
               )}
 
               <div className="flex items-center gap-2">

@@ -52,6 +52,12 @@ export function RegistrationAnswersCard({
                   field={field}
                   value={editValues[field.name]}
                   onChange={(v) => onChangeValue(field.name, v)}
+                  otherText={
+                    (editValues[`${field.name}_other`] as string) ?? ""
+                  }
+                  onChangeOtherText={(v) =>
+                    onChangeValue(`${field.name}_other`, v)
+                  }
                 />
               </div>
             ))}
@@ -62,7 +68,11 @@ export function RegistrationAnswersCard({
               <div key={field.name} className="flex items-start gap-3 text-sm">
                 <span className="text-muted-foreground w-28 shrink-0">{field.label}</span>
                 <span className="font-medium break-words">
-                  {formatFieldValue(field, getFieldValue(contact, field))}
+                  {formatFieldValue(
+                    field,
+                    getFieldValue(contact, field),
+                    contact.metadata
+                  )}
                 </span>
               </div>
             ))}

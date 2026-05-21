@@ -162,7 +162,8 @@ function SubmissionRow({ phase }: { phase: MergedPhase }) {
           label: f.label,
           value: formatFieldValue(
             { ...f, isSystem: false },
-            sub.data[f.name]
+            sub.data[f.name],
+            sub.data
           ),
         });
       }
