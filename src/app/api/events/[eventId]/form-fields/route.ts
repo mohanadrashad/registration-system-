@@ -49,10 +49,18 @@ export async function POST(request: Request, { params }: RouteParams) {
 
     const newOrder = (lastField?.order ?? -1) + 1;
 
-    // Validate required fields
-    if (!body.name || !body.label || !body.type) {
+    // Validate required fields. DIVIDER renders as a plain <hr> on the
+    // public form and has no visible text, so `label` is optional for
+    // that type only.
+    if (!body.name || !body.type) {
       return NextResponse.json(
-        { error: "name, label, and type are required" },
+        { error: "name and type are required" },
+        { status: 400 }
+      );
+    }
+    if (body.type !== "DIVIDER" && !body.label) {
+      return NextResponse.json(
+        { error: "label is required" },
         { status: 400 }
       );
     }

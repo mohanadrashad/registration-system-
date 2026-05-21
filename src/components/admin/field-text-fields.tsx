@@ -23,12 +23,28 @@ import { FieldType } from "@prisma/client";
 import { Label } from "@/components/ui/label";
 import { BilingualInput } from "@/components/admin/bilingual-input";
 
-/** Layout-only field types that don't take user input on the public form.
- *  For these we suppress the entire Display-text section, since labels /
- *  placeholders / help text don't apply (HEADING uses its label as the
- *  heading text, but the bilingual pair is part of FieldTextFields anyway —
- *  the renderer reads field.label directly). */
-const LAYOUT_ONLY_TYPES: FieldType[] = ["HEADING", "DIVIDER", "PARAGRAPH"];
+/**
+ * Per-type behavior matrix. Drives which of the three pairs render:
+ *
+ *   HEADING   → Label only. Renderer is `<h3>{label}</h3>` — no
+ *               placeholder concept, no subtitle affordance.
+ *   PARAGRAPH → Label only. Renderer is `<p>{label}</p>` — same shape
+ *               as HEADING, just smaller text.
+ *   DIVIDER   → Nothing. Renderer is `<hr>` with no text at all; the
+ *               entire section is suppressed and the API/client
+ *               validation must not require a label for this type.
+ *   default   → All three pairs (Label, Placeholder, Help text). For
+ *               every other field type — TEXT/EMAIL/PHONE/TEXTAREA/
+ *               NUMBER/SELECT/MULTISELECT/RADIO/CHECKBOX/DATE/TIME/
+ *               DATETIME/COUNTRY/PHONE_COUNTRY/FILE/HIDDEN.
+ */
+type DisplayTextLayout = "label-only" | "hidden" | "full";
+
+function getLayout(fieldType: FieldType): DisplayTextLayout {
+  if (fieldType === "DIVIDER") return "hidden";
+  if (fieldType === "HEADING" || fieldType === "PARAGRAPH") return "label-only";
+  return "full";
+}
 
 export interface FieldTextFieldsProps {
   fieldType: FieldType;
@@ -58,17 +74,24 @@ export function FieldTextFields({
   helpTextAr,
   onChange,
 }: FieldTextFieldsProps) {
-  if (LAYOUT_ONLY_TYPES.includes(fieldType)) {
-    // HEADING / DIVIDER / PARAGRAPH have no input — the whole section is
-    // suppressed. The field's label (when present) is still rendered by
-    // the public page as heading or info text directly; admins can edit
-    // it from a separate place if needed, but for layout types this
-    // dialog stays minimal. (HEADING and PARAGRAPH do use `label` as
-    // their display text — but we leave that nuance to a future polish;
-    // for now the most common case, an input field, gets the full
-    // bilingual treatment.)
+  const layout = getLayout(fieldType);
+  if (layout === "hidden") {
+    // DIVIDER: renderer is just <hr>, no text. Section disappears
+    // entirely; the addField/PATCH validation also relaxes the label
+    // requirement for DIVIDER (see form-builder/page.tsx and
+    // form-fields/route.ts).
     return null;
   }
+
+  // Caption for HEADING/PARAGRAPH explains that the label IS the
+  // visible text, so admins don't go hunting for a separate "heading
+  // text" or "paragraph text" field.
+  const labelCaption =
+    fieldType === "HEADING"
+      ? "Shown as the section heading on the registration form."
+      : fieldType === "PARAGRAPH"
+      ? "Shown as info text on the registration form."
+      : "The field’s name. Shown above the input.";
 
   return (
     <div className="space-y-4 rounded-md border bg-muted/20 p-3">
@@ -85,41 +108,43 @@ export function FieldTextFields({
           onChangeEn={(v) => onChange({ label: v })}
           onChangeAr={(v) => onChange({ labelAr: v })}
         />
-        <p className="text-xs text-muted-foreground">
-          The field&rsquo;s name. Shown above the input.
-        </p>
+        <p className="text-xs text-muted-foreground">{labelCaption}</p>
       </div>
 
-      <div className="space-y-1">
-        <BilingualInput
-          label="Placeholder"
-          idPrefix="field-text-placeholder"
-          valueEn={placeholder}
-          valueAr={placeholderAr}
-          onChangeEn={(v) => onChange({ placeholder: v })}
-          onChangeAr={(v) => onChange({ placeholderAr: v })}
-        />
-        <p className="text-xs text-muted-foreground">
-          Hint text shown inside an empty input. Disappears when the
-          visitor starts typing.
-        </p>
-      </div>
+      {layout === "full" && (
+        <>
+          <div className="space-y-1">
+            <BilingualInput
+              label="Placeholder"
+              idPrefix="field-text-placeholder"
+              valueEn={placeholder}
+              valueAr={placeholderAr}
+              onChangeEn={(v) => onChange({ placeholder: v })}
+              onChangeAr={(v) => onChange({ placeholderAr: v })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Hint text shown inside an empty input. Disappears when the
+              visitor starts typing.
+            </p>
+          </div>
 
-      <div className="space-y-1">
-        <BilingualInput
-          label="Help text"
-          idPrefix="field-text-help"
-          multiline
-          rows={2}
-          valueEn={helpText}
-          valueAr={helpTextAr}
-          onChangeEn={(v) => onChange({ helpText: v })}
-          onChangeAr={(v) => onChange({ helpTextAr: v })}
-        />
-        <p className="text-xs text-muted-foreground">
-          Shown below the input as an instruction or explanation.
-        </p>
-      </div>
+          <div className="space-y-1">
+            <BilingualInput
+              label="Help text"
+              idPrefix="field-text-help"
+              multiline
+              rows={2}
+              valueEn={helpText}
+              valueAr={helpTextAr}
+              onChangeEn={(v) => onChange({ helpText: v })}
+              onChangeAr={(v) => onChange({ helpTextAr: v })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Shown below the input as an instruction or explanation.
+            </p>
+          </div>
+        </>
+      )}
     </div>
   );
 }

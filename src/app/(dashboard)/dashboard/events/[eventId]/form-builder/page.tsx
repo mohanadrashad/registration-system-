@@ -811,8 +811,17 @@ export default function FormBuilderPage() {
   }
 
   async function addField() {
-    if (!newField.name || !newField.label) {
-      toast.error("Name and label are required");
+    if (!newField.name) {
+      toast.error("Field name is required");
+      return;
+    }
+    // DIVIDER renders as a plain <hr> on the public form — it has no
+    // visible text, so a label is genuinely optional for that type.
+    // Every other type renders `label` somewhere (as the input's label
+    // for inputs, as the heading text for HEADING, as the body text for
+    // PARAGRAPH), so a label is required.
+    if (newField.type !== "DIVIDER" && !newField.label) {
+      toast.error("Label is required");
       return;
     }
     if (!selectedStepId) {
