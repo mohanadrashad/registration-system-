@@ -233,6 +233,73 @@ export function FieldEditInput({
       />
     );
   }
+  if (field.type === "FILE") {
+    // Read-only in v1. Admin replace + remove on FILE fields are
+    // explicit non-goals per the spec — admins can View only. We
+    // deliberately do NOT render an editable <input> here because the
+    // formData[fieldName] value is a `{ fileId, filename, ... }`
+    // object: an editable input would coerce it to "[object Object]"
+    // and a stray keystroke would silently clobber the file ref in
+    // editValues. The label form preserves the original
+    // UploadedFileRef in state untouched while still surfacing the
+    // file to the admin.
+    //
+    // Layout mirrors the Stage 3 spec preview (filename + size + mime)
+    // minus the View / Replace / Remove buttons — those land with the
+    // stream-through route in Stage 3.
+    const file =
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      typeof (value as { filename?: unknown }).filename === "string"
+        ? (value as {
+            filename: string;
+            mimeType?: string;
+            sizeBytes?: number;
+          })
+        : null;
+    const formatSize = (n: number): string => {
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    };
+    const mimeLabel = (mime: string | undefined): string => {
+      if (!mime) return "";
+      if (mime === "application/pdf") return "PDF";
+      if (mime === "image/jpeg") return "JPEG";
+      if (mime === "image/png") return "PNG";
+      return mime;
+    };
+    return (
+      <div className="space-y-1">
+        {file ? (
+          <p className="text-sm">
+            <span aria-hidden="true">📄</span>{" "}
+            <span className="font-medium break-words">{file.filename}</span>
+            {typeof file.sizeBytes === "number" && (
+              <span className="text-muted-foreground">
+                {" · "}
+                {formatSize(file.sizeBytes)}
+              </span>
+            )}
+            {file.mimeType && (
+              <span className="text-muted-foreground">
+                {" · "}
+                {mimeLabel(file.mimeType)}
+              </span>
+            )}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground italic">
+            No file uploaded
+          </p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Visitor-uploaded — admin replace/remove arrives in v2.
+        </p>
+      </div>
+    );
+  }
   return (
     <Input value={(value as string) || ""} onChange={(e) => onChange(e.target.value)} />
   );
