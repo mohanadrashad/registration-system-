@@ -69,6 +69,7 @@ import {
   type PhaseOption,
 } from "./phase-options-panel";
 import { OptionsEditor } from "@/components/admin/options-editor";
+import { FieldTextFields } from "@/components/admin/field-text-fields";
 
 interface FieldOption {
   value: string;
@@ -91,6 +92,9 @@ interface FormField {
   labelAr?: string;
   type: FieldType;
   placeholder?: string;
+  placeholderAr?: string;
+  helpText?: string;
+  helpTextAr?: string;
   required: boolean;
   order: number;
   width: FieldWidth;
@@ -687,6 +691,11 @@ export default function FormBuilderPage() {
   const [newField, setNewField] = useState({
     name: "",
     label: "",
+    labelAr: "",
+    placeholder: "",
+    placeholderAr: "",
+    helpText: "",
+    helpTextAr: "",
     type: "TEXT" as FieldType,
     required: false,
     width: "FULL" as FieldWidth,
@@ -821,6 +830,11 @@ export default function FormBuilderPage() {
       setNewField({
         name: "",
         label: "",
+        labelAr: "",
+        placeholder: "",
+        placeholderAr: "",
+        helpText: "",
+        helpTextAr: "",
         type: "TEXT",
         required: false,
         width: "FULL",
@@ -1131,16 +1145,16 @@ export default function FormBuilderPage() {
                   placeholder="field_name"
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Label</Label>
-                <Input
-                  value={newField.label}
-                  onChange={(e) =>
-                    setNewField({ ...newField, label: e.target.value })
-                  }
-                  placeholder="Display Label"
-                />
-              </div>
+              <FieldTextFields
+                fieldType={newField.type}
+                label={newField.label}
+                labelAr={newField.labelAr}
+                placeholder={newField.placeholder}
+                placeholderAr={newField.placeholderAr}
+                helpText={newField.helpText}
+                helpTextAr={newField.helpTextAr}
+                onChange={(patch) => setNewField({ ...newField, ...patch })}
+              />
               <div className="space-y-2">
                 <Label>Type</Label>
                 <Select
@@ -1626,15 +1640,18 @@ export default function FormBuilderPage() {
                   disabled={editingField.isSystem}
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Label</Label>
-                <Input
-                  value={editingField.label}
-                  onChange={(e) =>
-                    setEditingField({ ...editingField, label: e.target.value })
-                  }
-                />
-              </div>
+              <FieldTextFields
+                fieldType={editingField.type}
+                label={editingField.label}
+                labelAr={editingField.labelAr ?? ""}
+                placeholder={editingField.placeholder ?? ""}
+                placeholderAr={editingField.placeholderAr ?? ""}
+                helpText={editingField.helpText ?? ""}
+                helpTextAr={editingField.helpTextAr ?? ""}
+                onChange={(patch) =>
+                  setEditingField({ ...editingField, ...patch })
+                }
+              />
               <div className="space-y-2">
                 <Label>Type</Label>
                 <Select

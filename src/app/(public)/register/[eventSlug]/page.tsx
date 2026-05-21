@@ -430,6 +430,10 @@ export default function RegisterPage() {
       ? field.placeholderAr
       : field.placeholder;
   }
+  function getFieldHelpText(field: FormField): string | null {
+    const v = isRtl && field.helpTextAr ? field.helpTextAr : field.helpText;
+    return v && v.trim() !== "" ? v : null;
+  }
   function getOptionLabel(option: {
     value: string;
     label: string;
@@ -686,6 +690,15 @@ export default function RegisterPage() {
             required={field.required}
             className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
           />
+        )}
+
+        {/* Help text — rendered below the input for any non-layout field
+            type. Suppressed when the field has no help text in the active
+            language (so the wrapper doesn't leave an orphan gap). */}
+        {getFieldHelpText(field) && (
+          <p className="text-sm text-muted-foreground">
+            {getFieldHelpText(field)}
+          </p>
         )}
       </div>
     );
