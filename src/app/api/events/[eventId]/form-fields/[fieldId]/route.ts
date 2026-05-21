@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { FieldType, FieldWidth } from "@prisma/client";
+import { FIELD_TYPES } from "@/lib/form-builder/field-types";
+import { fieldOptionsArrayUniqueSchema } from "@/lib/validations/form-field";
+import { findReferencedOptionValues } from "@/lib/form-builder/option-value-lock";
 
 interface RouteParams {
   params: Promise<{ eventId: string; fieldId: string }>;
@@ -70,7 +73,71 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (body.helpTextAr !== undefined) updateData.helpTextAr = body.helpTextAr;
     if (body.required !== undefined) updateData.required = body.required;
     if (body.validation !== undefined) updateData.validation = body.validation;
-    if (body.options !== undefined) updateData.options = body.options;
+    if (body.options !== undefined) {
+      // Validate shape (every entry has a value+label, values unique).
+      const parsed = fieldOptionsArrayUniqueSchema.safeParse(body.options);
+      if (!parsed.success) {
+        return NextResponse.json(
+          {
+            error: "Invalid options",
+            details: parsed.error.flatten(),
+          },
+          { status: 400 }
+        );
+      }
+
+      // Value-lock guard — only meaningful for option-bearing field
+      // types. For non-option types the `options` column is ignored by
+      // the renderer anyway, but we let the write through (existing
+      // admin tooling may pass an empty array for cleanup).
+      const fieldTypeForLock = (updateData.type as FieldType | undefined) ?? existing.type;
+      if (FIELD_TYPES[fieldTypeForLock]?.hasOptions) {
+        const oldOptions = Array.isArray(existing.options)
+          ? (existing.options as Array<{ value?: unknown }>)
+          : [];
+        const oldValues = new Set(
+          oldOptions
+            .map((o) => o?.value)
+            .filter((v): v is string => typeof v === "string")
+        );
+        const newValues = new Set(parsed.data.map((o) => o.value));
+        const removed = [...oldValues].filter((v) => !newValues.has(v));
+
+        if (removed.length > 0) {
+          const inUse = await findReferencedOptionValues({
+            eventId,
+            fieldName: existing.name,
+            fieldType: fieldTypeForLock,
+            removedValues: removed,
+          });
+
+          if (inUse.length > 0) {
+            const lines = inUse
+              .map(
+                (u) =>
+                  `  • "${u.value}" — ${u.registrationCount} registration${
+                    u.registrationCount === 1 ? "" : "s"
+                  }`
+              )
+              .join("\n");
+            return NextResponse.json(
+              {
+                error:
+                  `Cannot remove or rename ${
+                    inUse.length === 1 ? "this option" : "these options"
+                  } because ${
+                    inUse.length === 1 ? "it is" : "they are"
+                  } referenced by existing registrations:\n${lines}\n\nLabels can still be edited freely — only the value is locked.`,
+                lockedValues: inUse,
+              },
+              { status: 409 }
+            );
+          }
+        }
+      }
+
+      updateData.options = parsed.data;
+    }
     if (body.order !== undefined) updateData.order = body.order;
     if (body.width !== undefined) {
       const validWidths = Object.values(FieldWidth);

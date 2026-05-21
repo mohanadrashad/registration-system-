@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { getOrCreateDefaultRegistrationStep } from "@/lib/services/phase.service";
 import { FieldType, FieldWidth } from "@prisma/client";
+import { fieldOptionsArrayUniqueSchema } from "@/lib/validations/form-field";
 
 interface RouteParams {
   params: Promise<{ eventId: string }>;
@@ -85,6 +86,23 @@ export async function POST(request: Request, { params }: RouteParams) {
       stepId = step.id;
     }
 
+    // Validate options array shape if present. No value-lock on create —
+    // there are no existing registrations to lock against.
+    let validatedOptions: unknown = undefined;
+    if (body.options !== undefined) {
+      const parsed = fieldOptionsArrayUniqueSchema.safeParse(body.options);
+      if (!parsed.success) {
+        return NextResponse.json(
+          {
+            error: "Invalid options",
+            details: parsed.error.flatten(),
+          },
+          { status: 400 }
+        );
+      }
+      validatedOptions = parsed.data;
+    }
+
     const field = await prisma.formField.create({
       data: {
         eventId,
@@ -99,7 +117,7 @@ export async function POST(request: Request, { params }: RouteParams) {
         helpTextAr: body.helpTextAr,
         required: body.required ?? false,
         validation: body.validation,
-        options: body.options,
+        options: validatedOptions as never,
         order: body.order ?? newOrder,
         width: (body.width as FieldWidth) ?? "FULL",
         section: body.section,

@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -67,6 +68,7 @@ import {
   PhaseOptionsPanel,
   type PhaseOption,
 } from "./phase-options-panel";
+import { OptionsEditor } from "@/components/admin/options-editor";
 
 interface FieldOption {
   value: string;
@@ -691,8 +693,6 @@ export default function FormBuilderPage() {
     options: [] as FieldOption[],
     conditional: null as ConditionalRule | null,
   });
-  const [newOption, setNewOption] = useState({ value: "", label: "" });
-  const [editOption, setEditOption] = useState({ value: "", label: "" });
 
   // Inline rename state — null when not editing, draft string when editing.
   const [renamingPhaseId, setRenamingPhaseId] = useState<string | null>(null);
@@ -827,7 +827,6 @@ export default function FormBuilderPage() {
         options: [],
         conditional: null,
       });
-      setNewOption({ value: "", label: "" });
       toast.success("Field added");
       fetchEverything();
     } else {
@@ -1109,13 +1108,16 @@ export default function FormBuilderPage() {
               Add Field
             </Button>
           </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
+          {/* Cap height + sticky footer — keeps Add/Save reachable even when
+              the body contains 20+ expanded option rows. See bulk-paste-dialog
+              for the same pattern. */}
+          <DialogContent className="flex flex-col gap-0 p-0 max-h-[90vh] overflow-hidden">
+            <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
               <DialogTitle>
                 Add Field to &ldquo;{selectedStep?.title ?? "step"}&rdquo;
               </DialogTitle>
             </DialogHeader>
-            <div className="space-y-4 py-4">
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-6 py-4">
               <div className="space-y-2">
                 <Label>Field Name (internal)</Label>
                 <Input
@@ -1201,78 +1203,20 @@ export default function FormBuilderPage() {
               {OPTION_FIELD_TYPES.includes(newField.type) && (
                 <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
                   <Label className="text-sm font-medium">Options</Label>
-                  {newField.options.length > 0 && (
-                    <div className="space-y-2">
-                      {newField.options.map((opt, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center gap-2 text-sm bg-white rounded px-3 py-2 border"
-                        >
-                          <span className="flex-1 truncate">{opt.label}</span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => {
-                              const opts = [...newField.options];
-                              opts.splice(idx, 1);
-                              setNewField({ ...newField, options: opts });
-                            }}
-                          >
-                            <Trash2 className="h-3 w-3 text-destructive" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Type option and press Enter or +"
-                      value={newOption.label}
-                      onChange={(e) =>
-                        setNewOption({
-                          label: e.target.value,
-                          value: e.target.value
-                            .replace(/\s/g, "_")
-                            .toLowerCase(),
-                        })
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && newOption.label) {
-                          e.preventDefault();
-                          setNewField({
-                            ...newField,
-                            options: [...newField.options, { ...newOption }],
-                          });
-                          setNewOption({ value: "", label: "" });
-                        }
-                      }}
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => {
-                        if (newOption.label) {
-                          setNewField({
-                            ...newField,
-                            options: [...newField.options, { ...newOption }],
-                          });
-                          setNewOption({ value: "", label: "" });
-                        }
-                      }}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  <OptionsEditor
+                    options={newField.options}
+                    onChange={(opts) =>
+                      setNewField({ ...newField, options: opts })
+                    }
+                  />
                 </div>
               )}
-
-              <Button onClick={addField} className="w-full">
+            </div>
+            <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
+              <Button onClick={addField} className="w-full sm:w-auto">
                 Add Field
               </Button>
-            </div>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </PageHeader>
@@ -1660,17 +1604,18 @@ export default function FormBuilderPage() {
         />
       )}
 
-      {/* Edit Dialog (existing field-edit UI, unchanged) */}
+      {/* Edit Dialog — same height-cap + sticky-footer pattern as Add Field
+          so a 20-option field can't push the Save button off-screen. */}
       <Dialog
         open={!!editingField}
         onOpenChange={() => setEditingField(null)}
       >
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="flex flex-col gap-0 p-0 max-h-[90vh] overflow-hidden">
+          <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
             <DialogTitle>Edit Field</DialogTitle>
           </DialogHeader>
           {editingField && (
-            <div className="space-y-4 py-4">
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-6 py-4">
               <div className="space-y-2">
                 <Label>Field Name</Label>
                 <Input
@@ -1755,77 +1700,12 @@ export default function FormBuilderPage() {
               {OPTION_FIELD_TYPES.includes(editingField.type) && (
                 <div className="space-y-3 border rounded-lg p-3 bg-muted/30">
                   <Label className="text-sm font-medium">Options</Label>
-                  {(editingField.options || []).length > 0 && (
-                    <div className="space-y-2">
-                      {(editingField.options || []).map((opt, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center gap-2 text-sm bg-white rounded px-3 py-2 border"
-                        >
-                          <span className="flex-1 truncate">{opt.label}</span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => {
-                              const opts = [...(editingField.options || [])];
-                              opts.splice(idx, 1);
-                              setEditingField({ ...editingField, options: opts });
-                            }}
-                          >
-                            <Trash2 className="h-3 w-3 text-destructive" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Type option and press Enter or +"
-                      value={editOption.label}
-                      onChange={(e) =>
-                        setEditOption({
-                          label: e.target.value,
-                          value: e.target.value
-                            .replace(/\s/g, "_")
-                            .toLowerCase(),
-                        })
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && editOption.label) {
-                          e.preventDefault();
-                          setEditingField({
-                            ...editingField,
-                            options: [
-                              ...(editingField.options || []),
-                              { ...editOption },
-                            ],
-                          });
-                          setEditOption({ value: "", label: "" });
-                        }
-                      }}
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => {
-                        if (editOption.label) {
-                          setEditingField({
-                            ...editingField,
-                            options: [
-                              ...(editingField.options || []),
-                              { ...editOption },
-                            ],
-                          });
-                          setEditOption({ value: "", label: "" });
-                        }
-                      }}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  <OptionsEditor
+                    options={editingField.options ?? []}
+                    onChange={(opts) =>
+                      setEditingField({ ...editingField, options: opts })
+                    }
+                  />
                 </div>
               )}
 
@@ -1838,13 +1718,17 @@ export default function FormBuilderPage() {
                 />
                 <Label>Active</Label>
               </div>
+            </div>
+          )}
+          {editingField && (
+            <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
               <Button
                 onClick={() => updateField(editingField)}
-                className="w-full"
+                className="w-full sm:w-auto"
               >
                 Save Changes
               </Button>
-            </div>
+            </DialogFooter>
           )}
         </DialogContent>
       </Dialog>
