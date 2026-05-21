@@ -459,6 +459,12 @@ export default function RegisterPage() {
     if (res.ok) {
       clearDraft();
       setSuccess(true);
+    } else if (result?.code === "OTHER_TEXT_REQUIRED") {
+      // Server caught an empty Other custom text on a required field —
+      // typically a multi-step path where the broken field wasn't on the
+      // current step. Render the localized copy instead of the server's
+      // English fallback.
+      setError(t.pleaseSpecifyError);
     } else {
       setError(result.error || "Registration failed");
     }

@@ -238,8 +238,16 @@ export async function POST(
       const sibling = body[`${field.name}${OTHER_SUFFIX}`];
       const text = typeof sibling === "string" ? sibling.trim() : "";
       if (!text) {
+        // Stable code so the client can render the localized message
+        // even when the server-side validation fires (e.g., multi-step
+        // form where the broken field is on an earlier step and the
+        // current-step client validation didn't catch it).
         return NextResponse.json(
-          { error: `${field.label}: please specify your answer` },
+          {
+            error: `${field.label}: please specify your answer`,
+            code: "OTHER_TEXT_REQUIRED",
+            fieldLabel: field.label,
+          },
           { status: 400 }
         );
       }

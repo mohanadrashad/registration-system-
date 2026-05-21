@@ -462,7 +462,11 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
         const text = typeof sibling === "string" ? sibling.trim() : "";
         if (!text) {
           return NextResponse.json(
-            { error: `${f.label}: please specify your answer` },
+            {
+              error: `${f.label}: please specify your answer`,
+              code: "OTHER_TEXT_REQUIRED",
+              fieldLabel: f.label,
+            },
             { status: 400 }
           );
         }

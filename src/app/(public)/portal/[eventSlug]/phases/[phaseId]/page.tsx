@@ -703,6 +703,13 @@ export default function PortalPhaseFillPage() {
         return;
       }
 
+      // Server caught an empty Other custom text on a required field —
+      // render the localized copy instead of the English fallback.
+      if (result.code === "OTHER_TEXT_REQUIRED") {
+        setError(t.pleaseSpecifyError);
+        return;
+      }
+
       // Generic non-OK: surface the server's message.
       setError(result.error || t.submissionFailed);
     } catch {
