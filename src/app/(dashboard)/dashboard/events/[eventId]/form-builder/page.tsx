@@ -73,6 +73,14 @@ import { OtherOptionEditor } from "@/components/admin/other-option-editor";
 import { MaxSelectionsEditor } from "@/components/admin/max-selections-editor";
 import { FieldTextFields } from "@/components/admin/field-text-fields";
 import {
+  FileFieldSettings,
+  defaultFileFieldMetadata,
+} from "@/components/admin/file-field-settings";
+import {
+  parseFileFieldMetadata,
+  type FileFieldMetadata,
+} from "@/lib/validations/file-field-metadata";
+import {
   parseFormFieldOptions,
   serializeFormFieldOptions,
   type OtherConfig,
@@ -117,6 +125,11 @@ interface FormField {
   showSelectionCounter?: boolean;
   stepId: string;
   conditional?: ConditionalRule | null;
+  // FormField.metadata is a free-form Json column shared across types.
+  // For FILE fields it carries `{ maxSizeMB, allowedMimeTypes }`; other
+  // field types ignore it. Always normalize through parseFileFieldMetadata
+  // before passing into the FILE settings editor.
+  metadata?: unknown;
 }
 
 interface Step {
@@ -718,6 +731,9 @@ export default function FormBuilderPage() {
     maxSelections: undefined as number | undefined,
     showSelectionCounter: undefined as boolean | undefined,
     conditional: null as ConditionalRule | null,
+    // Only consumed when type === "FILE". Kept on every newField for
+    // simplicity; ignored by other field types on the wire.
+    fileMetadata: defaultFileFieldMetadata() as FileFieldMetadata,
   });
 
   // Inline rename state — null when not editing, draft string when editing.
@@ -889,12 +905,20 @@ export default function FormBuilderPage() {
         })
       : undefined;
 
+    // FILE fields persist the upload settings into FormField.metadata.
+    // Other types send metadata undefined so the column stays null
+    // (existing behavior — Chunk 2 will Zod-validate this for FILE).
+    const { fileMetadata, ...rest } = newField;
+    const metadataPayload =
+      newField.type === "FILE" ? fileMetadata : undefined;
+
     const res = await fetch(`/api/events/${eventId}/form-fields`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ...newField,
+        ...rest,
         options: optionsPayload,
+        metadata: metadataPayload,
         stepId: selectedStepId,
       }),
     });
@@ -916,6 +940,7 @@ export default function FormBuilderPage() {
         maxSelections: undefined,
         showSelectionCounter: undefined,
         conditional: null,
+        fileMetadata: defaultFileFieldMetadata(),
       });
       toast.success("Field added");
       fetchEverything();
@@ -939,12 +964,24 @@ export default function FormBuilderPage() {
         })
       : field.options;
 
+    // For FILE fields, force the metadata payload to the editor's
+    // current shape (already normalized via parseFileFieldMetadata in
+    // the dialog). For all other types we send null so a type change
+    // (FILE → TEXT) clears the stale FILE keys from the column rather
+    // than leaving them dormant.
+    const metadataPayload =
+      field.type === "FILE" ? field.metadata ?? null : null;
+
     const res = await fetch(
       `/api/events/${eventId}/form-fields/${field.id}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...field, options: optionsPayload }),
+        body: JSON.stringify({
+          ...field,
+          options: optionsPayload,
+          metadata: metadataPayload,
+        }),
       }
     );
     if (res.ok) {
@@ -1303,6 +1340,15 @@ export default function FormBuilderPage() {
                 }
                 candidateFields={allFieldsOnEvent}
               />
+
+              {newField.type === "FILE" && (
+                <FileFieldSettings
+                  value={newField.fileMetadata}
+                  onChange={(next) =>
+                    setNewField({ ...newField, fileMetadata: next })
+                  }
+                />
+              )}
 
               {OPTION_FIELD_TYPES.includes(newField.type) && (
                 <>
@@ -1826,6 +1872,15 @@ export default function FormBuilderPage() {
                   (f) => f.id !== editingField.id
                 )}
               />
+
+              {editingField.type === "FILE" && (
+                <FileFieldSettings
+                  value={parseFileFieldMetadata(editingField.metadata)}
+                  onChange={(next) =>
+                    setEditingField({ ...editingField, metadata: next })
+                  }
+                />
+              )}
 
               {OPTION_FIELD_TYPES.includes(editingField.type) && (
                 <>

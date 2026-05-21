@@ -17,17 +17,50 @@
 import { z } from "zod";
 
 /**
- * Allowed MIME types for v1. Adding more is a one-line change here
- * plus a corresponding checkbox in the Stage 2 admin UI. JPEG / PNG /
- * PDF cover ~95% of registration use cases per the spec.
+ * Allowed MIME types the admin can configure for a FILE field. Adding
+ * more is a one-line change here plus a corresponding checkbox row in
+ * the admin UI (file-field-settings.tsx). JPEG / PNG / PDF cover ~95%
+ * of registration use cases; .docx / .xlsx are available but unchecked
+ * by default.
  */
 export const ALLOWED_FILE_MIME_TYPES = [
   "image/jpeg",
   "image/png",
   "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ] as const;
 
 export type AllowedFileMimeType = (typeof ALLOWED_FILE_MIME_TYPES)[number];
+
+/**
+ * Display metadata for each allowed MIME type. The admin UI iterates
+ * this list to render checkbox rows; the upload-control hint text and
+ * Stage 3 admin display can also reuse the friendly labels.
+ *
+ * `shortLabel` is the user-facing extension list shown in checkbox
+ * rows ("JPEG image (.jpg, .jpeg)"). `acceptExt` is the comma-joined
+ * extension form for client-side `<input accept>`.
+ */
+export const FILE_MIME_OPTIONS: ReadonlyArray<{
+  mime: AllowedFileMimeType;
+  shortLabel: string;
+  acceptExt: string;
+}> = [
+  { mime: "image/jpeg", shortLabel: "JPEG image (.jpg, .jpeg)", acceptExt: ".jpg,.jpeg" },
+  { mime: "image/png", shortLabel: "PNG image (.png)", acceptExt: ".png" },
+  { mime: "application/pdf", shortLabel: "PDF document (.pdf)", acceptExt: ".pdf" },
+  {
+    mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    shortLabel: "Word document (.docx)",
+    acceptExt: ".docx",
+  },
+  {
+    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    shortLabel: "Excel spreadsheet (.xlsx)",
+    acceptExt: ".xlsx",
+  },
+];
 
 export const MIN_FILE_MAX_SIZE_MB = 1;
 export const MAX_FILE_MAX_SIZE_MB = 25;
