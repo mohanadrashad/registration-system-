@@ -100,6 +100,20 @@ export function formatFieldValue(
       .join(", ");
   }
   if (typeof raw === "boolean") return raw ? "Yes" : "No";
+  // FILE field stub (Stage 2). formData[fieldName] for type=FILE is
+  // { fileId, filename, mimeType, sizeBytes }. Stage 3 upgrades this
+  // to "📄 filename.pdf (482 KB · PDF)" + View button; until then we
+  // at least render the filename so admin/portal/CSV/email surfaces
+  // don't show "[object Object]".
+  if (
+    field.type === "FILE" &&
+    raw !== null &&
+    typeof raw === "object" &&
+    !Array.isArray(raw) &&
+    typeof (raw as { filename?: unknown }).filename === "string"
+  ) {
+    return (raw as { filename: string }).filename;
+  }
   if (field.type === "COUNTRY") {
     const country = COUNTRIES.find((c) => c.code === raw);
     if (country) return country.name;
