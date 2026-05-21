@@ -25,7 +25,7 @@
 import { Prisma } from "@prisma/client";
 import type { RegistrationFile } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { deleteBlob } from "@/lib/blob";
+import { deleteBlob, streamPrivateBlob } from "@/lib/blob";
 
 // ─── Server-controlled pathname builder ──────────────────────────────
 //
@@ -313,6 +313,64 @@ export async function getRegistrationFileById(
       originalName: true,
     },
   });
+}
+
+export interface RegistrationFileForAdminStreaming {
+  id: string;
+  blobPath: string;
+  mimeType: string;
+  originalName: string;
+  sizeBytes: number;
+}
+
+/**
+ * Admin-side lookup for the stream-through read route. Returns the
+ * minimal row data needed to pipe the blob bytes back, only if the
+ * file's FormField belongs to the supplied event (cross-event guard).
+ * Returns null on missing-or-cross-event so the route caller can map
+ * either to a 404 without leaking existence.
+ *
+ * Mirrors the PhaseReceipt admin pattern at
+ * src/lib/services/receipt.service.ts:getReceiptForAdmin — same shape,
+ * same null-on-mismatch behavior, just different cascade chain
+ * (RegistrationFile → FormField → Event rather than
+ * PhaseReceipt → AttendeeSelection → Phase → Event).
+ *
+ * The caller is responsible for invoking authorizeEvent() before
+ * calling this; the service does not re-validate the admin session.
+ */
+export async function getRegistrationFileForAdmin(
+  fileId: string,
+  eventId: string
+): Promise<RegistrationFileForAdminStreaming | null> {
+  const row = await prisma.registrationFile.findUnique({
+    where: { id: fileId },
+    include: {
+      formField: { select: { eventId: true } },
+    },
+  });
+  if (!row) return null;
+  if (row.formField.eventId !== eventId) return null;
+  return {
+    id: row.id,
+    blobPath: row.blobPath,
+    mimeType: row.mimeType,
+    originalName: row.originalName,
+    sizeBytes: row.sizeBytes,
+  };
+}
+
+/**
+ * Convenience for the stream route — fetches the SDK stream object for
+ * a private blob. Throws if the blob is missing (orphan-cleanup window
+ * or manual delete); the route handler maps that to 410 Gone.
+ *
+ * Same convenience wrapper as openReceiptStream in receipt.service.ts.
+ */
+export async function openRegistrationFileStream(
+  file: RegistrationFileForAdminStreaming
+) {
+  return streamPrivateBlob(file.blobPath);
 }
 
 export interface PreSubmissionFile {
