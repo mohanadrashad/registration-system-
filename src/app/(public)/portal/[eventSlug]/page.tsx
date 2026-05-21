@@ -288,16 +288,28 @@ function getFieldValue(contact: ContactInfo, field: FormFieldDef): unknown {
 function formatFieldValue(
   field: FormFieldDef,
   raw: unknown,
-  lang: PortalLang
+  lang: PortalLang,
+  allData?: Record<string, unknown> | null
 ): string {
   const t = PORTAL_STRINGS[lang];
   if (raw === undefined || raw === null || raw === "") return "-";
+
+  const parsed = parseFormFieldOptions(field.options);
+  const otherLabel = parsed.other
+    ? resolveOtherLabel(parsed.other, lang)
+    : "Other";
+  const sibling = allData?.[`${field.name}${OTHER_SUFFIX}`];
+  const otherText = typeof sibling === "string" ? sibling.trim() : "";
+  const renderOther = () =>
+    otherText ? `${otherLabel}: ${otherText}` : otherLabel;
+
   if (Array.isArray(raw)) {
     return raw
       .map((v) => {
-        const opt = field.options?.find((o) => o.value === v);
+        if (v === OTHER_VALUE) return renderOther();
+        const opt = parsed.options.find((o) => o.value === v);
         if (!opt) return String(v);
-        return pickText(lang, opt.label, opt.labelAr);
+        return pickText(lang, opt.label, opt.labelAr ?? undefined);
       })
       .join(", ");
   }
@@ -306,9 +318,10 @@ function formatFieldValue(
     const country = COUNTRIES.find((c) => c.code === raw);
     if (country) return lang === "ar" ? country.nameAr : country.name;
   }
-  if (field.options && field.options.length > 0) {
-    const opt = field.options.find((o) => o.value === raw);
-    if (opt) return pickText(lang, opt.label, opt.labelAr);
+  if (raw === OTHER_VALUE) return renderOther();
+  if (parsed.options.length > 0) {
+    const opt = parsed.options.find((o) => o.value === raw);
+    if (opt) return pickText(lang, opt.label, opt.labelAr ?? undefined);
   }
   return String(raw);
 }
@@ -1357,7 +1370,12 @@ export default function PortalPage() {
                       {fieldLabel(field)}
                     </span>
                     <span className="font-medium break-words">
-                      {formatFieldValue(field, getFieldValue(contact, field), lang)}
+                      {formatFieldValue(
+                        field,
+                        getFieldValue(contact, field),
+                        lang,
+                        contact.metadata
+                      )}
                     </span>
                   </div>
                 ))}

@@ -4,6 +4,7 @@ import { authorize } from "@/lib/api-auth";
 import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
 import { eventBaseUrlFromDomain } from "@/lib/urls";
+import { buildFormFieldVariables } from "@/lib/email-form-field-variables";
 
 export async function POST(
   req: Request,
@@ -41,6 +42,13 @@ export async function POST(
     include: { domain: { select: { customDomain: true, isVerified: true } } },
   });
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
+
+  // Load active FormFields once — used to expose formData answers as
+  // {{fieldName}} template variables for each recipient.
+  const formFields = await prisma.formField.findMany({
+    where: { eventId, isActive: true },
+    select: { name: true, type: true, options: true },
+  });
 
   // Create an auto campaign for audit trail
   const campaign = await prisma.emailCampaign.create({
@@ -81,7 +89,15 @@ export async function POST(
       continue;
     }
 
+    // FormField answers exposed by name. Spread FIRST so the hardcoded
+    // Contact / event variables below always win on name collision.
+    const formDataVars = buildFormFieldVariables(
+      formFields,
+      contact.registration?.formData as Record<string, unknown> | null
+    );
+
     const variables = {
+      ...formDataVars,
       firstName: contact.firstName,
       lastName: contact.lastName,
       email: contact.email,

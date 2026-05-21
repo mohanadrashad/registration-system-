@@ -1,4 +1,10 @@
 import { COUNTRIES } from "@/lib/form-builder/countries";
+import {
+  parseFormFieldOptions,
+  OTHER_VALUE,
+  OTHER_SUFFIX,
+  resolveOtherLabel,
+} from "@/lib/form-builder/options-parse";
 
 // ─── Shared types ────────────────────────────────────────────────────
 
@@ -9,7 +15,10 @@ export interface FormFieldDef {
   label: string;
   labelAr: string | null;
   type: string;
-  options: { value: string; label: string; labelAr?: string }[] | null;
+  // Stored as JSON; may be the legacy `FieldOption[]` shape or the
+  // wrapped `{ options, other?, maxSelections? }` shape. Always normalize
+  // through parseFormFieldOptions before iterating.
+  options: unknown;
   isSystem: boolean;
 }
 
@@ -64,12 +73,28 @@ export function getFieldValue(contact: ContactDetail, field: FormFieldDef): unkn
   return contact.metadata?.[field.name];
 }
 
-export function formatFieldValue(field: FormFieldDef, raw: unknown): string {
+export function formatFieldValue(
+  field: FormFieldDef,
+  raw: unknown,
+  allData?: Record<string, unknown> | null
+): string {
   if (raw === undefined || raw === null || raw === "") return "-";
+
+  const parsed = parseFormFieldOptions(field.options);
+  const otherLabel = parsed.other ? resolveOtherLabel(parsed.other, "en") : "Other";
+  const otherText = (() => {
+    if (!allData) return "";
+    const v = allData[`${field.name}${OTHER_SUFFIX}`];
+    return typeof v === "string" ? v.trim() : "";
+  })();
+  const renderOther = () =>
+    otherText ? `${otherLabel}: ${otherText}` : otherLabel;
+
   if (Array.isArray(raw)) {
     return raw
       .map((v) => {
-        const opt = field.options?.find((o) => o.value === v);
+        if (v === OTHER_VALUE) return renderOther();
+        const opt = parsed.options.find((o) => o.value === v);
         return opt?.label ?? String(v);
       })
       .join(", ");
@@ -79,8 +104,9 @@ export function formatFieldValue(field: FormFieldDef, raw: unknown): string {
     const country = COUNTRIES.find((c) => c.code === raw);
     if (country) return country.name;
   }
-  if (field.options && field.options.length > 0) {
-    const opt = field.options.find((o) => o.value === raw);
+  if (raw === OTHER_VALUE) return renderOther();
+  if (parsed.options.length > 0) {
+    const opt = parsed.options.find((o) => o.value === raw);
     if (opt) return opt.label;
   }
   return String(raw);
