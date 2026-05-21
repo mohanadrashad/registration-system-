@@ -281,8 +281,31 @@ export async function POST(
   const normalizedEmail = hasEmail
     ? email.toLowerCase()
     : `guest-${randomBytes(8).toString("hex")}@noemail.local`;
-  const safeFirstName = firstName || "";
-  const safeLastName = lastName || "";
+  // fullName fallback. Some events (notably system-protected forms
+  // configured before firstName/lastName were standardized) submit a
+  // single `fullName` field instead of split first/last. When both
+  // explicit columns are absent or empty AND fullName is present, split
+  // on the first whitespace: head → firstName, remainder → lastName.
+  // Explicit firstName/lastName from the body always win.
+  const firstEmpty =
+    typeof firstName !== "string" || firstName.trim() === "";
+  const lastEmpty =
+    typeof lastName !== "string" || lastName.trim() === "";
+  let safeFirstName = typeof firstName === "string" ? firstName : "";
+  let safeLastName = typeof lastName === "string" ? lastName : "";
+  if (firstEmpty && lastEmpty && typeof body.fullName === "string") {
+    const trimmed = body.fullName.trim();
+    if (trimmed) {
+      const idx = trimmed.search(/\s/);
+      if (idx === -1) {
+        safeFirstName = trimmed;
+        safeLastName = "";
+      } else {
+        safeFirstName = trimmed.slice(0, idx);
+        safeLastName = trimmed.slice(idx + 1).trim();
+      }
+    }
+  }
 
   try {
     const registration = await prisma.$transaction(async (tx) => {
