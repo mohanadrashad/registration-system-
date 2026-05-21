@@ -344,13 +344,13 @@ The migration is purely additive — no changes to existing columns, no data bac
 ### Stage 1 — Storage + upload pipeline (no admin or visitor UI yet)
 
 - New table `RegistrationFile` (Prisma migration).
-- `src/lib/services/registration-file.service.ts` — wraps blob.ts for FILE-field-specific concerns (token minting, completion webhook, orphan cleanup, signed-URL generation).
+- `src/lib/services/registration-file.service.ts` — wraps blob.ts for FILE-field-specific concerns (token minting, completion webhook, orphan cleanup, and in Stage 3 stream-through read helpers).
 - Cookie helpers in `src/lib/registration/upload-session.ts` — sign, verify, set.
 - API routes:
   - `POST /api/register/[eventSlug]/upload-token` — issues Vercel Blob upload token.
   - `POST /api/register/[eventSlug]/upload-completed` — webhook from Vercel after upload succeeds.
   - `DELETE /api/register/[eventSlug]/files/[fileId]` — pre-submission deletion (visitor-initiated replace/remove).
-- Wire the `reg_upload_session` cookie into the GET for `/register/[eventSlug]` (server component sets it via response headers).
+- Wire the `reg_upload_session` cookie into the GET for `/register/[eventSlug]` — the Route Handler at `src/app/api/register/[eventSlug]/route.ts` sets it via `NextResponse.cookies.set`.
 - Extend the orphan-cleanup cron at 03:30 UTC to also handle `RegistrationFile`.
 
 **Smoke test:** before declaring Stage 1 done, write a quick test script (admin-only diagnostic endpoint OR a Playwright probe) that mints a token, uploads a tiny file, verifies the DB row, fetches the signed URL, deletes the file. Confirms the pipeline works end-to-end against staging.

@@ -372,6 +372,7 @@ model Registration {
   phaseAccess      PhaseAccess[]
   portalOtps       PortalOtp[]
   selections       AttendeeSelection[]
+  files            RegistrationFile[]
 
   @@index([eventId])
   @@index([status])
@@ -613,8 +614,9 @@ model FormField {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  step  Step  @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  event Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  step  Step               @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  files RegistrationFile[]
 
   @@unique([eventId, name])
   @@index([eventId, order])
@@ -892,5 +894,59 @@ model PhaseReceipt {
 
   selection AttendeeSelection?
 
+  @@index([uploadedAt])
+}
+
+// ─── Registration File (FILE form field uploads) ───
+//
+// Parallel to PhaseReceipt but for the public registration flow. Files
+// live in Blob before the Registration row is created — the upload
+// happens against an unauthenticated visitor session, then the form
+// submission links the file to the new registration.
+//
+// Pre-submission: registrationId IS NULL; uploadSessionId ties the row
+// to the visitor's reg_upload_session cookie so they can replace/remove
+// before submit. The nightly orphan cleanup deletes rows older than 24h
+// that still have a null registrationId.
+//
+// Post-submission (Stage 2 wiring): registrationId is set; the file
+// becomes a permanent record. Deletion of the Registration nulls the
+// reference (SetNull) to preserve the file row for cleanup; deletion
+// of the FormField cascades to remove its files entirely.
+model RegistrationFile {
+  id String @id @default(cuid())
+
+  // Becomes non-null on form submission (Stage 2 of the FILE spec).
+  // Stage 1 always writes null here.
+  registrationId String?
+  registration   Registration? @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+
+  // The FormField this file answers. Deletion of the FormField
+  // cascades — admin removing a FILE field removes its uploaded files.
+  formFieldId String
+  formField   FormField @relation(fields: [formFieldId], references: [id], onDelete: Cascade)
+
+  // Ties pre-submission files to the visitor's reg_upload_session
+  // cookie. The DELETE endpoint requires this to match before allowing
+  // replace/remove on a not-yet-submitted file.
+  uploadSessionId String
+
+  // Vercel Blob references. Private mode — never expose blobUrl or
+  // blobPath to clients raw. @unique on blobPath makes the
+  // onUploadCompleted webhook idempotent: Vercel retries up to 5 times
+  // for a 200, and the unique constraint short-circuits the second
+  // attempt cleanly. Same anchor as PhaseReceipt.
+  blobUrl      String
+  blobPath     String @unique
+  mimeType     String
+  sizeBytes    Int
+  originalName String // Display name ("CR_2026.pdf").
+
+  uploadedAt DateTime @default(now())
+  uploadedBy String // "session:<id>" pre-submission, "registration:<id>" after.
+
+  @@index([uploadSessionId])
+  @@index([registrationId])
+  @@index([formFieldId])
   @@index([uploadedAt])
 }
