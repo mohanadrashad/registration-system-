@@ -455,12 +455,17 @@ export function BulkPasteDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
+      {/* Cap the dialog height and flex-stack header / scroll-body /
+          sticky-footer so a 20-row preview can't push the action buttons
+          out of the viewport. shadcn's DialogContent defaults to grid with
+          p-6; we move the padding into each region so the scrollbar lines
+          up with the dialog's right edge. */}
+      <DialogContent className="sm:max-w-2xl flex flex-col gap-0 p-0 max-h-[90vh] overflow-hidden">
+        <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
           <p className="text-sm text-muted-foreground">
             Paste a list. Auto-detects single-language vs bilingual format.
             Bilingual lines are split on <code>|</code> or a tab character.
@@ -590,9 +595,12 @@ export function BulkPasteDialog({
                   </span>
                 )}
               </div>
-              <div className="max-h-80 overflow-y-auto rounded-md border">
+              {/* No inner overflow — the dialog body itself scrolls, so the
+                  table's sticky thead pins to that scroll context. Avoids
+                  nested-scroll confusion when previewing 20+ rows. */}
+              <div className="rounded-md border">
                 <table className="w-full text-sm">
-                  <thead className="bg-muted/40 text-xs text-muted-foreground sticky top-0">
+                  <thead className="bg-muted/40 text-xs text-muted-foreground sticky top-0 z-10">
                     <tr>
                       <th className="w-8 px-2 py-1.5"></th>
                       <th className="px-2 py-1.5 text-left">English</th>
@@ -676,7 +684,12 @@ export function BulkPasteDialog({
           )}
         </div>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="shrink-0 gap-2 border-t bg-background px-6 py-4 sm:items-center">
+          {addableCount > 5 && (
+            <span className="text-xs text-muted-foreground sm:mr-auto">
+              {addableCount} items ready · scroll to review
+            </span>
+          )}
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

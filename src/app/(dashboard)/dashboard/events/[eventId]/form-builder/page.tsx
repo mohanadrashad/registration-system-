@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -1107,13 +1108,16 @@ export default function FormBuilderPage() {
               Add Field
             </Button>
           </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
+          {/* Cap height + sticky footer — keeps Add/Save reachable even when
+              the body contains 20+ expanded option rows. See bulk-paste-dialog
+              for the same pattern. */}
+          <DialogContent className="flex flex-col gap-0 p-0 max-h-[90vh] overflow-hidden">
+            <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
               <DialogTitle>
                 Add Field to &ldquo;{selectedStep?.title ?? "step"}&rdquo;
               </DialogTitle>
             </DialogHeader>
-            <div className="space-y-4 py-4">
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-6 py-4">
               <div className="space-y-2">
                 <Label>Field Name (internal)</Label>
                 <Input
@@ -1207,11 +1211,12 @@ export default function FormBuilderPage() {
                   />
                 </div>
               )}
-
-              <Button onClick={addField} className="w-full">
+            </div>
+            <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
+              <Button onClick={addField} className="w-full sm:w-auto">
                 Add Field
               </Button>
-            </div>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </PageHeader>
@@ -1599,17 +1604,18 @@ export default function FormBuilderPage() {
         />
       )}
 
-      {/* Edit Dialog (existing field-edit UI, unchanged) */}
+      {/* Edit Dialog — same height-cap + sticky-footer pattern as Add Field
+          so a 20-option field can't push the Save button off-screen. */}
       <Dialog
         open={!!editingField}
         onOpenChange={() => setEditingField(null)}
       >
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="flex flex-col gap-0 p-0 max-h-[90vh] overflow-hidden">
+          <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
             <DialogTitle>Edit Field</DialogTitle>
           </DialogHeader>
           {editingField && (
-            <div className="space-y-4 py-4">
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-4 px-6 py-4">
               <div className="space-y-2">
                 <Label>Field Name</Label>
                 <Input
@@ -1712,13 +1718,17 @@ export default function FormBuilderPage() {
                 />
                 <Label>Active</Label>
               </div>
+            </div>
+          )}
+          {editingField && (
+            <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
               <Button
                 onClick={() => updateField(editingField)}
-                className="w-full"
+                className="w-full sm:w-auto"
               >
                 Save Changes
               </Button>
-            </div>
+            </DialogFooter>
           )}
         </DialogContent>
       </Dialog>
