@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 import {
   QrCode,
   Search,
@@ -63,6 +64,7 @@ export default function CheckInPage() {
   const [lastCheckIn, setLastCheckIn] = useState<{
     success: boolean;
     contact?: Contact;
+    confirmationCode?: string;
     error?: string;
   } | null>(null);
   const [manualCode, setManualCode] = useState("");
@@ -146,6 +148,7 @@ export default function CheckInPage() {
         setLastCheckIn({
           success: true,
           contact: data.registration.contact,
+          confirmationCode: data.registration.confirmationCode ?? confirmationCode,
         });
         toast.success(
           `Checked in: ${data.registration.contact.firstName} ${data.registration.contact.lastName}`
@@ -293,7 +296,12 @@ export default function CheckInPage() {
                           {lastCheckIn.contact.firstName} {lastCheckIn.contact.lastName}
                         </p>
                         <p className="text-sm text-green-600">
-                          {lastCheckIn.contact.organization || lastCheckIn.contact.email}
+                          {lastCheckIn.contact.organization ||
+                            (!isSyntheticEmail(lastCheckIn.contact.email)
+                              ? lastCheckIn.contact.email
+                              : lastCheckIn.confirmationCode
+                                ? `Reg #${lastCheckIn.confirmationCode.slice(0, 8)}`
+                                : "")}
                         </p>
                       </>
                     )}
@@ -362,7 +370,10 @@ export default function CheckInPage() {
                         {result.contact.firstName} {result.contact.lastName}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {result.contact.organization || result.contact.email}
+                        {result.contact.organization ||
+                          (!isSyntheticEmail(result.contact.email)
+                            ? result.contact.email
+                            : `Reg #${result.confirmationCode.slice(0, 8)}`)}
                       </p>
                       <p className="text-xs text-muted-foreground font-mono">
                         {result.confirmationCode}
@@ -424,7 +435,10 @@ export default function CheckInPage() {
                         {checkIn.contact.firstName} {checkIn.contact.lastName}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {checkIn.contact.organization || checkIn.contact.email}
+                        {checkIn.contact.organization ||
+                          (!isSyntheticEmail(checkIn.contact.email)
+                            ? checkIn.contact.email
+                            : `Reg #${checkIn.confirmationCode.slice(0, 8)}`)}
                       </p>
                     </div>
                     <p className="text-sm text-muted-foreground">

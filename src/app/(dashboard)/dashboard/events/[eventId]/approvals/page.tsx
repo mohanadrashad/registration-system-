@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 import {
   CheckCircle,
   XCircle,
@@ -377,7 +378,9 @@ export default function ApprovalsPage() {
                         <TableCell className="font-medium">
                           {reg.contact.firstName} {reg.contact.lastName}
                         </TableCell>
-                        <TableCell>{reg.contact.email}</TableCell>
+                        <TableCell className={isSyntheticEmail(reg.contact.email) ? "text-muted-foreground" : ""}>
+                          {isSyntheticEmail(reg.contact.email) ? "—" : reg.contact.email}
+                        </TableCell>
                         <TableCell>{reg.contact.organization || "-"}</TableCell>
                         <TableCell>
                           {new Date(reg.createdAt).toLocaleDateString()}
@@ -451,7 +454,9 @@ export default function ApprovalsPage() {
                         <TableCell className="font-medium">
                           {reg.contact.firstName} {reg.contact.lastName}
                         </TableCell>
-                        <TableCell>{reg.contact.email}</TableCell>
+                        <TableCell className={isSyntheticEmail(reg.contact.email) ? "text-muted-foreground" : ""}>
+                          {isSyntheticEmail(reg.contact.email) ? "—" : reg.contact.email}
+                        </TableCell>
                         <TableCell>{reg.contact.organization || "-"}</TableCell>
                         <TableCell>
                           {new Date(reg.createdAt).toLocaleDateString()}

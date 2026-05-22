@@ -129,6 +129,22 @@ export function formatFieldValue(
   return String(raw);
 }
 
+// Name string for table rows / scan banners that have only the contact
+// columns + confirmation code to work with. Returns the full name when
+// either part is present; otherwise the short confirmation-code stub.
+// Use this for surfaces that don't render free-form FormField answers
+// (the richer `deriveDisplayName` below covers those).
+export function fallbackName(
+  firstName: string | null | undefined,
+  lastName: string | null | undefined,
+  confirmationCode: string | null | undefined
+): string {
+  const full = `${firstName ?? ""} ${lastName ?? ""}`.trim();
+  if (full) return full;
+  if (confirmationCode) return `Reg #${confirmationCode.slice(0, 8)}`;
+  return "Attendee";
+}
+
 export function deriveDisplayName(
   contact: ContactDetail,
   visibleFields: FormFieldDef[]

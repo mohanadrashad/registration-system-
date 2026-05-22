@@ -9,6 +9,7 @@ import {
   OTHER_VALUE,
   OTHER_SUFFIX,
 } from "@/lib/form-builder/options-parse";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 
 // FormField names that are also Contact columns — already emitted in the
 // fixed columns above the dynamic block, so we don't duplicate them.
@@ -108,7 +109,7 @@ export async function GET(
     const row: Record<string, string> = {
       "First Name": r.contact.firstName,
       "Last Name": r.contact.lastName,
-      Email: r.contact.email,
+      Email: isSyntheticEmail(r.contact.email) ? "" : r.contact.email,
       Phone: r.contact.phone || "",
       Organization: r.contact.organization || "",
       Designation: r.contact.designation || "",

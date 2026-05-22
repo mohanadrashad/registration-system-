@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -115,7 +116,7 @@ export default function CheckInDashboardPage() {
       const rows = recentCheckIns.map((c) => [
         c.contact.firstName,
         c.contact.lastName,
-        c.contact.email,
+        isSyntheticEmail(c.contact.email) ? "" : c.contact.email,
         c.contact.organization || "",
         c.contact.category || "",
         c.confirmationCode,

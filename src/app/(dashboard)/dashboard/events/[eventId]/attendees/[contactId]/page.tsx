@@ -18,6 +18,7 @@ import {
   deriveDisplayName,
   getFieldValue,
   initialsFor,
+  isSyntheticEmail,
 } from "@/components/attendee/field-display";
 import { IdentityCard } from "@/components/attendee/identity-card";
 import { RegistrationAnswersCard } from "@/components/attendee/registration-answers-card";
@@ -186,6 +187,11 @@ export default function AttendeeDetailPage() {
             {displayName.secondary && (
               <p className="text-sm text-muted-foreground break-words">
                 {displayName.secondary}
+              </p>
+            )}
+            {isSyntheticEmail(contact.email) && (
+              <p className="text-xs text-muted-foreground italic">
+                No email provided
               </p>
             )}
             {/* Badges sit on their own line so a long name is never

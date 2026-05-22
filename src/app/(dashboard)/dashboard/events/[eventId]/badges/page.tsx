@@ -10,6 +10,7 @@ import { DataTable } from "@/components/data-table/data-table";
 import { ColumnDef } from "@tanstack/react-table";
 import { Award, Wand2, ExternalLink, Send } from "lucide-react";
 import { toast } from "sonner";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 
 interface Registration {
   id: string;
@@ -37,6 +38,10 @@ const columns: ColumnDef<Registration>[] = [
     id: "email",
     accessorFn: (row) => row.contact.email,
     header: "Email",
+    cell: ({ row }) =>
+      isSyntheticEmail(row.original.contact.email)
+        ? <span className="text-muted-foreground">—</span>
+        : row.original.contact.email,
   },
   {
     id: "category",

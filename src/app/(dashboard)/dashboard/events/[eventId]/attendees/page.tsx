@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { isSyntheticEmail, fallbackName } from "@/components/attendee/field-display";
 import {
   Upload,
   Plus,
@@ -942,11 +943,15 @@ export default function AttendeesPage() {
                     </td>
                     <td className="px-4 py-3">
                       <Link href={`/dashboard/events/${eventId}/attendees/${contact.id}`} className="hover:underline text-primary font-medium">
-                        {contact.firstName} {contact.lastName}
+                        {fallbackName(contact.firstName, contact.lastName, contact.registration?.confirmationCode)}
                       </Link>
-                      <p className="text-xs text-muted-foreground md:hidden">{contact.email}</p>
+                      <p className="text-xs text-muted-foreground md:hidden">
+                        {isSyntheticEmail(contact.email) ? "—" : contact.email}
+                      </p>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{contact.email}</td>
+                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">
+                      {isSyntheticEmail(contact.email) ? "—" : contact.email}
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{contact.organization || "-"}</td>
                     {!isSingleCategory && (
                       <td className="px-4 py-3">
