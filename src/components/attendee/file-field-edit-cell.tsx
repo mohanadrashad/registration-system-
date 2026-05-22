@@ -109,19 +109,16 @@ export function FileFieldEditCell({
     };
   }, [eventId, file?.fileId]); // eslint-disable-line react-hooks/exhaustive-deps -- file ref is stable on fileId
 
-  // Empty state — no file ever uploaded (or after Remove). Per Mockup
-  // 2b: no Replace/Remove buttons in this state because admin-side new
-  // uploads are out of scope. Required-field warning at the top of the
-  // page covers the missing-required-data case.
-  if (!file) {
-    return (
-      <div className="space-y-1">
-        <p className="text-sm text-muted-foreground italic">
-          No file uploaded
-        </p>
-      </div>
-    );
-  }
+  // Note: NO early-return when file is null. The Dialog components at
+  // the bottom of the render output stay mounted across the
+  // file = object -> null transition (after a successful Remove). If we
+  // early-returned, the parent re-render after Remove would tear the
+  // Dialog out of the React tree while Radix was still mid-exit-
+  // animation cleanup of its portal — racing with React's removal,
+  // surfacing as "DOMException: Node.removeChild: The node to be
+  // removed is not a child of this node". The fix is to keep Dialogs
+  // mounted unconditionally; their open prop is data-driven via the
+  // !!file guard so they auto-close when the file disappears.
 
   async function handleReplaceConfirm() {
     // Two-step (Mockup 3a): the confirm dialog stays open until the
@@ -183,56 +180,64 @@ export function FileFieldEditCell({
 
   return (
     <div className="space-y-2">
-      <FileMetaLine file={file} />
-      <ProvenanceLine meta={meta} pending={pending} />
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7"
-          asChild
-        >
-          <a
-            href={`/api/events/${eventId}/files/${file.fileId}/stream`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <ExternalLink className="mr-1 h-3 w-3" />
-            View
-          </a>
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7"
-          disabled={pending !== null}
-          onClick={() => setConfirm("replace")}
-        >
-          {pending === "replace" ? (
-            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-          ) : (
-            <RotateCcw className="mr-1 h-3 w-3" />
-          )}
-          {pending === "replace" ? "Replacing…" : "Replace"}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 text-destructive hover:text-destructive"
-          disabled={pending !== null}
-          onClick={() => setConfirm("remove")}
-        >
-          {pending === "remove" ? (
-            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-          ) : (
-            <Trash2 className="mr-1 h-3 w-3" />
-          )}
-          Remove
-        </Button>
-      </div>
+      {file ? (
+        <>
+          <FileMetaLine file={file} />
+          <ProvenanceLine meta={meta} pending={pending} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7"
+              asChild
+            >
+              <a
+                href={`/api/events/${eventId}/files/${file.fileId}/stream`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <ExternalLink className="mr-1 h-3 w-3" />
+                View
+              </a>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7"
+              disabled={pending !== null}
+              onClick={() => setConfirm("replace")}
+            >
+              {pending === "replace" ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <RotateCcw className="mr-1 h-3 w-3" />
+              )}
+              {pending === "replace" ? "Replacing…" : "Replace"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 text-destructive hover:text-destructive"
+              disabled={pending !== null}
+              onClick={() => setConfirm("remove")}
+            >
+              {pending === "remove" ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <Trash2 className="mr-1 h-3 w-3" />
+              )}
+              Remove
+            </Button>
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground italic">
+          No file uploaded
+        </p>
+      )}
 
       {/* Hidden picker — opens via fileInputRef.current.click() from
           the Replace confirm "Pick file…" button. */}
@@ -245,9 +250,14 @@ export function FileFieldEditCell({
 
       {/* Replace confirm dialog (Mockup 3a) — Option A two-step flow:
           confirm first, then file picker opens. Admin can back out
-          before the picker steals focus. */}
+          before the picker steals focus.
+
+          Dialog is mounted unconditionally + gated on !!file so it
+          survives the file -> null transition after Remove without
+          racing Radix's portal cleanup. DialogContent guards on file
+          internally so its children never deref a null. */}
       <Dialog
-        open={confirm === "replace"}
+        open={!!file && confirm === "replace"}
         onOpenChange={(open) => !open && pending === null && setConfirm(null)}
       >
         <DialogContent>
@@ -258,9 +268,11 @@ export function FileFieldEditCell({
               be deleted.
             </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Current: {file.filename} ({formatBytes(file.sizeBytes)})
-          </p>
+          {file && (
+            <p className="text-sm text-muted-foreground">
+              Current: {file.filename} ({formatBytes(file.sizeBytes)})
+            </p>
+          )}
           <DialogFooter>
             <Button
               variant="outline"
@@ -276,9 +288,13 @@ export function FileFieldEditCell({
         </DialogContent>
       </Dialog>
 
-      {/* Remove confirm dialog (Mockup 3b). */}
+      {/* Remove confirm dialog (Mockup 3b). Same Dialog-stays-mounted
+          pattern as Replace above — open is gated on !!file so the
+          dialog auto-closes the moment the file disappears, letting
+          Radix run its exit animation on its own timeline without
+          racing React's tree teardown. */}
       <Dialog
-        open={confirm === "remove"}
+        open={!!file && confirm === "remove"}
         onOpenChange={(open) => !open && pending === null && setConfirm(null)}
       >
         <DialogContent>
@@ -288,9 +304,11 @@ export function FileFieldEditCell({
               Remove the visitor&apos;s uploaded file? This cannot be undone.
             </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Will remove: {file.filename} ({formatBytes(file.sizeBytes)})
-          </p>
+          {file && (
+            <p className="text-sm text-muted-foreground">
+              Will remove: {file.filename} ({formatBytes(file.sizeBytes)})
+            </p>
+          )}
           {field.required && (
             <p className="text-xs text-amber-600 dark:text-amber-500">
               ⚠ This field is required. The registration will be flagged as
