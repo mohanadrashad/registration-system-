@@ -300,7 +300,12 @@ export default function AttendeesPage() {
       }
 
       const result = await res.json();
-      toast.success(`Sent ${result.sentCount} emails (${result.failedCount} failed)`);
+      const skipped = result.skippedCount ?? 0;
+      toast.success(
+        `Sent ${result.sentCount} · Failed ${result.failedCount} · Skipped ${skipped}${
+          skipped > 0 ? " (no email)" : ""
+        }`
+      );
       setSelectedIds(new Set());
       fetchData();
     } catch {
@@ -767,6 +772,16 @@ export default function AttendeesPage() {
             <DialogTitle>Send Email to {selectedIds.size} attendee{selectedIds.size !== 1 ? "s" : ""}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {(() => {
+              const withoutEmail = allContacts.filter(
+                (c) => selectedIds.has(c.id) && isSyntheticEmail(c.email)
+              ).length;
+              return withoutEmail > 0 ? (
+                <p className="text-xs text-amber-600 dark:text-amber-500">
+                  {withoutEmail} of {selectedIds.size} recipient{selectedIds.size !== 1 ? "s" : ""} {withoutEmail === 1 ? "has" : "have"} no email — they will be skipped.
+                </p>
+              ) : null;
+            })()}
             <p className="text-sm text-muted-foreground">Choose a template to send:</p>
             {templates.map((t) => (
               <button
