@@ -22,7 +22,7 @@
  * signed-URL helper appears here.
  */
 
-import { Prisma } from "@prisma/client";
+import { Prisma, FieldType } from "@prisma/client";
 import type { RegistrationFile } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { deleteBlob, streamPrivateBlob } from "@/lib/blob";
@@ -384,4 +384,442 @@ export async function getCurrentPreSubmissionFile(args: {
     },
   });
   return row;
+}
+
+// ─── Admin replace + remove (Stage 3 of ADMIN_EDIT_FIX_SPEC) ─────────
+//
+// The admin-side counterpart to the visitor's pre-submission replace.
+// Two key differences from visitor flow:
+//   - Auth is admin NextAuth session, not the reg_upload_session cookie
+//     — caller authorizes with authorizeEvent before invoking these.
+//   - Files are post-submission (registrationId already set), so the
+//     orphan-cleanup cron (which gates on registrationId IS NULL) won't
+//     sweep them; we rely on the transactional swap + best-effort blob
+//     delete to keep storage tidy.
+//
+// Both helpers stamp:
+//   - RegistrationFile.uploadedBy = "admin:<actorId>" on the new row.
+//   - Registration.formData[fieldName]                — new ref or null.
+//   - Contact.metadata[fieldName]                     — same; Stage 1's
+//     dual-store invariant. View paths read from Contact.metadata,
+//     CSV/badge/email read from Registration.formData.
+//   - Registration.updater + Contact.updater          — Stage 1 audit.
+//
+// The orchestration is intentionally NOT here for replace — that flow
+// is two-phase (token mint + onUploadCompleted webhook), and the
+// service exposes the two phases separately. Remove is single-phase
+// so it lives in one function.
+
+export class AdminFileNotReplaceableError extends Error {
+  readonly code = "ADMIN_FILE_NOT_REPLACEABLE";
+  constructor(reason: string) {
+    super(reason);
+  }
+}
+
+export interface ValidatedAdminReplaceTarget {
+  registrationId: string;
+  formField: {
+    id: string;
+    name: string;
+    type: FieldType;
+    metadata: unknown;
+  };
+  existingFile: {
+    id: string;
+    blobPath: string;
+  };
+}
+
+/**
+ * Used in the admin-replace endpoint's `onBeforeGenerateToken`. Verifies:
+ *   - the contact belongs to this event,
+ *   - the contact has a registration (admin replace makes no sense
+ *     pre-registration — there's no formData blob to update),
+ *   - the FormField belongs to this event and is a FILE type,
+ *   - an existing RegistrationFile is linked for (registration, field).
+ *
+ * Throws AdminFileNotReplaceableError on any check failure so the
+ * route can map to 404. Caller is responsible for authorizeEvent.
+ */
+export async function validateAdminReplaceTarget(input: {
+  eventId: string;
+  contactId: string;
+  formFieldId: string;
+}): Promise<ValidatedAdminReplaceTarget> {
+  const contact = await prisma.contact.findUnique({
+    where: { id: input.contactId },
+    select: {
+      eventId: true,
+      registration: { select: { id: true } },
+    },
+  });
+  if (!contact || contact.eventId !== input.eventId) {
+    throw new AdminFileNotReplaceableError("Contact not found on this event");
+  }
+  if (!contact.registration) {
+    throw new AdminFileNotReplaceableError(
+      "Contact has no registration to attach files to"
+    );
+  }
+
+  const formField = await prisma.formField.findUnique({
+    where: { id: input.formFieldId },
+    select: { id: true, name: true, type: true, eventId: true, metadata: true },
+  });
+  if (!formField || formField.eventId !== input.eventId) {
+    throw new AdminFileNotReplaceableError("Form field not found on this event");
+  }
+  if (formField.type !== FieldType.FILE) {
+    throw new AdminFileNotReplaceableError("Form field is not a FILE field");
+  }
+
+  const existingFile = await prisma.registrationFile.findFirst({
+    where: {
+      registrationId: contact.registration.id,
+      formFieldId: formField.id,
+    },
+    select: { id: true, blobPath: true },
+    orderBy: { uploadedAt: "desc" },
+  });
+  if (!existingFile) {
+    // Mockup 2b enforces "no Replace button without an existing file" on
+    // the client; this guard is defense-in-depth for direct API calls.
+    throw new AdminFileNotReplaceableError(
+      "No existing file to replace on this field"
+    );
+  }
+
+  return {
+    registrationId: contact.registration.id,
+    formField: {
+      id: formField.id,
+      name: formField.name,
+      type: formField.type,
+      metadata: formField.metadata,
+    },
+    existingFile,
+  };
+}
+
+export interface CompleteAdminReplaceInput {
+  registrationId: string;
+  contactId: string;
+  formField: { id: string; name: string };
+  oldFileId: string;
+  oldBlobPath: string;
+  newBlob: {
+    pathname: string;
+    url: string;
+    mimeType: string;
+    sizeBytes: number;
+    originalName: string;
+  };
+  actorId: string;
+}
+
+export interface CompleteAdminReplaceResult {
+  newFileId: string;
+}
+
+/**
+ * Used in the admin-replace endpoint's `onUploadCompleted`. Atomically:
+ *   1. Deletes the old RegistrationFile row.
+ *   2. Inserts a new RegistrationFile row with uploadedBy=
+ *      "admin:<actorId>", registrationId already set, and
+ *      uploadSessionId="admin:<actorId>" as a sentinel (the column is
+ *      NOT NULL but is only ownership-checked when registrationId is
+ *      null — see deleteRegistrationFileForSession).
+ *   3. Updates Registration.formData[fieldName] to the new denormalized
+ *      ref + stamps Registration.updater.
+ *   4. Updates Contact.metadata[fieldName] to the same ref + stamps
+ *      Contact.updater. Mirrors Stage 1's dual-store invariant: view
+ *      paths read from Contact.metadata while CSV/badge/email read
+ *      from Registration.formData.
+ *
+ * Blob delete is BEST-EFFORT and happens AFTER the transaction commits.
+ * If the blob delete fails, the row swap still stands — the orphan
+ * blob is a small storage leak but not a data integrity problem. The
+ * caller's onUploadCompleted catch-block deletes the new blob if the
+ * transaction itself rolls back (refinement #1 from the Chunk 1 spec).
+ */
+export async function completeAdminReplaceFile(
+  input: CompleteAdminReplaceInput
+): Promise<CompleteAdminReplaceResult> {
+  const newFileRef = {
+    fileId: "", // filled in after the create
+    filename: input.newBlob.originalName,
+    mimeType: input.newBlob.mimeType,
+    sizeBytes: input.newBlob.sizeBytes,
+  };
+  const actorSentinel = `admin:${input.actorId}`;
+
+  const { newFileId } = await prisma.$transaction(async (tx) => {
+    // 1. Delete old row first so a unique-constraint race (admin retry)
+    //    can't collide with the new insert. Both rows live under the
+    //    same (registrationId, formFieldId); the schema doesn't unique-
+    //    constrain that pair but we keep the lifecycle clean.
+    await tx.registrationFile.delete({ where: { id: input.oldFileId } });
+
+    // 2. Insert the new row. uploadedBy + uploadSessionId encode the
+    //    actor so the row is self-describing without joining User.
+    const created = await tx.registrationFile.create({
+      data: {
+        registrationId: input.registrationId,
+        formFieldId: input.formField.id,
+        uploadSessionId: actorSentinel,
+        blobPath: input.newBlob.pathname,
+        blobUrl: input.newBlob.url,
+        mimeType: input.newBlob.mimeType,
+        sizeBytes: input.newBlob.sizeBytes,
+        originalName: input.newBlob.originalName,
+        uploadedBy: actorSentinel,
+      },
+      select: { id: true },
+    });
+    newFileRef.fileId = created.id;
+
+    // 3. Merge the new ref into Registration.formData under the field
+    //    name. formData is the canonical source for CSV/badge/email.
+    const registration = await tx.registration.findUnique({
+      where: { id: input.registrationId },
+      select: { formData: true },
+    });
+    const baseForm =
+      (registration?.formData as Record<string, unknown> | null) ?? {};
+    await tx.registration.update({
+      where: { id: input.registrationId },
+      data: {
+        formData: { ...baseForm, [input.formField.name]: newFileRef } as Prisma.InputJsonValue,
+        updater: { connect: { id: input.actorId } },
+      },
+    });
+
+    // 4. Mirror into Contact.metadata so the view-mode dashboard reads
+    //    (IdentityCard, RegistrationAnswersCard) see the new file
+    //    without a refetch race. Stage 1's invariant.
+    const contact = await tx.contact.findUnique({
+      where: { id: input.contactId },
+      select: { metadata: true },
+    });
+    const baseMeta =
+      (contact?.metadata as Record<string, unknown> | null) ?? {};
+    await tx.contact.update({
+      where: { id: input.contactId },
+      data: {
+        metadata: { ...baseMeta, [input.formField.name]: newFileRef } as Prisma.InputJsonValue,
+        updater: { connect: { id: input.actorId } },
+      },
+    });
+
+    return { newFileId: created.id };
+  });
+
+  // 5. Old blob delete — best-effort, post-commit. del() is idempotent
+  //    so a missing blob is a no-op; failures just leak storage and
+  //    are logged for visibility.
+  try {
+    await deleteBlob(input.oldBlobPath);
+  } catch (err) {
+    console.warn(
+      "[admin replace] old blob delete failed (storage leak):",
+      input.oldBlobPath,
+      err
+    );
+  }
+
+  return { newFileId };
+}
+
+export interface AdminRemoveFileInput {
+  eventId: string;
+  contactId: string;
+  fileId: string;
+  actorId: string;
+}
+
+export interface AdminRemoveFileResult {
+  fieldName: string;
+}
+
+/**
+ * Admin-initiated removal of an existing post-submission FILE answer.
+ * Cross-event guarded via the same chain validateAdminReplaceTarget
+ * uses. Returns the field name so the caller can echo it in the
+ * response (UI uses it to refetch + render the empty state).
+ *
+ * Sets BOTH Registration.formData[fieldName] = null AND
+ * Contact.metadata[fieldName] = null. The null (vs key-delete) is per
+ * decision #4 from the Stage 3 audit — keeps the missing answer
+ * debuggable in JSON dumps. The empty-check pattern used by the
+ * required-field warning treats null and missing-key the same.
+ *
+ * Blob delete is best-effort, post-commit, same rationale as replace.
+ */
+export async function adminRemoveFile(
+  input: AdminRemoveFileInput
+): Promise<AdminRemoveFileResult> {
+  const file = await prisma.registrationFile.findUnique({
+    where: { id: input.fileId },
+    select: {
+      id: true,
+      blobPath: true,
+      registrationId: true,
+      registration: {
+        select: { contactId: true, eventId: true },
+      },
+      formField: {
+        select: { id: true, name: true, eventId: true, type: true },
+      },
+    },
+  });
+  if (!file) {
+    throw new AdminFileNotReplaceableError("File not found");
+  }
+  // Cross-event guard: file's formField AND registration must both
+  // belong to the URL's event AND the URL's contact.
+  if (
+    file.formField.eventId !== input.eventId ||
+    !file.registration ||
+    file.registration.eventId !== input.eventId ||
+    file.registration.contactId !== input.contactId
+  ) {
+    throw new AdminFileNotReplaceableError("File not found");
+  }
+  if (file.formField.type !== FieldType.FILE) {
+    // Shouldn't happen if the file row was minted via the FILE flow,
+    // but guard anyway in case the FormField type was changed after
+    // upload (admin edit on the form-builder side).
+    throw new AdminFileNotReplaceableError("File field type mismatch");
+  }
+  if (!file.registrationId) {
+    // Pre-submission file — admin shouldn't be touching these via the
+    // admin route. The visitor's own DELETE endpoint handles those.
+    throw new AdminFileNotReplaceableError(
+      "File is not yet linked to a registration"
+    );
+  }
+
+  const fieldName = file.formField.name;
+  const registrationId = file.registrationId;
+  const contactId = input.contactId;
+
+  await prisma.$transaction(async (tx) => {
+    // 1. Delete the row.
+    await tx.registrationFile.delete({ where: { id: file.id } });
+
+    // 2. Null out the formData key. Read-merge-write rather than a
+    //    JSON path update so we don't have to depend on the Postgres-
+    //    specific jsonb_set semantics.
+    const registration = await tx.registration.findUnique({
+      where: { id: registrationId },
+      select: { formData: true },
+    });
+    const baseForm =
+      (registration?.formData as Record<string, unknown> | null) ?? {};
+    await tx.registration.update({
+      where: { id: registrationId },
+      data: {
+        formData: { ...baseForm, [fieldName]: null } as Prisma.InputJsonValue,
+        updater: { connect: { id: input.actorId } },
+      },
+    });
+
+    // 3. Mirror into Contact.metadata so view-mode reads stay aligned.
+    const contact = await tx.contact.findUnique({
+      where: { id: contactId },
+      select: { metadata: true },
+    });
+    const baseMeta =
+      (contact?.metadata as Record<string, unknown> | null) ?? {};
+    await tx.contact.update({
+      where: { id: contactId },
+      data: {
+        metadata: { ...baseMeta, [fieldName]: null } as Prisma.InputJsonValue,
+        updater: { connect: { id: input.actorId } },
+      },
+    });
+  });
+
+  // 4. Best-effort blob delete.
+  try {
+    await deleteBlob(file.blobPath);
+  } catch (err) {
+    console.warn(
+      "[admin remove] blob delete failed (storage leak):",
+      file.blobPath,
+      err
+    );
+  }
+
+  return { fieldName };
+}
+
+// ─── Admin provenance lookup (Chunk 4 meta endpoint backing) ─────────
+//
+// Resolves the uploadedBy string ("registration:<id>" | "admin:<userId>")
+// into a UI-renderable shape: { uploadedBy: "visitor" | "admin",
+// uploadedByName: string | null, uploadedAt, wasReplaced }.
+//
+// uploadedByName for admin uploads comes from the User table; null if
+// the user was deleted (the SetNull semantic on the audit-trail FK
+// means we can't always join, but uploadedBy still tells us it WAS an
+// admin). The UI falls back to "a former admin" in that case.
+
+export type AdminFileProvenanceKind = "visitor" | "admin";
+
+export interface AdminFileProvenance {
+  uploadedBy: AdminFileProvenanceKind;
+  uploadedByName: string | null;
+  uploadedAt: Date;
+  wasReplaced: boolean;
+}
+
+/**
+ * Reads the row + (optionally) the admin user name. Cross-event
+ * guarded. Returns null on missing or cross-event so the route can
+ * map to 404 without leaking existence.
+ */
+export async function getAdminFileProvenance(input: {
+  fileId: string;
+  eventId: string;
+}): Promise<AdminFileProvenance | null> {
+  const row = await prisma.registrationFile.findUnique({
+    where: { id: input.fileId },
+    select: {
+      uploadedBy: true,
+      uploadedAt: true,
+      formField: { select: { eventId: true } },
+    },
+  });
+  if (!row || row.formField.eventId !== input.eventId) {
+    return null;
+  }
+
+  if (row.uploadedBy.startsWith("admin:")) {
+    const userId = row.uploadedBy.slice("admin:".length);
+    const user = userId
+      ? await prisma.user.findUnique({
+          where: { id: userId },
+          select: { name: true },
+        })
+      : null;
+    return {
+      uploadedBy: "admin",
+      uploadedByName: user?.name ?? null,
+      uploadedAt: row.uploadedAt,
+      wasReplaced: true,
+    };
+  }
+
+  // Anything that's NOT "admin:..." we treat as visitor. Covers both
+  // "registration:<id>" (post-submit claim) and "session:<id>" (pre-
+  // submit — shouldn't appear on the attendee detail page in practice
+  // but we render it the same way if it does).
+  return {
+    uploadedBy: "visitor",
+    uploadedByName: null,
+    uploadedAt: row.uploadedAt,
+    wasReplaced: false,
+  };
 }
