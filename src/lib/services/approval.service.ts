@@ -140,12 +140,22 @@ export const approvalService = {
       return { success: false, error: "Event is at capacity" };
     }
 
-    // Update registration
+    // Update registration. Persist approval audit columns (Stage 1 of
+    // ADMIN_EDIT_FIX_SPEC): approvedBy, approvedAt, and updatedBy all
+    // point at the actor. Approver-relation form is required by Prisma's
+    // checked-input typing (raw FK column lives on the unchecked variant).
     const updated = await prisma.registration.update({
       where: { id: registrationId },
       data: {
         status: "CONFIRMED",
         registeredAt: new Date(),
+        ...(approvedBy
+          ? {
+              approvedAt: new Date(),
+              approver: { connect: { id: approvedBy } },
+              updater: { connect: { id: approvedBy } },
+            }
+          : {}),
       },
       include: {
         contact: true,
@@ -156,7 +166,12 @@ export const approvalService = {
     // Update contact status
     await prisma.contact.update({
       where: { id: registration.contactId },
-      data: { status: "REGISTERED" },
+      data: {
+        status: "REGISTERED",
+        ...(approvedBy
+          ? { updater: { connect: { id: approvedBy } } }
+          : {}),
+      },
     });
 
     // TODO: Send approval email
@@ -185,11 +200,23 @@ export const approvalService = {
       return { success: false, error: "Registration is not pending approval" };
     }
 
-    // Update registration
+    // Update registration. Persist rejection audit columns: rejectedBy,
+    // rejectedAt, rejectionReason, and updatedBy. The reason is stored
+    // even when empty/null is passed — null is the absence of a reason,
+    // not a value worth normalizing away. Rejecter-relation form per
+    // Prisma checked-input typing.
     const updated = await prisma.registration.update({
       where: { id: registrationId },
       data: {
         status: "CANCELLED",
+        ...(rejectedBy
+          ? {
+              rejectedAt: new Date(),
+              rejectionReason: reason ?? null,
+              rejecter: { connect: { id: rejectedBy } },
+              updater: { connect: { id: rejectedBy } },
+            }
+          : {}),
       },
       include: {
         contact: true,
@@ -200,7 +227,12 @@ export const approvalService = {
     // Update contact status
     await prisma.contact.update({
       where: { id: registration.contactId },
-      data: { status: "CANCELLED" },
+      data: {
+        status: "CANCELLED",
+        ...(rejectedBy
+          ? { updater: { connect: { id: rejectedBy } } }
+          : {}),
+      },
     });
 
     // TODO: Send rejection email with reason
@@ -212,7 +244,7 @@ export const approvalService = {
   /**
    * Promote next person from waitlist
    */
-  async promoteFromWaitlist(eventId: string) {
+  async promoteFromWaitlist(eventId: string, actorId?: string) {
     // Get first person on waitlist
     const nextInLine = await prisma.registration.findFirst({
       where: {
@@ -241,12 +273,15 @@ export const approvalService = {
     // Determine new status based on approval workflow
     const newStatus = capacityInfo?.approvalRequired ? "PENDING_APPROVAL" : "CONFIRMED";
 
-    // Update registration
+    // Update registration. Stamp updatedBy when the route plumbs an
+    // actorId through (admin-triggered promotion); leave it null on
+    // any future automated promotion path.
     const updated = await prisma.registration.update({
       where: { id: nextInLine.id },
       data: {
         status: newStatus,
         registeredAt: newStatus === "CONFIRMED" ? new Date() : null,
+        ...(actorId ? { updater: { connect: { id: actorId } } } : {}),
       },
       include: {
         contact: true,
@@ -258,7 +293,10 @@ export const approvalService = {
     if (newStatus === "CONFIRMED") {
       await prisma.contact.update({
         where: { id: nextInLine.contactId },
-        data: { status: "REGISTERED" },
+        data: {
+          status: "REGISTERED",
+          ...(actorId ? { updater: { connect: { id: actorId } } } : {}),
+        },
       });
     }
 
@@ -271,7 +309,7 @@ export const approvalService = {
   /**
    * Cancel a confirmed registration and promote from waitlist
    */
-  async cancelAndPromote(registrationId: string) {
+  async cancelAndPromote(registrationId: string, actorId?: string) {
     const registration = await prisma.registration.findUnique({
       where: { id: registrationId },
       include: {
@@ -283,20 +321,29 @@ export const approvalService = {
       return { success: false, error: "Registration not found" };
     }
 
-    // Cancel the registration
+    // Cancel the registration. Stamp updatedBy on both rows when an
+    // actor is provided. The cascade promotion below also receives
+    // actorId so the promoted attendee's audit trail credits the same
+    // admin who triggered the cancel — one logical action, one actor.
     await prisma.registration.update({
       where: { id: registrationId },
-      data: { status: "CANCELLED" },
+      data: {
+        status: "CANCELLED",
+        ...(actorId ? { updater: { connect: { id: actorId } } } : {}),
+      },
     });
 
     await prisma.contact.update({
       where: { id: registration.contactId },
-      data: { status: "CANCELLED" },
+      data: {
+        status: "CANCELLED",
+        ...(actorId ? { updater: { connect: { id: actorId } } } : {}),
+      },
     });
 
     // If waitlist is enabled, promote next person
     if (registration.event.modules?.waitlist) {
-      const result = await this.promoteFromWaitlist(registration.eventId);
+      const result = await this.promoteFromWaitlist(registration.eventId, actorId);
       return {
         success: true,
         cancelled: registrationId,
