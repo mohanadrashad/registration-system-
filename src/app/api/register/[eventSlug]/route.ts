@@ -16,6 +16,7 @@ import {
   readUploadSessionId,
 } from "@/lib/registration/upload-session";
 import { getRegistrationFileById } from "@/lib/services/registration-file.service";
+import { generateSyntheticEmail } from "@/lib/contact/synthetic-email";
 
 // GET: Look up contact by invite token to pre-fill the registration form
 // Also returns event details and branding for the registration page
@@ -399,7 +400,7 @@ export async function POST(
   const hasEmail = typeof email === "string" && email.trim() !== "";
   const normalizedEmail = hasEmail
     ? email.toLowerCase()
-    : `guest-${randomBytes(8).toString("hex")}@noemail.local`;
+    : generateSyntheticEmail();
   // fullName fallback. Some events (notably system-protected forms
   // configured before firstName/lastName were standardized) submit a
   // single `fullName` field instead of split first/last. When both
