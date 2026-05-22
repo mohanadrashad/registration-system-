@@ -16,6 +16,7 @@
 import { prisma } from "@/lib/prisma";
 import { emailService } from "@/lib/services/email.service";
 import { getEventBaseUrl } from "@/lib/urls";
+import { SYNTHETIC_EMAIL_DOMAIN } from "@/lib/contact/synthetic-email";
 
 export interface PhaseReminderResult {
   phasesProcessed: number;
@@ -100,7 +101,7 @@ export async function runPhaseReminders(
           eventId: phase.eventId,
           status: "CONFIRMED",
           contact: {
-            email: { not: { endsWith: "@noemail.local" } },
+            email: { not: { endsWith: `@${SYNTHETIC_EMAIL_DOMAIN}` } },
           },
           phaseSubmissions: { none: { phaseId: phase.id } },
           phaseAccess: { none: { phaseId: phase.id, status: "LOCKED" } },

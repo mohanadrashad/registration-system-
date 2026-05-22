@@ -5,6 +5,9 @@ import {
   OTHER_SUFFIX,
   resolveOtherLabel,
 } from "@/lib/form-builder/options-parse";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
+
+export { isSyntheticEmail };
 
 // ─── Shared types ────────────────────────────────────────────────────
 
@@ -124,10 +127,6 @@ export function formatFieldValue(
     if (opt) return opt.label;
   }
   return String(raw);
-}
-
-export function isSyntheticEmail(email: string | null | undefined): boolean {
-  return !!email && email.endsWith("@noemail.local");
 }
 
 export function deriveDisplayName(
