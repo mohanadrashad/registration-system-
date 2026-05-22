@@ -19,6 +19,7 @@ import {
   resolveOtherPlaceholder,
   OTHER_VALUE,
 } from "@/lib/form-builder/options-parse";
+import { FileFieldEditCell } from "./file-field-edit-cell";
 import type { FormFieldDef } from "./field-display";
 
 /**
@@ -39,12 +40,25 @@ export function FieldEditInput({
   onChange,
   otherText,
   onChangeOtherText,
+  // Stage 3: FILE fields hand off to FileFieldEditCell which needs
+  // eventId/contactId for the replace + remove + meta endpoints, plus
+  // onFileChanged to trigger a parent refetch after a successful
+  // server-side mutation. All three are optional so non-FILE callers
+  // don't have to plumb them; the FILE branch falls back to a
+  // read-only label if they're missing (defense-in-depth — in
+  // practice the attendee detail page always passes them).
+  eventId,
+  contactId,
+  onFileChanged,
 }: {
   field: FormFieldDef;
   value: unknown;
   onChange: (v: unknown) => void;
   otherText?: string;
   onChangeOtherText?: (v: string) => void;
+  eventId?: string;
+  contactId?: string;
+  onFileChanged?: () => void | Promise<void>;
 }) {
   const parsed = parseFormFieldOptions(field.options);
   const otherEnabled = !!parsed.other;
@@ -234,70 +248,42 @@ export function FieldEditInput({
     );
   }
   if (field.type === "FILE") {
-    // Read-only in v1. Admin replace + remove on FILE fields are
-    // explicit non-goals per the spec — admins can View only. We
-    // deliberately do NOT render an editable <input> here because the
-    // formData[fieldName] value is a `{ fileId, filename, ... }`
-    // object: an editable input would coerce it to "[object Object]"
-    // and a stray keystroke would silently clobber the file ref in
-    // editValues. The label form preserves the original
-    // UploadedFileRef in state untouched while still surfacing the
-    // file to the admin.
+    // Stage 3: hand off to FileFieldEditCell which owns the View +
+    // Replace + Remove buttons, the provenance fetch, and the confirm
+    // dialogs. When the cell mutates the file server-side it calls
+    // onFileChanged so the parent refetches the contact and the cell
+    // re-renders with the new file (or empty state for Remove).
     //
-    // Layout mirrors the Stage 3 spec preview (filename + size + mime)
-    // minus the View / Replace / Remove buttons — those land with the
-    // stream-through route in Stage 3.
+    // The onChange prop intentionally isn't wired here — FILE edits
+    // bypass editValues entirely and go straight through the server.
+    // The parent's handleSave doesn't need to forward FILE values
+    // because they're already authoritative in formData by the time
+    // the cell finishes.
+    if (eventId && contactId && onFileChanged) {
+      return (
+        <FileFieldEditCell
+          field={field}
+          value={value}
+          eventId={eventId}
+          contactId={contactId}
+          onFileChanged={onFileChanged}
+        />
+      );
+    }
+    // Defensive fallback for any future caller that uses FieldEditInput
+    // without the Stage 3 plumbing. Read-only label preserves the
+    // file ref in editValues untouched.
     const file =
       value !== null &&
       typeof value === "object" &&
       !Array.isArray(value) &&
       typeof (value as { filename?: unknown }).filename === "string"
-        ? (value as {
-            filename: string;
-            mimeType?: string;
-            sizeBytes?: number;
-          })
+        ? (value as { filename: string })
         : null;
-    const formatSize = (n: number): string => {
-      if (n < 1024) return `${n} B`;
-      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-      return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-    };
-    const mimeLabel = (mime: string | undefined): string => {
-      if (!mime) return "";
-      if (mime === "application/pdf") return "PDF";
-      if (mime === "image/jpeg") return "JPEG";
-      if (mime === "image/png") return "PNG";
-      return mime;
-    };
     return (
-      <div className="space-y-1">
-        {file ? (
-          <p className="text-sm">
-            <span aria-hidden="true">📄</span>{" "}
-            <span className="font-medium break-words">{file.filename}</span>
-            {typeof file.sizeBytes === "number" && (
-              <span className="text-muted-foreground">
-                {" · "}
-                {formatSize(file.sizeBytes)}
-              </span>
-            )}
-            {file.mimeType && (
-              <span className="text-muted-foreground">
-                {" · "}
-                {mimeLabel(file.mimeType)}
-              </span>
-            )}
-          </p>
-        ) : (
-          <p className="text-sm text-muted-foreground italic">
-            No file uploaded
-          </p>
-        )}
-        <p className="text-xs text-muted-foreground">
-          Visitor-uploaded — admin replace/remove arrives in v2.
-        </p>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        {file ? `📄 ${file.filename}` : "No file uploaded"}
+      </p>
     );
   }
   return (

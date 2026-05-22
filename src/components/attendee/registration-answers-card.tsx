@@ -25,6 +25,8 @@ export function RegistrationAnswersCard({
   editValues,
   onChangeValue,
   eventId,
+  contactId,
+  onFileChanged,
 }: {
   contact: ContactDetail;
   fields: FormFieldDef[];
@@ -32,9 +34,16 @@ export function RegistrationAnswersCard({
   editValues: Record<string, unknown>;
   onChangeValue: (name: string, v: unknown) => void;
   // Stage 3: needed to build the FILE stream-through URL on view-mode
-  // rendering. The route param at the page level is the source of
-  // truth — passed in rather than re-derived here.
+  // rendering AND to pass through to FieldEditInput → FileFieldEditCell
+  // for the replace/remove/meta endpoints. The route params at the
+  // page level are the source of truth — passed in rather than
+  // re-derived here.
   eventId: string;
+  contactId: string;
+  // Triggered when FileFieldEditCell mutates a FILE server-side
+  // (Replace or Remove). Parent refetches the contact so the cell
+  // re-renders with the new file ref (or empty state for Remove).
+  onFileChanged: () => void | Promise<void>;
 }) {
   return (
     <Card>
@@ -64,6 +73,9 @@ export function RegistrationAnswersCard({
                   onChangeOtherText={(v) =>
                     onChangeValue(`${field.name}_other`, v)
                   }
+                  eventId={eventId}
+                  contactId={contactId}
+                  onFileChanged={onFileChanged}
                 />
               </div>
             ))}

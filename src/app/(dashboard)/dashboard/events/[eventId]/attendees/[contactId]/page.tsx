@@ -28,6 +28,7 @@ import { PhaseColumn } from "@/components/attendee/phase-column";
 import { EBadgeCard } from "@/components/attendee/ebadge-card";
 import { EmailHistoryCard } from "@/components/attendee/email-history-card";
 import { QuickActionsCard } from "@/components/attendee/quick-actions-card";
+import { RequiredFieldWarning } from "@/components/attendee/required-field-warning";
 
 /**
  * Attendee detail — three-column layout.
@@ -176,6 +177,11 @@ export default function AttendeeDetailPage() {
 
   return (
     <div className="space-y-4">
+      {/* Stage 3 of ADMIN_EDIT_FIX_SPEC: surface missing required answers
+          at the top of the page. Renders null when nothing's missing,
+          so the layout is unchanged in the common case. */}
+      <RequiredFieldWarning contact={contact} fields={visibleFields} />
+
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -260,6 +266,8 @@ export default function AttendeeDetailPage() {
             editValues={editValues}
             onChangeValue={onChangeValue}
             eventId={eventId}
+            contactId={contactId}
+            onFileChanged={fetchContact}
           />
           <AdminCard
             contact={contact}
