@@ -170,6 +170,7 @@ interface Phase {
 interface ModulesPayload {
   postRegPhases?: boolean;
   multiLanguage?: boolean;
+  selfServicePortal?: boolean;
 }
 
 interface EmailTemplateOption {
@@ -708,6 +709,7 @@ export default function FormBuilderPage() {
   const [selectedStepId, setSelectedStepId] = useState<string>("");
   const [postRegEnabled, setPostRegEnabled] = useState(false);
   const [multiLanguageEnabled, setMultiLanguageEnabled] = useState(false);
+  const [portalEnabled, setPortalEnabled] = useState(false);
   const [emailTemplates, setEmailTemplates] = useState<EmailTemplateOption[]>([]);
   const [eventSlug, setEventSlug] = useState<string>("");
   const [eventCategories, setEventCategories] = useState<string[]>([]);
@@ -801,6 +803,7 @@ export default function FormBuilderPage() {
         const modules: ModulesPayload = await modulesRes.json();
         setPostRegEnabled(!!modules.postRegPhases);
         setMultiLanguageEnabled(!!modules.multiLanguage);
+        setPortalEnabled(!!modules.selfServicePortal);
       }
       if (templatesRes.ok) {
         const templates: { id: string; name: string }[] = await templatesRes.json();
@@ -972,6 +975,14 @@ export default function FormBuilderPage() {
     const metadataPayload =
       field.type === "FILE" ? field.metadata ?? null : null;
 
+    // Email-required lock: when the self-service portal module is on, the
+    // email field's `required` is non-negotiable. The Edit dialog shows
+    // the toggle as checked+disabled; coerce here too so a no-op save on
+    // a stale-false DB row writes back the locked-true value instead of
+    // tripping the server-side validation (chunk 2 of stage 2).
+    const requiredPayload =
+      portalEnabled && field.name === "email" ? true : field.required;
+
     const res = await fetch(
       `/api/events/${eventId}/form-fields/${field.id}`,
       {
@@ -979,6 +990,7 @@ export default function FormBuilderPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...field,
+          required: requiredPayload,
           options: optionsPayload,
           metadata: metadataPayload,
         }),
@@ -1853,15 +1865,32 @@ export default function FormBuilderPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={editingField.required}
-                  onCheckedChange={(c) =>
-                    setEditingField({ ...editingField, required: c })
-                  }
-                />
-                <Label>Required</Label>
-              </div>
+              {(() => {
+                const emailRequiredLocked =
+                  portalEnabled && editingField.name === "email";
+                return (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={
+                          emailRequiredLocked ? true : editingField.required
+                        }
+                        disabled={emailRequiredLocked}
+                        onCheckedChange={(c) =>
+                          setEditingField({ ...editingField, required: c })
+                        }
+                      />
+                      <Label>Required</Label>
+                    </div>
+                    {emailRequiredLocked && (
+                      <p className="text-xs text-muted-foreground">
+                        Required because the self-service portal is enabled.
+                        Disable the portal module to make email optional.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
 
               <ConditionalEditor
                 value={editingField.conditional}
