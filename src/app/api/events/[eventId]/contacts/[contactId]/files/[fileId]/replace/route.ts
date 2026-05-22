@@ -70,10 +70,20 @@ interface TokenPayload {
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const { eventId, contactId, fileId } = await params;
 
-  // Stage 2 pattern: per-event auth + editor role. SUPER_ADMIN bypasses.
-  const ctx = await authorizeEvent(eventId, { role: "editor" });
-  if (ctx instanceof NextResponse) return ctx;
-  const actorId = ctx.session.user.id;
+  // Auth deliberately NOT at the handler top. handleUpload reuses
+  // this route URL for TWO events from the @vercel/blob SDK:
+  //
+  //   1. blob.generate-client-token — fired from the admin's browser
+  //      (carries the admin auth cookie).
+  //   2. blob.upload-completed       — fired as a webhook from Vercel's
+  //      servers (NO admin cookie).
+  //
+  // Calling authorizeEvent at the top auth-fails the webhook (401),
+  // so onUploadCompleted never runs, the swap never happens, and the
+  // new blob orphans in storage. Mirroring the visitor route's
+  // pattern: auth lives inside onBeforeGenerateToken (token-mint
+  // only); the webhook flows through to onUploadCompleted with the
+  // trusted tokenPayload that we baked at mint time.
 
   const body = (await req.json()) as HandleUploadBody;
 
@@ -83,6 +93,17 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       request: req,
 
       onBeforeGenerateToken: async (pathname: string) => {
+        // Per-event auth + editor role. SUPER_ADMIN bypasses.
+        // Throws bubble back to the SDK as 4xx; the client surfaces
+        // the message as a toast.
+        const ctx = await authorizeEvent(eventId, { role: "editor" });
+        if (ctx instanceof NextResponse) {
+          throw new Error(
+            ctx.status === 401 ? "Unauthorized" : "Forbidden"
+          );
+        }
+        const actorId = ctx.session.user.id;
+
         // No clientPayload needed — eventId/contactId/fileId are in the
         // URL. The admin client just calls upload() with a pathname and
         // a file. formFieldId is derived from the fileId server-side.
@@ -94,8 +115,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             fileId,
           });
         } catch (e) {
-          // Throws here bubble back to the SDK as 4xx. The admin client
-          // surfaces the message as a toast.
           if (e instanceof AdminFileNotReplaceableError) {
             throw new Error(e.message);
           }
