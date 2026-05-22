@@ -43,7 +43,7 @@ export async function GET(
       step: { phase: { type: "REGISTRATION" } },
     },
     orderBy: { order: "asc" },
-    select: { name: true, label: true, labelAr: true, type: true, options: true, isSystem: true },
+    select: { name: true, label: true, labelAr: true, type: true, options: true, isSystem: true, required: true },
   });
 
   return NextResponse.json({ ...contact, formFields });

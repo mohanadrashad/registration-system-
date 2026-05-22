@@ -31,9 +31,11 @@ export function RegistrationAnswersCard({
   editing: boolean;
   editValues: Record<string, unknown>;
   onChangeValue: (name: string, v: unknown) => void;
-  // Stage 3: needed to build the FILE stream-through URL on view-mode
-  // rendering. The route param at the page level is the source of
-  // truth — passed in rather than re-derived here.
+  // Used to build the FILE stream-through URL on view-mode rendering
+  // (FileViewerInline). The Stage 3 attempt also forwarded contactId
+  // + onFileChanged here for admin Replace/Remove UI, but that UI was
+  // reverted pending Radix focus-restoration race investigation —
+  // backend endpoints still exist but no UI consumer.
   eventId: string;
 }) {
   return (

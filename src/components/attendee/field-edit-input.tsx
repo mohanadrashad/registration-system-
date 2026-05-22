@@ -234,19 +234,22 @@ export function FieldEditInput({
     );
   }
   if (field.type === "FILE") {
-    // Read-only in v1. Admin replace + remove on FILE fields are
-    // explicit non-goals per the spec — admins can View only. We
-    // deliberately do NOT render an editable <input> here because the
-    // formData[fieldName] value is a `{ fileId, filename, ... }`
+    // Read-only. Admin Replace/Remove UI was attempted in Stage 3 of
+    // ADMIN_EDIT_FIX_SPEC but ran into a DOMException race in Radix
+    // FocusScope's close-time focus restoration that we couldn't
+    // resolve without deeper investigation. Backend is shipped (the
+    // /files/[fileId]/replace POST, DELETE /files/[fileId], and
+    // /files/[fileId]/meta GET endpoints all exist and work in
+    // production). Future UI revival should start by reproducing
+    // the race locally with sourcemaps enabled, OR by lifting the
+    // confirm dialogs to a page-level scope that doesn't unmount on
+    // parent refetch.
+    //
+    // No editable <input> here because the formData[fieldName] value
+    // for type=FILE is a `{ fileId, filename, mimeType, sizeBytes }`
     // object: an editable input would coerce it to "[object Object]"
     // and a stray keystroke would silently clobber the file ref in
-    // editValues. The label form preserves the original
-    // UploadedFileRef in state untouched while still surfacing the
-    // file to the admin.
-    //
-    // Layout mirrors the Stage 3 spec preview (filename + size + mime)
-    // minus the View / Replace / Remove buttons — those land with the
-    // stream-through route in Stage 3.
+    // editValues.
     const file =
       value !== null &&
       typeof value === "object" &&
@@ -295,7 +298,7 @@ export function FieldEditInput({
           </p>
         )}
         <p className="text-xs text-muted-foreground">
-          Visitor-uploaded — admin replace/remove arrives in v2.
+          Visitor-uploaded — admin replace/remove deferred to future stage.
         </p>
       </div>
     );
