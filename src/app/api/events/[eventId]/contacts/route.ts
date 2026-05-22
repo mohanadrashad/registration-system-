@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import {
   createContactSchema,
   validateCategoryForEvent,
 } from "@/lib/validations/contact";
 import { randomBytes } from "crypto";
-import { getRole, canEdit } from "@/lib/permissions";
 import { contactService } from "@/lib/services/contact.service";
 
 export async function GET(
@@ -130,11 +130,10 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canEdit(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
   const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "editor" });
+  if (ctx instanceof NextResponse) return ctx;
+
   const body = await req.json();
   const result = createContactSchema.safeParse(body);
 
@@ -142,29 +141,29 @@ export async function POST(
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
   }
 
-  const event = await prisma.event.findUnique({
-    where: { id: eventId },
-    select: { categories: true },
-  });
-  if (!event) {
-    return NextResponse.json({ error: "Event not found" }, { status: 404 });
-  }
-
+  // Reuse ctx.event (loaded by authorizeEvent) instead of re-fetching.
   const categoryCheck = validateCategoryForEvent(
     result.data.category,
-    event.categories
+    ctx.event.categories
   );
   if (!categoryCheck.ok) {
     return NextResponse.json({ error: categoryCheck.error }, { status: 400 });
   }
 
   const { metadata, ...rest } = result.data;
+  // Stage 1 audit-trail completion: stamp updatedBy on creation too.
+  // Spec line 97 listed this but Stage 1 scoped the audit columns to
+  // PUT + approvals only. This create uses the unchecked input variant
+  // (raw `eventId` column rather than a nested event relation), so the
+  // audit stamp also has to use the raw `updatedBy` column — Prisma's
+  // create-input XORs the two variants and won't accept a mix.
   const contact = await prisma.contact.create({
     data: {
       ...rest,
       category: categoryCheck.value ?? null,
       eventId,
       inviteToken: randomBytes(16).toString("hex"),
+      updatedBy: ctx.session.user.id,
       ...(metadata === null
         ? { metadata: Prisma.DbNull }
         : metadata !== undefined

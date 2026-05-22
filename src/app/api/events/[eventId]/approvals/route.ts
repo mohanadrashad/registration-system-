@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authorize } from "@/lib/api-auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { approvalService } from "@/lib/services/approval.service";
 
@@ -10,20 +10,15 @@ interface RouteParams {
 // GET - Get pending approvals, waitlist, and capacity info
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize();
-    if (ctx instanceof NextResponse) return ctx;
-
     const { eventId } = await params;
-
-    // Check if event exists and has approval module enabled
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      include: { modules: true },
-    });
-
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
-    }
+    // Read-only endpoint: any event member can fetch the approvals
+    // panel data. "authenticated" is the lowest RoleRequirement and
+    // maps to canViewEvent (passes when eventRole !== null OR
+    // SUPER_ADMIN). Closes the asymmetric posture where Stage 2's
+    // POST migration would gate writes per-event but reads would
+    // remain open to any logged-in user.
+    const ctx = await authorizeEvent(eventId, { role: "authenticated" });
+    if (ctx instanceof NextResponse) return ctx;
 
     const [capacityInfo, pendingApprovals, waitlist] = await Promise.all([
       approvalService.getCapacityInfo(eventId),
@@ -48,10 +43,10 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Approve or reject a registration
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize("editor");
+    const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor" });
     if (ctx instanceof NextResponse) return ctx;
 
-    const { eventId } = await params;
     const body = await request.json();
 
     const { action, registrationId, reason } = body;

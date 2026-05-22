@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import {
   updateContactSchema,
   validateCategoryForEvent,
 } from "@/lib/validations/contact";
-import { getRole, canEdit, canDelete } from "@/lib/permissions";
 import { isJsonEqual } from "@/lib/json-equal";
 
 export async function GET(
@@ -53,18 +53,28 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ eventId: string; contactId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canEdit(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-  // Audit trail needs a real User id. NextAuth's typing has session.user
-  // as optional, but the credentials flow guarantees it — defensive null
-  // check keeps TS honest and surfaces an unexpected session shape as
-  // 401 rather than a runtime crash inside the transaction.
-  const userId = session.user?.id;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { eventId, contactId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "editor" });
+  if (ctx instanceof NextResponse) return ctx;
+  // EventAuthContext.session.user.id is typed as required string —
+  // Stage 1's defensive null check is no longer needed here.
+  const userId = ctx.session.user.id;
+
+  // Cross-event isolation. authorizeEvent verifies the CALLER's
+  // membership on this event, but the contactId in the URL could
+  // belong to another event entirely. Without this, an editor on
+  // event A could pass /events/A/contacts/<id-from-event-B> and
+  // silently update event B's contact. 404 (not 403) matches the
+  // GET handler's pattern at L30 and avoids leaking that the
+  // contact exists elsewhere.
+  const existing = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { eventId: true },
+  });
+  if (!existing || existing.eventId !== eventId) {
+    return NextResponse.json({ error: "Contact not found" }, { status: 404 });
+  }
+
   const body = await req.json();
   const result = updateContactSchema.safeParse(body);
 
@@ -72,17 +82,11 @@ export async function PUT(
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
   }
 
-  const event = await prisma.event.findUnique({
-    where: { id: eventId },
-    select: { categories: true },
-  });
-  if (!event) {
-    return NextResponse.json({ error: "Event not found" }, { status: 404 });
-  }
-
+  // ctx.event is loaded by authorizeEvent — reuse it for the category
+  // check rather than re-fetching. Saves a round trip on every PUT.
   const categoryCheck = validateCategoryForEvent(
     result.data.category,
-    event.categories
+    ctx.event.categories
   );
   if (!categoryCheck.ok) {
     return NextResponse.json({ error: categoryCheck.error }, { status: 400 });
@@ -208,11 +212,18 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ eventId: string; contactId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canDelete(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const { eventId, contactId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "manager" });
+  if (ctx instanceof NextResponse) return ctx;
 
-  const { contactId } = await params;
+  // Cross-event guard — same reasoning as PUT.
+  const existing = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { eventId: true },
+  });
+  if (!existing || existing.eventId !== eventId) {
+    return NextResponse.json({ error: "Contact not found" }, { status: 404 });
+  }
 
   try {
     await prisma.$transaction([
