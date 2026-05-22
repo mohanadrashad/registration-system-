@@ -4,20 +4,26 @@ import { Award, ExternalLink } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ContactDetail } from "./field-display";
+import { type ContactDetail, isSyntheticEmail } from "./field-display";
 
 /**
- * E-Badge card. View-only, matching today's behaviour (per Decision B —
- * there is no per-attendee email-badge action in the codebase, so no
- * Email button is rendered). When the registration is confirmed the
- * badge is viewable; otherwise a "not yet generated" placeholder shows.
+ * E-Badge card. View-only — per the original Decision B there is no
+ * per-attendee email-badge action in the codebase, so no Email button
+ * is rendered. The three delivery states surfaced here are read-only
+ * indicators driven by `badgeGenerated`, `badgeEmailSent`, and whether
+ * the contact has a real email on record.
  */
 export function EBadgeCard({
   registration,
+  email,
 }: {
   registration: ContactDetail["registration"];
+  email: string | null | undefined;
 }) {
   const confirmed = registration?.status === "CONFIRMED";
+  const generated = !!registration?.badgeGenerated;
+  const emailSent = !!registration?.badgeEmailSent;
+  const noEmail = isSyntheticEmail(email);
 
   return (
     <Card>
@@ -25,9 +31,14 @@ export function EBadgeCard({
         <CardTitle className="text-base flex items-center gap-2">
           <Award className="h-4 w-4" />
           E-Badge
-          {confirmed && registration?.badgeEmailSent && (
+          {confirmed && emailSent && (
             <Badge variant="default" className="ml-auto text-xs">
               Email Sent
+            </Badge>
+          )}
+          {confirmed && generated && !emailSent && noEmail && (
+            <Badge variant="outline" className="ml-auto text-xs text-muted-foreground">
+              No email
             </Badge>
           )}
         </CardTitle>
@@ -38,6 +49,13 @@ export function EBadgeCard({
             <p className="text-sm text-muted-foreground">
               Badge is ready for this confirmed attendee.
             </p>
+            {generated && !emailSent && (
+              <p className="text-xs text-muted-foreground">
+                {noEmail
+                  ? "Not delivered — no email on record."
+                  : "Delivery pending."}
+              </p>
+            )}
             <Button
               variant="outline"
               size="sm"

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -525,7 +526,7 @@ export default function WhatsAppPage() {
                                 {log.contact.firstName} {log.contact.lastName}
                               </p>
                               <p className="text-xs text-muted-foreground">
-                                {log.contact.email}
+                                {isSyntheticEmail(log.contact.email) ? "—" : log.contact.email}
                               </p>
                             </div>
                           </TableCell>

@@ -4,6 +4,15 @@ import { authorize } from "@/lib/api-auth";
 import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
 import { eventBaseUrlFromDomain } from "@/lib/urls";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
+
+// Orphan: there is no campaign-builder UI today; the dashboard
+// "campaigns" route at /dashboard/.../emails/campaigns is a redirect to
+// /attendees. This endpoint is kept in sync with
+// attendees/send-email/route.ts (the active path) so that if the
+// campaign builder is ever revived the skip logic doesn't need
+// re-implementing. Any change to the send-loop pattern here should land
+// in both files.
 
 export async function POST(
   _req: Request,
@@ -68,6 +77,7 @@ export async function POST(
 
   let sentCount = 0;
   let failedCount = 0;
+  let skippedCount = 0;
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   const appUrl = eventBaseUrlFromDomain(campaign.event.domain);
@@ -78,6 +88,24 @@ export async function POST(
       where: { campaignId, contactId: contact.id },
     });
     if (existing) continue;
+
+    // Synthetic placeholder addresses are unroutable. Log as SKIPPED
+    // (must run BEFORE the emailRegex check — synthetic emails are
+    // regex-valid). Keep in sync with attendees/send-email/route.ts.
+    if (isSyntheticEmail(contact.email)) {
+      await prisma.emailLog.create({
+        data: {
+          campaignId,
+          contactId: contact.id,
+          toEmail: contact.email,
+          subject: campaign.template.subject,
+          status: "SKIPPED",
+          errorMessage: "No email on record",
+        },
+      });
+      skippedCount++;
+      continue;
+    }
 
     // Skip contacts with invalid email addresses
     if (!emailRegex.test(contact.email)) {
@@ -157,6 +185,7 @@ export async function POST(
       status: "COMPLETED",
       sentCount,
       failedCount,
+      skippedCount,
       sentAt: new Date(),
     },
   });
@@ -165,6 +194,7 @@ export async function POST(
     success: true,
     sentCount,
     failedCount,
+    skippedCount,
     total: contacts.length,
   });
 }

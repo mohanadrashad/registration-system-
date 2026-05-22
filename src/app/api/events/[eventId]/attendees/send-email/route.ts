@@ -5,6 +5,7 @@ import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
 import { eventBaseUrlFromDomain } from "@/lib/urls";
 import { buildFormFieldVariables } from "@/lib/email-form-field-variables";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 
 export async function POST(
   req: Request,
@@ -68,11 +69,32 @@ export async function POST(
 
   let sentCount = 0;
   let failedCount = 0;
+  let skippedCount = 0;
   const appUrl = eventBaseUrlFromDomain(event.domain);
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   for (const contact of contacts) {
+    // Synthetic placeholder addresses (guest-<hex>@noemail.local) are
+    // unroutable — they exist only because the registration form was
+    // configured with email-optional. Log as SKIPPED so admins can see
+    // why nothing was sent, but don't call the provider. Must run BEFORE
+    // the emailRegex check because synthetic emails are regex-valid.
+    if (isSyntheticEmail(contact.email)) {
+      await prisma.emailLog.create({
+        data: {
+          campaignId: campaign.id,
+          contactId: contact.id,
+          toEmail: contact.email,
+          subject: template.subject,
+          status: "SKIPPED",
+          errorMessage: "No email on record",
+        },
+      });
+      skippedCount++;
+      continue;
+    }
+
     // Skip contacts with invalid email addresses
     if (!emailRegex.test(contact.email)) {
       await prisma.emailLog.create({
@@ -178,6 +200,7 @@ export async function POST(
       status: "COMPLETED",
       sentCount,
       failedCount,
+      skippedCount,
       sentAt: new Date(),
     },
   });
@@ -186,6 +209,7 @@ export async function POST(
     success: true,
     sentCount,
     failedCount,
+    skippedCount,
     total: contacts.length,
   });
 }

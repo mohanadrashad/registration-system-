@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { isSyntheticEmail, fallbackName } from "@/components/attendee/field-display";
 import {
   Upload,
   Plus,
@@ -299,7 +300,12 @@ export default function AttendeesPage() {
       }
 
       const result = await res.json();
-      toast.success(`Sent ${result.sentCount} emails (${result.failedCount} failed)`);
+      const skipped = result.skippedCount ?? 0;
+      toast.success(
+        `Sent ${result.sentCount} · Failed ${result.failedCount} · Skipped ${skipped}${
+          skipped > 0 ? " (no email)" : ""
+        }`
+      );
       setSelectedIds(new Set());
       fetchData();
     } catch {
@@ -766,6 +772,16 @@ export default function AttendeesPage() {
             <DialogTitle>Send Email to {selectedIds.size} attendee{selectedIds.size !== 1 ? "s" : ""}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {(() => {
+              const withoutEmail = allContacts.filter(
+                (c) => selectedIds.has(c.id) && isSyntheticEmail(c.email)
+              ).length;
+              return withoutEmail > 0 ? (
+                <p className="text-xs text-amber-600 dark:text-amber-500">
+                  {withoutEmail} of {selectedIds.size} recipient{selectedIds.size !== 1 ? "s" : ""} {withoutEmail === 1 ? "has" : "have"} no email — they will be skipped.
+                </p>
+              ) : null;
+            })()}
             <p className="text-sm text-muted-foreground">Choose a template to send:</p>
             {templates.map((t) => (
               <button
@@ -942,11 +958,15 @@ export default function AttendeesPage() {
                     </td>
                     <td className="px-4 py-3">
                       <Link href={`/dashboard/events/${eventId}/attendees/${contact.id}`} className="hover:underline text-primary font-medium">
-                        {contact.firstName} {contact.lastName}
+                        {fallbackName(contact.firstName, contact.lastName, contact.registration?.confirmationCode)}
                       </Link>
-                      <p className="text-xs text-muted-foreground md:hidden">{contact.email}</p>
+                      <p className="text-xs text-muted-foreground md:hidden">
+                        {isSyntheticEmail(contact.email) ? "—" : contact.email}
+                      </p>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{contact.email}</td>
+                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">
+                      {isSyntheticEmail(contact.email) ? "—" : contact.email}
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{contact.organization || "-"}</td>
                     {!isSingleCategory && (
                       <td className="px-4 py-3">

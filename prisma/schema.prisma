@@ -484,6 +484,7 @@ model EmailCampaign {
   totalRecipients Int                 @default(0)
   sentCount       Int                 @default(0)
   failedCount     Int                 @default(0)
+  skippedCount    Int                 @default(0)
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
 
@@ -533,6 +534,7 @@ enum EmailLogStatus {
   OPENED
   BOUNCED
   FAILED
+  SKIPPED
 }
 
 // ─── Badge Template ───

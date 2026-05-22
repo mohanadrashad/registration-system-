@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 
 // ─── Wire-format types ───────────────────────────────────────────────
 
@@ -241,7 +242,7 @@ function OptionRow({
                         {row.contact.firstName} {row.contact.lastName}
                       </p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {row.contact.email}
+                        {isSyntheticEmail(row.contact.email) ? "—" : row.contact.email}
                       </p>
                     </div>
                     <span className="text-xs text-muted-foreground whitespace-nowrap">

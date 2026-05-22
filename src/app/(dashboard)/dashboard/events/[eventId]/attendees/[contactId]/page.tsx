@@ -18,6 +18,7 @@ import {
   deriveDisplayName,
   getFieldValue,
   initialsFor,
+  isSyntheticEmail,
 } from "@/components/attendee/field-display";
 import { IdentityCard } from "@/components/attendee/identity-card";
 import { RegistrationAnswersCard } from "@/components/attendee/registration-answers-card";
@@ -188,6 +189,11 @@ export default function AttendeeDetailPage() {
                 {displayName.secondary}
               </p>
             )}
+            {isSyntheticEmail(contact.email) && (
+              <p className="text-xs text-muted-foreground italic">
+                No email provided
+              </p>
+            )}
             {/* Badges sit on their own line so a long name is never
                 squeezed/truncated by them at narrow widths. */}
             <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -276,7 +282,7 @@ export default function AttendeeDetailPage() {
 
         {/* Right — Communications & Output */}
         <div className="space-y-[14px]">
-          <EBadgeCard registration={contact.registration} />
+          <EBadgeCard registration={contact.registration} email={contact.email} />
           <EmailHistoryCard emailLogs={contact.emailLogs} />
           {userCanEdit && (
             <QuickActionsCard

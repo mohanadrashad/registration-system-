@@ -9,6 +9,7 @@ import {
   type FormFieldDef,
   formatFieldValue,
   getFieldValue,
+  isSyntheticEmail,
 } from "./field-display";
 
 /**
@@ -64,18 +65,27 @@ export function IdentityCard({
           </div>
         ) : (
           <div className="space-y-3">
-            {fields.map((field) => (
-              <div key={field.name} className="flex items-start gap-3 text-sm">
-                <span className="text-muted-foreground w-28 shrink-0">{field.label}</span>
-                <span className="font-medium break-words">
-                  {formatFieldValue(
-                    field,
-                    getFieldValue(contact, field),
-                    contact.metadata
-                  )}
-                </span>
-              </div>
-            ))}
+            {fields.map((field) => {
+              // Synthetic emails are placeholders, not real data — dash them
+              // out so the identity card matches the rest of the dashboard
+              // (see Stage 3 of the email-optional-events spec).
+              const isEmptyEmail =
+                field.name === "email" && isSyntheticEmail(contact.email);
+              return (
+                <div key={field.name} className="flex items-start gap-3 text-sm">
+                  <span className="text-muted-foreground w-28 shrink-0">{field.label}</span>
+                  <span className="font-medium break-words">
+                    {isEmptyEmail
+                      ? "—"
+                      : formatFieldValue(
+                          field,
+                          getFieldValue(contact, field),
+                          contact.metadata
+                        )}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </CardContent>
