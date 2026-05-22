@@ -170,6 +170,16 @@ export function FileFieldEditCell({
       }
       toast.success("File removed");
       setConfirm(null);
+      // Defer parent refetch until Radix's Dialog finishes its 200ms
+      // exit animation + focus restoration. Without this delay, the
+      // post-Remove re-render unmounts the inner buttons (gated on
+      // file=truthy) while Radix's FocusScope still holds a ref to
+      // the Remove button → Node.removeChild DOMException. The 250ms
+      // is just above dialog.tsx:64's "duration-200" CSS transition.
+      // Replace's handler doesn't need this — its setConfirm(null)
+      // happens before a multi-second await upload(), and its file
+      // transitions old-ref → new-ref (both truthy) rather than → null.
+      await new Promise((r) => setTimeout(r, 250));
       await onFileChanged();
     } catch {
       toast.error("Network error. Please try again.");
