@@ -23,6 +23,11 @@ export interface FormFieldDef {
   // through parseFormFieldOptions before iterating.
   options: unknown;
   isSystem: boolean;
+  // Stage 3 of ADMIN_EDIT_FIX_SPEC: used by the attendee detail page's
+  // required-field warning banner to flag missing required answers
+  // post-registration (e.g. after an admin Remove on a required FILE).
+  // Informational only — no enforcement on check-in / badge / email.
+  required: boolean;
 }
 
 export interface ContactDetail {

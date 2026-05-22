@@ -161,7 +161,9 @@ function SubmissionRow({ phase }: { phase: MergedPhase }) {
         fields.push({
           label: f.label,
           value: formatFieldValue(
-            { ...f, isSystem: false },
+            // formatFieldValue ignores isSystem + required; satisfy
+            // FormFieldDef shape only for the type check.
+            { ...f, isSystem: false, required: false },
             sub.data[f.name],
             sub.data
           ),
