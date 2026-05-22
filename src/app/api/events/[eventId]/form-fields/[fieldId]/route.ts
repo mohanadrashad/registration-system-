@@ -59,6 +59,31 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       return NextResponse.json({ error: "Field not found" }, { status: 404 });
     }
 
+    // Email-required lock: when this is the system email field AND the
+    // self-service portal module is on, `required` cannot be unset. The
+    // form-builder UI gates this client-side; this is defense in depth
+    // against direct API calls. Lookup only runs when relevant.
+    if (
+      existing.name === "email" &&
+      body.required !== undefined &&
+      body.required !== true
+    ) {
+      const modules = await prisma.eventModules.findUnique({
+        where: { eventId },
+        select: { selfServicePortal: true },
+      });
+      if (modules?.selfServicePortal) {
+        return NextResponse.json(
+          {
+            error:
+              "Email field is required while the self-service portal module is enabled. Disable the portal to make email optional.",
+            code: "EMAIL_REQUIRED_BY_PORTAL",
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     // Build update data
     const updateData: Record<string, unknown> = {};
 
