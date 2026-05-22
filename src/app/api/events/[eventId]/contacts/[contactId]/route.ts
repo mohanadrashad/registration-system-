@@ -7,6 +7,7 @@ import {
   validateCategoryForEvent,
 } from "@/lib/validations/contact";
 import { getRole, canEdit, canDelete } from "@/lib/permissions";
+import { isJsonEqual } from "@/lib/json-equal";
 
 export async function GET(
   _req: Request,
@@ -145,6 +146,19 @@ export async function PUT(
       // formData and not Contact.metadata — see admin corrections. Only
       // fires when a Registration exists; pre-registration contacts
       // (IMPORTED / INVITED) update Contact.metadata only.
+      //
+      // Secondary gate: the dashboard sends the FULL non-column field
+      // set on every save (not just changed keys), so hasFormData is
+      // true even for Contact-column-only edits. Skip the Registration
+      // write when no submitted formData value actually differs from
+      // what's already stored — otherwise Registration.updatedAt would
+      // bump and Registration.updatedBy would be stamped on every PUT,
+      // not just real formData edits.
+      //
+      // Side effect (intentional): if Contact.metadata has drifted
+      // from Registration.formData historically (the pre-fix CSV-drift
+      // residue), the diff sees that and the merge heals it on the
+      // next admin save. No separate cleanup project needed.
       if (hasFormData) {
         const registration = await tx.registration.findUnique({
           where: { contactId },
@@ -153,13 +167,18 @@ export async function PUT(
         if (registration) {
           const base =
             (registration.formData as Record<string, unknown> | null) ?? {};
-          await tx.registration.update({
-            where: { id: registration.id },
-            data: {
-              formData: { ...base, ...formData } as Prisma.InputJsonValue,
-              updater: { connect: { id: userId } },
-            },
-          });
+          const changed = Object.keys(formData).some(
+            (k) => !isJsonEqual(base[k], formData[k])
+          );
+          if (changed) {
+            await tx.registration.update({
+              where: { id: registration.id },
+              data: {
+                formData: { ...base, ...formData } as Prisma.InputJsonValue,
+                updater: { connect: { id: userId } },
+              },
+            });
+          }
         }
       }
 

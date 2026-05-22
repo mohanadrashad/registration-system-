@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { computePhaseStatus } from "@/lib/services/phase.service";
 import { computePhaseCompletion } from "@/lib/services/selection.service";
 import { getPortalSessionFromRequest } from "@/lib/portal/session";
+import { isJsonEqual } from "@/lib/json-equal";
 
 interface RouteParams {
   params: Promise<{ eventSlug: string }>;
@@ -368,8 +369,22 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       // would add a separate column for visitor attribution.
       const hasFormDataPatch = Object.keys(formDataPatch).length > 0;
       const hasContactWrite = Object.keys(data).length > 0;
+      // Secondary diff gate, mirroring the admin Contact PUT: the
+      // portal form posts the FULL non-column field set on every
+      // save, so hasFormDataPatch is true even when the visitor
+      // changed only a Contact-column field (or nothing at all). Skip
+      // the Registration write when no formData value actually
+      // differs from what's already stored — otherwise
+      // Registration.updatedAt would bump on every portal submit.
+      const baseForm =
+        (registration.formData as Record<string, unknown> | null) ?? {};
+      const formDataChanged =
+        hasFormDataPatch &&
+        Object.keys(formDataPatch).some(
+          (k) => !isJsonEqual(baseForm[k], formDataPatch[k])
+        );
 
-      if (hasContactWrite || hasFormDataPatch) {
+      if (hasContactWrite || formDataChanged) {
         await prisma.$transaction(async (tx) => {
           if (hasContactWrite) {
             await tx.contact.update({
@@ -377,9 +392,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               data,
             });
           }
-          if (hasFormDataPatch) {
-            const baseForm =
-              (registration.formData as Record<string, unknown> | null) ?? {};
+          if (formDataChanged) {
             await tx.registration.update({
               where: { id: registration.id },
               data: {
