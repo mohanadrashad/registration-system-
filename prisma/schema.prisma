@@ -22,6 +22,15 @@ model User {
   eventMemberships EventMember[]
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
+
+  // Admin-edit audit-trail inverse relations. Nullable on the owning
+  // model so a deleted User leaves the audit slot null (Prisma default
+  // SetNull for optional FKs); we never want a User deletion to
+  // cascade-delete a Contact or Registration row.
+  contactsUpdated       Contact[]      @relation(name: "ContactUpdater")
+  registrationsUpdated  Registration[] @relation(name: "RegistrationUpdater")
+  registrationsApproved Registration[] @relation(name: "RegistrationApprover")
+  registrationsRejected Registration[] @relation(name: "RegistrationRejecter")
 }
 
 model Account {
@@ -336,16 +345,19 @@ model Contact {
   importBatch  String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+  updatedBy    String?
 
   event        Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration Registration?
   emailLogs    EmailLog[]
   whatsAppLogs WhatsAppLog[]
+  updater      User?         @relation(name: "ContactUpdater", fields: [updatedBy], references: [id])
 
   @@unique([eventId, email])
   @@index([eventId])
   @@index([eventId, status])
   @@index([email])
+  @@index([updatedBy])
 }
 
 // ─── Registration ───
@@ -364,6 +376,21 @@ model Registration {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
+  // Admin-edit audit-trail. updatedBy is set on every admin-initiated
+  // write (Contact PUT, approvals, future admin-replace file flows).
+  // Visitor-driven writes (public registration, portal self-edit) leave
+  // it null — visitors aren't Users, and a `"portal:<id>"` sentinel
+  // would fail the FK. Approval/rejection columns are set by the
+  // approval service when the registration enters CONFIRMED/CANCELLED
+  // via that path; status changes through other routes (waitlist
+  // promotion, portal cancel) leave them null.
+  updatedBy        String?
+  approvedBy       String?
+  approvedAt       DateTime?
+  rejectedBy       String?
+  rejectedAt       DateTime?
+  rejectionReason  String?            @db.Text
+
   contact          Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
   event            Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
   badge            Badge?
@@ -373,9 +400,14 @@ model Registration {
   portalOtps       PortalOtp[]
   selections       AttendeeSelection[]
   files            RegistrationFile[]
+  updater          User?               @relation(name: "RegistrationUpdater", fields: [updatedBy], references: [id])
+  approver         User?               @relation(name: "RegistrationApprover", fields: [approvedBy], references: [id])
+  rejecter         User?               @relation(name: "RegistrationRejecter", fields: [rejectedBy], references: [id])
 
   @@index([eventId])
   @@index([status])
+  @@index([updatedBy])
+  @@index([approvedBy])
 }
 
 enum RegistrationStatus {

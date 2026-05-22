@@ -9,10 +9,23 @@ export const createContactSchema = z.object({
   designation: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
   status: z.enum(["IMPORTED", "INVITED", "REGISTERED", "CANCELLED"]).optional(),
+  // metadata is the legacy slot. Pre-Stage-1 clients folded formData
+  // answers into this blob; the Stage 1 handler now writes formData
+  // through a dedicated field. Kept here so the endpoint stays
+  // backwards-compatible with any caller still on the old shape.
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
-export const updateContactSchema = createContactSchema.partial();
+export const updateContactSchema = createContactSchema.partial().extend({
+  // Stage 1 admin-edit fix. The admin save flow sends non-Contact-column
+  // form-field answers under this key. The handler merges them into
+  // BOTH Contact.metadata (so existing reads keep working) AND
+  // Registration.formData (so the CSV export and badge/email
+  // renderers — which read formData — see admin corrections).
+  // Not nullable: there's no "clear all answers" semantic; absence
+  // means "don't touch formData."
+  formData: z.record(z.string(), z.unknown()).optional(),
+});
 
 export type CreateContactInput = z.infer<typeof createContactSchema>;
 

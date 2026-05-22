@@ -103,9 +103,14 @@ export default function AttendeeDetailPage() {
     setSaving(true);
     try {
       const columnUpdates: Record<string, unknown> = {};
-      const metadataUpdates: Record<string, unknown> = {
-        ...(contact.metadata || {}),
-      };
+      // Stage 1 admin-edit fix: send non-column answers under formData
+      // instead of folding them into metadata. The server merges
+      // formData into BOTH Contact.metadata (for the read paths) AND
+      // Registration.formData (for the CSV export, badge renderer, and
+      // email variables). Sending the full merged metadata blob like
+      // before is no longer necessary — the server reads the existing
+      // metadata when it needs the merge base.
+      const formDataPatch: Record<string, unknown> = {};
 
       for (const field of contact.formFields || []) {
         if (LAYOUT_TYPES.has(field.type)) continue;
@@ -114,17 +119,18 @@ export default function AttendeeDetailPage() {
           columnUpdates[field.name] =
             value === "" || value === undefined ? null : value;
         } else {
-          metadataUpdates[field.name] = value;
+          formDataPatch[field.name] = value;
         }
       }
 
-      const body = {
+      const body: Record<string, unknown> = {
         ...columnUpdates,
-        metadata:
-          Object.keys(metadataUpdates).length > 0 ? metadataUpdates : null,
         category: editCategory || null,
         status: editStatus,
       };
+      if (Object.keys(formDataPatch).length > 0) {
+        body.formData = formDataPatch;
+      }
 
       const res = await fetch(`/api/events/${eventId}/contacts/${contactId}`, {
         method: "PUT",

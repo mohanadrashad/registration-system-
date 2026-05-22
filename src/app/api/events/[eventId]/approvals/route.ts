@@ -91,11 +91,17 @@ export async function POST(request: Request, { params }: RouteParams) {
         break;
 
       case "promote":
-        result = await approvalService.promoteFromWaitlist(eventId);
+        result = await approvalService.promoteFromWaitlist(
+          eventId,
+          ctx.session.user.id
+        );
         break;
 
       case "cancel":
-        result = await approvalService.cancelAndPromote(registrationId);
+        result = await approvalService.cancelAndPromote(
+          registrationId,
+          ctx.session.user.id
+        );
         break;
 
       default:
