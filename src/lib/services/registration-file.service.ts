@@ -432,73 +432,89 @@ export interface ValidatedAdminReplaceTarget {
 }
 
 /**
- * Used in the admin-replace endpoint's `onBeforeGenerateToken`. Verifies:
- *   - the contact belongs to this event,
- *   - the contact has a registration (admin replace makes no sense
- *     pre-registration — there's no formData blob to update),
- *   - the FormField belongs to this event and is a FILE type,
- *   - an existing RegistrationFile is linked for (registration, field).
+ * Used in the admin-replace endpoint's `onBeforeGenerateToken`. The
+ * URL identifies the operation by the existing fileId — the file must:
+ *   - exist,
+ *   - belong to a registration on the URL's event AND contact,
+ *   - link to a FormField that is a FILE type on the URL's event.
  *
- * Throws AdminFileNotReplaceableError on any check failure so the
- * route can map to 404. Caller is responsible for authorizeEvent.
+ * formFieldId is derived from the existing file rather than taken from
+ * the URL because the URL slug `[fileId]` is shared with the remove
+ * endpoint (Next.js requires the same slug name at the same path
+ * position across sibling routes). This is the v1 deviation from the
+ * spec's "[formFieldId] in URL" wording; mockup #2b confirms admin
+ * UI only ever invokes Replace when a file exists, so the fileId is
+ * always known client-side.
+ *
+ * Throws AdminFileNotReplaceableError on any mismatch so the route can
+ * 404 uniformly without leaking which check failed.
  */
 export async function validateAdminReplaceTarget(input: {
   eventId: string;
   contactId: string;
-  formFieldId: string;
+  fileId: string;
 }): Promise<ValidatedAdminReplaceTarget> {
-  const contact = await prisma.contact.findUnique({
-    where: { id: input.contactId },
+  const file = await prisma.registrationFile.findUnique({
+    where: { id: input.fileId },
     select: {
-      eventId: true,
-      registration: { select: { id: true } },
+      id: true,
+      blobPath: true,
+      registrationId: true,
+      registration: {
+        select: { id: true, contactId: true, eventId: true },
+      },
+      formField: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          eventId: true,
+          metadata: true,
+        },
+      },
     },
   });
-  if (!contact || contact.eventId !== input.eventId) {
-    throw new AdminFileNotReplaceableError("Contact not found on this event");
+  if (!file) {
+    throw new AdminFileNotReplaceableError("File not found");
   }
-  if (!contact.registration) {
-    throw new AdminFileNotReplaceableError(
-      "Contact has no registration to attach files to"
-    );
+  // Cross-event + cross-contact guard. The file's formField AND
+  // registration must both belong to the URL's event, and the
+  // registration's contact must match the URL's contact.
+  if (file.formField.eventId !== input.eventId) {
+    throw new AdminFileNotReplaceableError("File not found");
   }
-
-  const formField = await prisma.formField.findUnique({
-    where: { id: input.formFieldId },
-    select: { id: true, name: true, type: true, eventId: true, metadata: true },
-  });
-  if (!formField || formField.eventId !== input.eventId) {
-    throw new AdminFileNotReplaceableError("Form field not found on this event");
+  if (
+    !file.registration ||
+    file.registration.eventId !== input.eventId ||
+    file.registration.contactId !== input.contactId
+  ) {
+    throw new AdminFileNotReplaceableError("File not found");
   }
-  if (formField.type !== FieldType.FILE) {
+  if (file.formField.type !== FieldType.FILE) {
+    // Shouldn't happen if the row was minted via the FILE flow, but
+    // guard in case the FormField type changed after upload.
     throw new AdminFileNotReplaceableError("Form field is not a FILE field");
   }
-
-  const existingFile = await prisma.registrationFile.findFirst({
-    where: {
-      registrationId: contact.registration.id,
-      formFieldId: formField.id,
-    },
-    select: { id: true, blobPath: true },
-    orderBy: { uploadedAt: "desc" },
-  });
-  if (!existingFile) {
-    // Mockup 2b enforces "no Replace button without an existing file" on
-    // the client; this guard is defense-in-depth for direct API calls.
+  if (!file.registrationId) {
+    // Pre-submission file — admin shouldn't touch via the admin route.
+    // The visitor's own DELETE handles those.
     throw new AdminFileNotReplaceableError(
-      "No existing file to replace on this field"
+      "File is not yet linked to a registration"
     );
   }
 
   return {
-    registrationId: contact.registration.id,
+    registrationId: file.registrationId,
     formField: {
-      id: formField.id,
-      name: formField.name,
-      type: formField.type,
-      metadata: formField.metadata,
+      id: file.formField.id,
+      name: file.formField.name,
+      type: file.formField.type,
+      metadata: file.formField.metadata,
     },
-    existingFile,
+    existingFile: {
+      id: file.id,
+      blobPath: file.blobPath,
+    },
   };
 }
 

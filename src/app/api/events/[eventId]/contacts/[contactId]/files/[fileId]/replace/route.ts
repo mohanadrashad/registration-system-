@@ -1,5 +1,5 @@
 /**
- * POST /api/events/[eventId]/contacts/[contactId]/files/[formFieldId]/replace
+ * POST /api/events/[eventId]/contacts/[contactId]/files/[fileId]/replace
  *
  * Admin-side replacement for a visitor-uploaded FILE field answer.
  * Mirror of the visitor's public upload route at
@@ -9,9 +9,9 @@
  * only in:
  *   - Auth is admin NextAuth via authorizeEvent (Stage 2 pattern),
  *     not the reg_upload_session cookie.
- *   - Pre-token validation walks contact -> registration -> formField ->
- *     existing RegistrationFile via validateAdminReplaceTarget. No new
- *     uploads — admin can only REPLACE an existing file (spec line 41).
+ *   - Pre-token validation walks fileId -> registration + formField via
+ *     validateAdminReplaceTarget. No new uploads — admin can only
+ *     REPLACE an existing file (spec line 41).
  *   - Webhook completion runs the swap transaction via
  *     completeAdminReplaceFile (delete old row, insert new row, mirror
  *     into Registration.formData + Contact.metadata, stamp updater).
@@ -19,6 +19,13 @@
  *     blob before re-throwing — keeps orphan storage small at the cost
  *     of defeating Vercel's auto-retry on transient failures (per
  *     Stage 3 refinement #1 in the ADMIN_EDIT_FIX_SPEC review).
+ *
+ * URL slug deviation from spec: spec wording was [formFieldId]; we use
+ * [fileId] because Next.js requires the same slug name at the same
+ * path position as the DELETE-by-fileId remove route. Mockup #2b
+ * confirms admin UI never invokes Replace when no file exists, so the
+ * fileId is always known client-side. formFieldId is derived from the
+ * fileId during validation.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -40,7 +47,7 @@ interface RouteParams {
   params: Promise<{
     eventId: string;
     contactId: string;
-    formFieldId: string;
+    fileId: string;
   }>;
 }
 
@@ -61,7 +68,7 @@ interface TokenPayload {
 }
 
 export async function POST(req: NextRequest, { params }: RouteParams) {
-  const { eventId, contactId, formFieldId } = await params;
+  const { eventId, contactId, fileId } = await params;
 
   // Stage 2 pattern: per-event auth + editor role. SUPER_ADMIN bypasses.
   const ctx = await authorizeEvent(eventId, { role: "editor" });
@@ -76,15 +83,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       request: req,
 
       onBeforeGenerateToken: async (pathname: string) => {
-        // No clientPayload needed — eventId/contactId/formFieldId are
-        // in the URL. The admin client just calls upload() with a
-        // pathname and a file.
+        // No clientPayload needed — eventId/contactId/fileId are in the
+        // URL. The admin client just calls upload() with a pathname and
+        // a file. formFieldId is derived from the fileId server-side.
         let target;
         try {
           target = await validateAdminReplaceTarget({
             eventId,
             contactId,
-            formFieldId,
+            fileId,
           });
         } catch (e) {
           // Throws here bubble back to the SDK as 4xx. The admin client
