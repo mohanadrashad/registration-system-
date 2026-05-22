@@ -3,6 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { eventBaseUrlFromDomain } from "@/lib/urls";
+import {
+  SYNTHETIC_EMAIL_DOMAIN,
+  SYNTHETIC_EMAIL_PREFIX,
+} from "@/lib/contact/synthetic-email";
 
 export async function POST(
   _req: Request,
@@ -19,10 +23,33 @@ export async function POST(
   });
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
 
-  const registrations = await prisma.registration.findMany({
+  // Count badge-ready registrations before filtering so we can report
+  // how many were skipped because they have no real email. The two
+  // queries run sequentially but each is index-backed and small.
+  const eligible = await prisma.registration.count({
     where: { eventId, status: "CONFIRMED", badgeGenerated: true },
+  });
+  const registrations = await prisma.registration.findMany({
+    where: {
+      eventId,
+      status: "CONFIRMED",
+      badgeGenerated: true,
+      // Exclude synthetic-email contacts. Their badges still exist as
+      // PDFs (in-person check-in works fine), but the email address is
+      // a placeholder that would bounce. Filter at the query level
+      // rather than per-iteration so the count math stays simple.
+      NOT: {
+        contact: {
+          email: {
+            startsWith: SYNTHETIC_EMAIL_PREFIX,
+            endsWith: `@${SYNTHETIC_EMAIL_DOMAIN}`,
+          },
+        },
+      },
+    },
     include: { contact: true },
   });
+  const skipped = eligible - registrations.length;
 
   const appUrl = eventBaseUrlFromDomain(event.domain);
   let sent = 0;
@@ -73,5 +100,11 @@ export async function POST(
     }
   }
 
-  return NextResponse.json({ success: true, sent, failed, total: registrations.length });
+  return NextResponse.json({
+    success: true,
+    sent,
+    failed,
+    skipped,
+    total: registrations.length,
+  });
 }

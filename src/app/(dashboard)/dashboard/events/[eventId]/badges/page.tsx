@@ -136,7 +136,12 @@ export default function BadgesPage() {
 
     const result = await res.json();
     if (res.ok) {
-      toast.success(`Sent ${result.sent} badge emails`);
+      const skipped = result.skipped ?? 0;
+      toast.success(
+        `Sent ${result.sent} badge emails${
+          skipped > 0 ? ` · Skipped ${skipped} (no email)` : ""
+        }`
+      );
     } else {
       toast.error(result.error || "Failed to send badges");
     }

@@ -282,7 +282,7 @@ export default function AttendeeDetailPage() {
 
         {/* Right — Communications & Output */}
         <div className="space-y-[14px]">
-          <EBadgeCard registration={contact.registration} />
+          <EBadgeCard registration={contact.registration} email={contact.email} />
           <EmailHistoryCard emailLogs={contact.emailLogs} />
           {userCanEdit && (
             <QuickActionsCard
