@@ -170,6 +170,7 @@ export async function POST(
           },
         },
       },
+      modules: { select: { selfServicePortal: true } },
     },
   });
 
@@ -398,6 +399,19 @@ export async function POST(
 
   const metadata = Object.keys(additionalFields).length > 0 ? additionalFields : null;
   const hasEmail = typeof email === "string" && email.trim() !== "";
+  // Portal module on means OTP login depends on a real email — synthesizing
+  // would create an unloggable account. Reject explicitly so the visitor
+  // (or the form-builder, which should have prevented this client-side)
+  // gets a typed error rather than a silent fake email.
+  if (!hasEmail && event.modules?.selfServicePortal) {
+    return NextResponse.json(
+      {
+        error: "Email is required for this event",
+        code: "EMAIL_REQUIRED",
+      },
+      { status: 400 }
+    );
+  }
   const normalizedEmail = hasEmail
     ? email.toLowerCase()
     : generateSyntheticEmail();
