@@ -335,6 +335,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       const columnUpdates: Record<string, unknown> = {};
       const existingMetadata = (registration.contact.metadata as Record<string, unknown>) || {};
       const metadataUpdates: Record<string, unknown> = { ...existingMetadata };
+      // Parallel to metadataUpdates but holds only the NEW values
+      // (no existing metadata base mixed in). Used as the patch to
+      // merge into Registration.formData below.
+      const formDataPatch: Record<string, unknown> = {};
 
       for (const [name, value] of Object.entries(updates as Record<string, unknown>)) {
         if (!allowedNames.has(name)) continue;
@@ -342,6 +346,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           columnUpdates[name] = value === "" || value === undefined ? null : value;
         } else {
           metadataUpdates[name] = value;
+          formDataPatch[name] = value;
         }
       }
 
@@ -350,10 +355,41 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         data.metadata = metadataUpdates as Prisma.InputJsonValue;
       }
 
-      if (Object.keys(data).length > 0) {
-        await prisma.contact.update({
-          where: { id: registration.contactId },
-          data,
+      // Mirror non-column updates into Registration.formData so the CSV
+      // export, badge renderer, and email variables — all of which read
+      // formData and not Contact.metadata — see visitor self-edits.
+      // Same CSV-drift fix as the admin Contact PUT handler. Wrapped in
+      // a transaction so the Contact and Registration writes are atomic.
+      //
+      // Registration.updatedBy intentionally NOT set: the visitor is
+      // not a User (they're identified by portal_session, registrationId
+      // only) and updatedBy is an FK to User. A "portal:<id>" sentinel
+      // would fail the FK constraint. Future audit-trail expansion
+      // would add a separate column for visitor attribution.
+      const hasFormDataPatch = Object.keys(formDataPatch).length > 0;
+      const hasContactWrite = Object.keys(data).length > 0;
+
+      if (hasContactWrite || hasFormDataPatch) {
+        await prisma.$transaction(async (tx) => {
+          if (hasContactWrite) {
+            await tx.contact.update({
+              where: { id: registration.contactId },
+              data,
+            });
+          }
+          if (hasFormDataPatch) {
+            const baseForm =
+              (registration.formData as Record<string, unknown> | null) ?? {};
+            await tx.registration.update({
+              where: { id: registration.id },
+              data: {
+                formData: {
+                  ...baseForm,
+                  ...formDataPatch,
+                } as Prisma.InputJsonValue,
+              },
+            });
+          }
         });
       }
 
