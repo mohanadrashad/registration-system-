@@ -170,16 +170,6 @@ export function FileFieldEditCell({
       }
       toast.success("File removed");
       setConfirm(null);
-      // Defer parent refetch until Radix's Dialog finishes its 200ms
-      // exit animation + focus restoration. Without this delay, the
-      // post-Remove re-render unmounts the inner buttons (gated on
-      // file=truthy) while Radix's FocusScope still holds a ref to
-      // the Remove button → Node.removeChild DOMException. The 250ms
-      // is just above dialog.tsx:64's "duration-200" CSS transition.
-      // Replace's handler doesn't need this — its setConfirm(null)
-      // happens before a multi-second await upload(), and its file
-      // transitions old-ref → new-ref (both truthy) rather than → null.
-      await new Promise((r) => setTimeout(r, 250));
       await onFileChanged();
     } catch {
       toast.error("Network error. Please try again.");
@@ -190,64 +180,89 @@ export function FileFieldEditCell({
 
   return (
     <div className="space-y-2">
+      {/* File metadata + provenance: still conditional. These don't
+          carry focus and aren't dialog triggers, so unmounting them
+          doesn't race with Radix. */}
       {file ? (
         <>
           <FileMetaLine file={file} />
           <ProvenanceLine meta={meta} pending={pending} />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7"
-              asChild
-            >
-              <a
-                href={`/api/events/${eventId}/files/${file.fileId}/stream`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <ExternalLink className="mr-1 h-3 w-3" />
-                View
-              </a>
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7"
-              disabled={pending !== null}
-              onClick={() => setConfirm("replace")}
-            >
-              {pending === "replace" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <RotateCcw className="mr-1 h-3 w-3" />
-              )}
-              {pending === "replace" ? "Replacing…" : "Replace"}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 text-destructive hover:text-destructive"
-              disabled={pending !== null}
-              onClick={() => setConfirm("remove")}
-            >
-              {pending === "remove" ? (
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              ) : (
-                <Trash2 className="mr-1 h-3 w-3" />
-              )}
-              Remove
-            </Button>
-          </div>
         </>
       ) : (
         <p className="text-sm text-muted-foreground italic">
           No file uploaded
         </p>
       )}
+
+      {/* Approach 1 from the Stage 3 race investigation: the button
+          container stays mounted across the file → null transition,
+          CSS-hidden when no file rather than React-unmounted. This
+          keeps the Replace/Remove Button DOM nodes stable so Radix
+          FocusScope's captured `previousFocusedElement` ref (the
+          trigger Button) is still in the DOM when the dialog runs its
+          close-time focus restoration. Without this, the post-Remove
+          re-render unmounted the buttons mid-restoration → DOMException.
+
+          Click handlers guard on `file` defensively; the disabled
+          state should already prevent clicks, but a hidden disabled
+          button can still receive synthetic events in some edge cases.
+          Visually equivalent to Mockup 2b's "no buttons in empty
+          state". */}
+      <div
+        className={`flex flex-wrap items-center gap-2 ${file ? "" : "hidden"}`}
+      >
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7"
+          asChild
+          disabled={!file}
+        >
+          <a
+            href={
+              file
+                ? `/api/events/${eventId}/files/${file.fileId}/stream`
+                : "#"
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <ExternalLink className="mr-1 h-3 w-3" />
+            View
+          </a>
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7"
+          disabled={!file || pending !== null}
+          onClick={() => file && setConfirm("replace")}
+        >
+          {pending === "replace" ? (
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+          ) : (
+            <RotateCcw className="mr-1 h-3 w-3" />
+          )}
+          {pending === "replace" ? "Replacing…" : "Replace"}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 text-destructive hover:text-destructive"
+          disabled={!file || pending !== null}
+          onClick={() => file && setConfirm("remove")}
+        >
+          {pending === "remove" ? (
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+          ) : (
+            <Trash2 className="mr-1 h-3 w-3" />
+          )}
+          Remove
+        </Button>
+      </div>
 
       {/* Hidden picker — opens via fileInputRef.current.click() from
           the Replace confirm "Pick file…" button. */}
