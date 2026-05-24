@@ -33,6 +33,24 @@ export const backfillPreviewSchema = z.object({
 });
 
 /**
+ * POST body shape for the backfill run endpoint.
+ *
+ *   overwriteNonEmpty   — same as preview; passed back for the
+ *                         server-side re-run that powers the stale
+ *                         guard.
+ *   expectedWillUpdate  — the willUpdate count the client saw on
+ *                         the preview response. Server re-runs the
+ *                         preview and rejects with 409
+ *                         BACKFILL_PREVIEW_STALE if the count has
+ *                         drifted (rows added or modified between
+ *                         preview and run).
+ */
+export const backfillRunSchema = z.object({
+  overwriteNonEmpty: z.boolean(),
+  expectedWillUpdate: z.number().int().nonnegative(),
+});
+
+/**
  * POST body shape for the atomic swap endpoint.
  *
  *   fromFieldId — the field that currently holds `role` and will lose it.
@@ -53,6 +71,7 @@ export const MAPPING_ERROR_CODES = {
   ROLE_CONFLICT: "MAPPING_CONFLICT",
   FULL_NAME_EXCLUSION: "MAPPING_MUTUAL_EXCLUSION",
   SWAP_STALE: "MAPPING_SWAP_STALE",
+  BACKFILL_PREVIEW_STALE: "BACKFILL_PREVIEW_STALE",
 } as const;
 
 export type MappingErrorCode =
