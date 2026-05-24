@@ -242,6 +242,14 @@ export async function computeBackfillPreview(
     }),
     prisma.registration.findMany({
       where: { eventId },
+      // Locked sort: oldest first. The run endpoint (Chunk 3b) re-runs
+      // this preview to validate expectedWillUpdate; without a stable
+      // order, a row added between preview and run could shift counts
+      // and falsely trip the stale-preview 409. Oldest-first also means
+      // the 500-cap truncation keeps the longest-standing rows that
+      // most need backfilling — newest entries are likely already
+      // covered by the live Stage 2 resolver.
+      orderBy: { createdAt: "asc" },
       select: {
         id: true,
         contactId: true,
