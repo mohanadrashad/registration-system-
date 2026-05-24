@@ -31,6 +31,36 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-05-24 — Field-Mapping Stage 3c + FEATURE COMPLETE
+
+Final sub-chunk of Stage 3. **The entire field-mapping feature is now live and end-to-end usable on production.** Admins can preview the backfill diff, toggle overwrite, apply, and see per-row failure attribution without leaving the form-builder page. Pending the maintainer's final production-verification walk on Productive Families, the original Reg #cmpjoqs3 visitors that started this conversation should now display their real names after one backfill click.
+
+**Field-Mapping Stage 3c** — `c944daf` (PR #28, squash merge).
+
+Shipped:
+- `src/components/admin/backfill-dialog.tsx` (~666 LOC) — single Radix Dialog with internal phase state machine (preview → applying → result; or preview → stale → preview-refresh). Sub-views: PreviewView (3-bucket summary + overwrite toggle + show-details expander + Cancel/Apply), ApplyingView (spinner, dialog can't close mid-apply), ResultView (updated count + per-row failures with Copy buttons + interruptedAtRow banner), StaleView (409 recovery with toggle persistence).
+- Always-mounted at form-builder page root per the quick-actions-card.tsx gold-standard pattern. `onOpenChange` blocked while phase === "applying". Parent refetch deferred via setTimeout(0) on close — load-bearing per the radix-dialog-post-refetch-race lesson.
+- Empty-state banner ("Nothing to update — N contacts are already correct.") gated on `!previewLoading` so toggle re-fetches don't flash stale counts.
+- Toggle persists across stale-recovery within a single dialog session; resets to OFF on each fresh open.
+- Copy-error button uses `navigator.clipboard.writeText` with a long-lived `toast.warning` fallback for enterprise setups that deny clipboard access.
+- Two review fixes caught at pre-push diff review: single `res.json()` parse in `apply()` (was double, would have swallowed non-stale 409 error messages); `isEmpty` gated on `!previewLoading` to avoid empty-state banner flash during toggle re-fetch.
+
+### Field-Mapping feature — close-out
+
+All 5 PRs shipped over a single day:
+
+| PR  | Stage              | Commit     | Shipped                                                                 |
+|-----|--------------------|------------|-------------------------------------------------------------------------|
+| #24 | Stage 1            | `b2bf98a`  | Schema + API + form-builder UI (tag fields, summary card, swap dropdown) |
+| #25 | Stage 2            | `acee376`  | Registration endpoint resolver — fixes new-visitor dashboard            |
+| #26 | Stage 3a           | `bc0a878`  | Backfill preview service + endpoint                                     |
+| #27 | Stage 3b           | `a9ec839`  | Backfill run endpoint + hybrid batch writer + stale guard               |
+| #28 | Stage 3c           | `c944daf`  | Backfill UI — dialog + result modal + button wiring                     |
+
+What this unblocked: Productive Families launch readiness. New registrations populate Contact columns correctly via mapped fields (Stage 2); historical Reg #... visitors get retroactively fixed via the maintainer-triggered backfill (Stage 3). No staging environment was used for verification — legacy fallback served as the safety mechanism, and verification happened directly on production with a rollback path documented at each stage.
+
+Spec at `specs/FIELD_MAPPING_SPEC.md` is now fully realized. Memory entry at `field-mapping-stage3-complete.md` covers all of Stage 3's locked invariants for future readers.
+
 ### 2026-05-24 — Field-Mapping Stage 3b (backfill run endpoint + hybrid batch writer)
 
 Backfill is now write-capable end-to-end from the API surface. No UI entry point yet — admins can hit the endpoints via curl, but the disabled "Apply to existing registrations" button on `FieldMappingSummaryCard` won't wire up until 3c lands. **Production verification deferred to 3c** — the full backfill flow gets verified end-to-end through the UI once dialog + result modal exist.
@@ -154,17 +184,15 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 ## Queue (in priority order)
 
-1. **Field-Mapping Stage 3c — backfill UI.** Wires the disabled "Apply to existing registrations" button on `FieldMappingSummaryCard` to a preview dialog + result modal. Dialog: 3-bucket summary, overwrite toggle (default OFF), "Show details" expand for diff list. Result modal: success count + per-row failure list with copyable error text. Refreshes attendee list on close. **Production verification of the full 3a+3b+3c flow happens here** — backfill has no UI entry point until this lands, so end-to-end verification on Productive Families is gated on 3c shipping. **Reminder per `[[radix-dialog-post-refetch-race]]` memory:** dialog work is Radix territory — hard-stop after 2 fix attempts on any library-internal race.
+1. **Admin-Edit-Fix Stage 4 — audit trail display.** Smallest stage. Pure read-side UI consuming Admin-Edit Stage 1's audit columns: "Last edited by [Name] · [time]" on attendee detail header + approver/rejecter/reason in approvals dashboard. No backend, no Radix dialogs, no race surface. Expected ~1-2 hours.
 
-3. **Admin-Edit-Fix Stage 4 — audit trail display.** Smallest stage. Pure read-side UI consuming Admin-Edit Stage 1's audit columns: "Last edited by [Name] · [time]" on attendee detail header + approver/rejecter/reason in approvals dashboard. No backend, no Radix dialogs, no race surface. Expected ~1-2 hours. Can interleave anywhere.
+2. **Stage 3 UI retry — Replace/Remove buttons + provenance.** Deferred from FILE-field admin-edit Stage 3 backend merge. See "Known unresolved bugs" for diagnosis-to-build-on.
 
-4. **Stage 3 UI retry — Replace/Remove buttons + provenance.** Deferred from FILE-field admin-edit Stage 3 backend merge. See "Known unresolved bugs" for diagnosis-to-build-on.
+3. **Admin-upload-from-empty (new feature requested late session).** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
 
-5. **Admin-upload-from-empty (new feature requested late session).** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
+4. **PhaseReceipt buildReceiptPathname cleanup.** Small dead-code follow-up from FILE Stage 3 audit.
 
-6. **PhaseReceipt buildReceiptPathname cleanup.** Small dead-code follow-up from FILE Stage 3 audit.
-
-7. **Contact GET handler per-event auth.** Surfaced during Admin-Edit Stage 2 audit. Read-only handler still uses legacy `auth()`. Lower-stakes since cross-event filter at line 30 prevents data leak; only consequence is unauthenticated-to-event users could poll for known contactIds. Mechanical migration matching Stage 2's pattern.
+5. **Contact GET handler per-event auth.** Surfaced during Admin-Edit Stage 2 audit. Read-only handler still uses legacy `auth()`. Lower-stakes since cross-event filter at line 30 prevents data leak; only consequence is unauthenticated-to-event users could poll for known contactIds. Mechanical migration matching Stage 2's pattern.
 
 ---
 
@@ -224,6 +252,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `radix-dialog-post-refetch-race.md` — standalone race writeup with revival path
 - `field-mapping-stage1-complete.md` — schema + API + form-builder UI shipped; resolver (Stage 2) and backfill (Stage 3) standing by
 - `field-mapping-stage2-complete.md` — resolver wired; Productive Families new-registration fix live; TS-strict gotcha lesson (tsc --noEmit before push)
+- `field-mapping-stage3-complete.md` — feature complete; backfill preview + run + UI live; 10 locked invariants; 4 spec deviations; 2 pre-push diff-review bug catches
 
 ---
 
@@ -238,7 +267,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `specs/FILE_FIELD_SPEC.md` — completed feature
 - `specs/EMAIL_OPTIONAL_EVENTS_SPEC.md` — completed feature
 - `specs/ADMIN_EDIT_FIX_SPEC.md` — Stages 1-3 complete (Stage 3 backend-only); Stage 4 next
-- `specs/FIELD_MAPPING_SPEC.md` — Stages 1, 2, 3a, 3b complete; 3c (UI) is the last sub-chunk
+- `specs/FIELD_MAPPING_SPEC.md` — FEATURE COMPLETE (all 5 PRs shipped: #24, #25, #26, #27, #28)
 - `CLAUDE.md` — project conventions
 - `prisma/schema.prisma` — current schema
 - `PROJECT_HANDOFF.md` — this document
@@ -250,8 +279,8 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
 3. State what you want to work on:
-   - "Let's start Field-Mapping Stage 3c" → backfill UI; 3a + 3b backend shipped; this is the last sub-chunk and the point at which Productive Families historical data finally gets fixed end-to-end
-   - "Let's start Admin-Edit-Fix Stage 4 (audit trail display)" → smallest stage, low complexity, can interleave
+   - "Let's start Admin-Edit-Fix Stage 4 (audit trail display)" → smallest stage, low complexity, pure read-side UI
+   - "I want to retry Stage 3 UI (FILE Replace/Remove)" → has diagnosis ready, requires sourcemap setup first
    - "I want to retry Stage 3 UI" → has diagnosis ready, requires sourcemap setup first
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
 
@@ -259,4 +288,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-05-24 after Field-Mapping Stage 3b merge. Backfill is write-capable from the API surface but has no UI entry point yet — 3c (dialog + result modal + button wiring) is the last sub-chunk. Productive Families historical Contact rows still show as Reg #... until 3c ships and an admin runs the backfill end-to-end through the UI.*
+*Updated 2026-05-24 after Field-Mapping Stage 3c merge. **Field-mapping feature COMPLETE** — all 5 PRs shipped. Productive Families launch unblocked: new registrations populate Contact columns correctly (Stage 2 resolver), historical Reg #... visitors get retroactively fixed via the admin-triggered backfill (Stage 3 UI). Pending maintainer's final production-verification walk on Productive Families.*
