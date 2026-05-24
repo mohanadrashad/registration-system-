@@ -20,6 +20,19 @@ export const mapsToInputSchema = z
   .optional();
 
 /**
+ * POST body shape for the backfill preview endpoint.
+ *
+ *   overwriteNonEmpty — when true, the resolver's value replaces
+ *                       existing non-empty Contact column values
+ *                       (except email, which has its own special
+ *                       rules — see field-mapping-backfill.service.ts).
+ *                       Default off; the dialog toggle is opt-in.
+ */
+export const backfillPreviewSchema = z.object({
+  overwriteNonEmpty: z.boolean(),
+});
+
+/**
  * POST body shape for the atomic swap endpoint.
  *
  *   fromFieldId — the field that currently holds `role` and will lose it.
