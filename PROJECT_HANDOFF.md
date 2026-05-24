@@ -31,6 +31,31 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-05-24 — Field-Mapping Stage 3a (backfill preview service + endpoint)
+
+Read-only chunk of Stage 3 (backfill). Sets up the service layer + preview endpoint that the dialog (3c) and the run endpoint (3b) both consume. **No writes anywhere yet.** Productive Families historical Contact rows still show as `Reg #...` until 3b ships and an admin runs the backfill.
+
+**Field-Mapping Stage 3a** — `bc0a878` (PR #26, squash merge). Two commits collapsed: `61f1d34` (initial service + endpoint) + `76a41ad` (lock diff sort to `createdAt: "asc"` — caught in review before merge, prevents 3b's `expectedWillUpdate` guard from drifting between preview and run calls).
+
+Shipped:
+- `src/lib/services/field-mapping-backfill.service.ts` — `resolveContactColumnsForRegistration(registration, fields, overwriteNonEmpty)` pure per-row decision + `computeBackfillPreview(eventId, overwriteNonEmpty)` aggregator. Reuses Stage 2's `resolveContactColumns` resolver as-is (no duplication).
+- `POST /api/events/[eventId]/field-mapping/backfill/preview` — MANAGER role (even though no writes — response includes attendee names + diffs). Body `{overwriteNonEmpty: boolean}`. Returns `{willUpdate, alreadyCorrect, skipped, diffs[], diffsTruncated}`. Diffs capped at 500; sorted by `createdAt` ascending.
+- `backfillPreviewSchema` added to `src/lib/validations/field-mapping.ts`.
+
+Locked invariants for 3b consumption:
+- **Per-column overwrite gate** (not row-level). A single row can write `firstName` + skip `email` + skip `organization` all from one update.
+- **Email special rules.** Synthetic → real bypasses the toggle (always replace). Empty resolved email → never write (no retroactive synthesis). Real → different real → write only when toggle ON.
+- **`previous` shape:** same keyset as `changes`. UI iterates `Object.entries(changes)` and reads `previous[col]` for the "from" side.
+- **Bucket assignment:** `update` if `changes` non-empty; else `alreadyCorrect` if any column had a non-null resolved match; else `skipped`.
+- **Sort:** `createdAt: "asc"`. Oldest first survives the 500-cap truncation; 3b inherits this stable contract.
+
+Stage 2 lesson paying off: local `npx tsc --noEmit` caught a Prisma `where`-shape error (`step: { phase: {...} }` not `phase: {...}` directly) before push. Vercel TS would have caught it; local check saved a round trip.
+
+Sub-chunk plan:
+- 3a (this commit) — preview service + endpoint
+- 3b — run endpoint with hybrid batch writer + `expectedWillUpdate` guard
+- 3c — UI (preview dialog + result modal + wire `onApplyToExisting` on `FieldMappingSummaryCard`)
+
 ### 2026-05-24 — Field-Mapping Stage 2 (registration endpoint resolver)
 
 The register endpoint now reads each FormField's `mapsTo` tag to assemble Contact column values, with legacy literal-key + body.fullName fallbacks preserved. **Productive Families dashboard fix for NEW visitor registrations is now live** — once the form's three fields are tagged (First Name → FIRST_NAME, Middel Name + Third Name → 2× LAST_NAME), incoming registrations populate Contact.firstName and Contact.lastName correctly. Historical visitors still show `Reg #...` — Stage 3 (backfill) handles those.
@@ -113,7 +138,9 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 ## Queue (in priority order)
 
-1. **Field-Mapping Stage 3 — backfill with preview.** Wires the "Apply to existing registrations" button (currently disabled placeholder in the summary card) to actual endpoints. Preview + run routes, batched writes (100/tx), idempotency, synthetic-email replacement rule (always replaces regardless of overwrite toggle). Resolver from Stage 2 (`resolveContactColumns()`) reused as-is — no duplication. Fixes historical Productive Families dashboard after maintainer confirms Stage 2 production verification passes for new registrations. Spec at `specs/FIELD_MAPPING_SPEC.md` "Stage 3 — Backfill with preview" section.
+1. **Field-Mapping Stage 3b — backfill run endpoint.** `POST /api/events/[eventId]/field-mapping/backfill/run`. MANAGER role. Hybrid batch writer: fast path = 100/tx atomic; slow path = per-row retry on batch failure with `contactName` + `contactEmail` in the failure object for attribution. `expectedWillUpdate` guard re-runs preview server-side and 409s on exact-match mismatch (`BACKFILL_PREVIEW_STALE`). Outer try/catch returns `{updated, failed[], summary, interruptedAtRow?}` on full-loop failure. Stage 3a's `computeBackfillPreview` reused as-is for the round-trip validation. No UI work — that's 3c.
+
+2. **Field-Mapping Stage 3c — backfill UI.** Wires the disabled "Apply to existing registrations" button on `FieldMappingSummaryCard` to a preview dialog + result modal. Dialog: 3-bucket summary, overwrite toggle (default OFF), "Show details" expand for diff list. Result modal: success count + per-row failure list with copyable error text. Refreshes attendee list on close.
 
 3. **Admin-Edit-Fix Stage 4 — audit trail display.** Smallest stage. Pure read-side UI consuming Admin-Edit Stage 1's audit columns: "Last edited by [Name] · [time]" on attendee detail header + approver/rejecter/reason in approvals dashboard. No backend, no Radix dialogs, no race surface. Expected ~1-2 hours. Can interleave anywhere.
 
@@ -197,7 +224,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `specs/FILE_FIELD_SPEC.md` — completed feature
 - `specs/EMAIL_OPTIONAL_EVENTS_SPEC.md` — completed feature
 - `specs/ADMIN_EDIT_FIX_SPEC.md` — Stages 1-3 complete (Stage 3 backend-only); Stage 4 next
-- `specs/FIELD_MAPPING_SPEC.md` — Stages 1-2 complete; Stage 3 (backfill) next, gated on production verification of Stage 2
+- `specs/FIELD_MAPPING_SPEC.md` — Stages 1, 2, 3a complete; 3b (run endpoint) + 3c (UI) remain
 - `CLAUDE.md` — project conventions
 - `prisma/schema.prisma` — current schema
 - `PROJECT_HANDOFF.md` — this document
@@ -209,7 +236,8 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
 3. State what you want to work on:
-   - "Let's start Field-Mapping Stage 3" → backfill for historical Productive Families data; ONLY after maintainer confirms Stage 2 production verification passes
+   - "Let's start Field-Mapping Stage 3b" → backfill run endpoint; 3a (preview) already shipped, contract is locked
+   - "Let's start Field-Mapping Stage 3c" → backfill UI; ONLY after 3b ships
    - "Let's start Admin-Edit-Fix Stage 4 (audit trail display)" → smallest stage, low complexity, can interleave
    - "I want to retry Stage 3 UI" → has diagnosis ready, requires sourcemap setup first
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
@@ -218,4 +246,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-05-24 after Field-Mapping Stage 2 merge. Production verification of Stage 2 on Productive Families is the gate before Stage 3 (backfill) implementation.*
+*Updated 2026-05-24 after Field-Mapping Stage 3a merge. 3a is read-only (preview service + endpoint); 3b (run endpoint) is next, 3c (UI) after that. Productive Families historical Contact rows still show as Reg #... until 3b ships and an admin runs the backfill.*
