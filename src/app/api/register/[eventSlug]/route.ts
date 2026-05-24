@@ -488,7 +488,16 @@ export async function POST(
               phone: resolved.phone || contact.phone,
               organization: resolved.organization || contact.organization,
               designation: resolved.designation || contact.designation,
-              metadata: metadata || contact.metadata,
+              // Cast follows the existing convention at
+              // src/app/api/events/[eventId]/contacts/[contactId]/route.ts
+              // and registration-file.service.ts: the value can be null
+              // at runtime (when no extras are submitted AND existing
+              // contact.metadata is null), and Prisma accepts that for a
+              // nullable Json column. The InputJsonValue type strictly
+              // excludes null, so the cast acknowledges the gap. Pre-
+              // Stage-2 this worked because the rest-of-any destructure
+              // typed additionalFields as `any`.
+              metadata: (metadata || contact.metadata) as Prisma.InputJsonValue,
             },
           })
         : await tx.contact.create({
@@ -500,7 +509,7 @@ export async function POST(
               phone: resolved.phone,
               organization: resolved.organization,
               designation: resolved.designation,
-              metadata,
+              metadata: metadata as Prisma.InputJsonValue,
               inviteToken: randomBytes(16).toString("hex"),
             },
           });
