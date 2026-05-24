@@ -125,11 +125,6 @@ export function FieldMappingSummaryCard({
             size="sm"
             onClick={onApplyToExisting}
             disabled={!onApplyToExisting}
-            title={
-              onApplyToExisting
-                ? undefined
-                : "Backfill arrives in a later stage of the field-mapping rollout"
-            }
           >
             Apply to existing registrations
             <Download className="ml-2 h-3 w-3" />
