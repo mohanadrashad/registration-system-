@@ -645,6 +645,11 @@ model FormField {
   defaultValue String?
   metadata     Json? // Any additional config
 
+  // Contact column mapping. Null = no mapping; registration endpoint falls
+  // back to legacy literal-key destructure (formData["firstName"], etc.).
+  // See src/lib/form-builder/field-mapping-labels.ts for UI labels + legacy keys.
+  mapsTo FieldMapping?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -656,6 +661,16 @@ model FormField {
   @@index([eventId, order])
   @@index([eventId, isActive])
   @@index([stepId, order])
+}
+
+enum FieldMapping {
+  FIRST_NAME
+  LAST_NAME
+  FULL_NAME
+  EMAIL
+  PHONE
+  ORGANIZATION
+  DESIGNATION
 }
 
 enum FieldType {
