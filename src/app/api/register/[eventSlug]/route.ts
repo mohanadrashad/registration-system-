@@ -17,6 +17,8 @@ import {
 } from "@/lib/registration/upload-session";
 import { getRegistrationFileById } from "@/lib/services/registration-file.service";
 import { generateSyntheticEmail } from "@/lib/contact/synthetic-email";
+import { resolveContactColumns } from "@/lib/services/field-mapping.service";
+import { FIELD_MAPPING_LEGACY_KEYS } from "@/lib/form-builder/field-mapping-labels";
 
 // GET: Look up contact by invite token to pre-fill the registration form
 // Also returns event details and branding for the registration page
@@ -184,8 +186,30 @@ export async function POST(
 
   const body = await req.json();
 
-  // Extract core contact fields and additional form data
-  const { firstName, lastName, email, phone, organization, designation, ...additionalFields } = body;
+  // additionalFields = body minus the legacy literal-key Contact column
+  // names. Captured BEFORE the FILE-claim block below mutates body in
+  // place — preserves the current behavior where Contact.metadata stores
+  // client-submitted FILE refs and Registration.formData stores
+  // server-canonical ones (a known latent inconsistency, out of scope
+  // for Stage 2).
+  //
+  // The legacy literal keys themselves are consumed via
+  // resolveContactColumns() below; we no longer destructure them as
+  // locals since the resolver reads them straight from formData.
+  //
+  // `fullName` is filtered out in addition to the six FIELD_MAPPING_LEGACY_KEYS
+  // values: it's the source for the resolver's final-rung splitter (formerly
+  // the inline block at route.ts:430-441), so it's a legacy Contact-column
+  // source — not "additional form data" worth storing in metadata. This
+  // diverges from the pre-Stage-2 destructure which let fullName fall through
+  // into additionalFields/Contact.metadata.
+  const LEGACY_KEYS = new Set<string>([
+    ...Object.values(FIELD_MAPPING_LEGACY_KEYS),
+    "fullName",
+  ]);
+  const additionalFields = Object.fromEntries(
+    Object.entries(body).filter(([k]) => !LEGACY_KEYS.has(k))
+  );
 
   // Validate required fields. Skip a field if it has a `conditional.showIf`
   // that evaluates false against the submitted body — hidden fields aren't
@@ -397,8 +421,18 @@ export async function POST(
   const registrationStatus = await approvalService.determineRegistrationStatus(event.id);
   const isConfirmed = registrationStatus === "CONFIRMED";
 
+  // Stage 2 of FIELD_MAPPING_SPEC: resolve Contact column values via
+  // per-FormField mapsTo tags, with legacy literal-key + body.fullName
+  // fallback rungs preserved. Replaces the old destructure at line 188
+  // and the legacy fullName splitter block previously inline below.
+  const resolved = resolveContactColumns(
+    registrationFields,
+    body,
+    body.fullName
+  );
+
   const metadata = Object.keys(additionalFields).length > 0 ? additionalFields : null;
-  const hasEmail = typeof email === "string" && email.trim() !== "";
+  const hasEmail = resolved.email !== null;
   // Portal module on means OTP login depends on a real email — synthesizing
   // would create an unloggable account. Reject explicitly so the visitor
   // (or the form-builder, which should have prevented this client-side)
@@ -412,34 +446,10 @@ export async function POST(
       { status: 400 }
     );
   }
-  const normalizedEmail = hasEmail
-    ? email.toLowerCase()
-    : generateSyntheticEmail();
-  // fullName fallback. Some events (notably system-protected forms
-  // configured before firstName/lastName were standardized) submit a
-  // single `fullName` field instead of split first/last. When both
-  // explicit columns are absent or empty AND fullName is present, split
-  // on the first whitespace: head → firstName, remainder → lastName.
-  // Explicit firstName/lastName from the body always win.
-  const firstEmpty =
-    typeof firstName !== "string" || firstName.trim() === "";
-  const lastEmpty =
-    typeof lastName !== "string" || lastName.trim() === "";
-  let safeFirstName = typeof firstName === "string" ? firstName : "";
-  let safeLastName = typeof lastName === "string" ? lastName : "";
-  if (firstEmpty && lastEmpty && typeof body.fullName === "string") {
-    const trimmed = body.fullName.trim();
-    if (trimmed) {
-      const idx = trimmed.search(/\s/);
-      if (idx === -1) {
-        safeFirstName = trimmed;
-        safeLastName = "";
-      } else {
-        safeFirstName = trimmed.slice(0, idx);
-        safeLastName = trimmed.slice(idx + 1).trim();
-      }
-    }
-  }
+  const normalizedEmail =
+    resolved.email !== null
+      ? resolved.email.toLowerCase()
+      : generateSyntheticEmail();
 
   try {
     const registration = await prisma.$transaction(async (tx) => {
@@ -472,24 +482,24 @@ export async function POST(
         ? await tx.contact.update({
             where: { id: contact.id },
             data: {
-              firstName: safeFirstName || contact.firstName,
-              lastName: safeLastName || contact.lastName,
+              firstName: resolved.firstName || contact.firstName,
+              lastName: resolved.lastName || contact.lastName,
               email: hasEmail ? normalizedEmail : contact.email,
-              phone: phone || contact.phone,
-              organization: organization || contact.organization,
-              designation: designation || contact.designation,
+              phone: resolved.phone || contact.phone,
+              organization: resolved.organization || contact.organization,
+              designation: resolved.designation || contact.designation,
               metadata: metadata || contact.metadata,
             },
           })
         : await tx.contact.create({
             data: {
               eventId: event.id,
-              firstName: safeFirstName,
-              lastName: safeLastName,
+              firstName: resolved.firstName ?? "",
+              lastName: resolved.lastName ?? "",
               email: normalizedEmail,
-              phone: phone || null,
-              organization: organization || null,
-              designation: designation || null,
+              phone: resolved.phone,
+              organization: resolved.organization,
+              designation: resolved.designation,
               metadata,
               inviteToken: randomBytes(16).toString("hex"),
             },
