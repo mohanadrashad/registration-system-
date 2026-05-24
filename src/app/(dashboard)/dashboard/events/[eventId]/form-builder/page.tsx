@@ -74,6 +74,7 @@ import { MaxSelectionsEditor } from "@/components/admin/max-selections-editor";
 import { FieldTextFields } from "@/components/admin/field-text-fields";
 import { FieldMappingSummaryCard } from "@/components/admin/field-mapping-summary-card";
 import { MapsToDropdown } from "@/components/admin/maps-to-dropdown";
+import { BackfillDialog } from "@/components/admin/backfill-dialog";
 import {
   FileFieldSettings,
   defaultFileFieldMetadata,
@@ -743,6 +744,13 @@ export default function FormBuilderPage() {
     // simplicity; ignored by other field types on the wire.
     fileMetadata: defaultFileFieldMetadata() as FileFieldMetadata,
   });
+
+  // Backfill dialog open state — Stage 3c of FIELD_MAPPING_SPEC. The
+  // BackfillDialog itself owns all internal phase/preview/result
+  // state and is always-mounted at the page root (see end of return)
+  // so its Radix lifecycle is not entangled with the summary card's
+  // CardFooter conditional render.
+  const [backfillOpen, setBackfillOpen] = useState(false);
 
   // Inline rename state — null when not editing, draft string when editing.
   const [renamingPhaseId, setRenamingPhaseId] = useState<string | null>(null);
@@ -1444,10 +1452,11 @@ export default function FormBuilderPage() {
 
       {/* Field mapping summary — pinned above the phase list. Reads
           from in-memory phases data (no extra fetch); recomputes
-          automatically when fetchEverything updates phases. The
-          "Apply to existing registrations" backfill wires up in a
-          later chunk. */}
-      <FieldMappingSummaryCard taggedFields={taggedFields} />
+          automatically when fetchEverything updates phases. */}
+      <FieldMappingSummaryCard
+        taggedFields={taggedFields}
+        onApplyToExisting={() => setBackfillOpen(true)}
+      />
 
       {/* Phase strip — only shown when there's more than one phase, or
           postRegPhases module is on (so the "+ Phase" affordance exists). */}
@@ -2026,6 +2035,18 @@ export default function FormBuilderPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Backfill dialog — always mounted at page root so its Radix
+          lifecycle is independent of the summary card's CardFooter
+          conditional render (mirrors quick-actions-card.tsx, the
+          gold-standard non-racing dialog pattern; see
+          [[radix-dialog-post-refetch-race]] memory). */}
+      <BackfillDialog
+        eventId={eventId}
+        open={backfillOpen}
+        onOpenChange={setBackfillOpen}
+        onChanged={fetchEverything}
+      />
     </div>
   );
 }
