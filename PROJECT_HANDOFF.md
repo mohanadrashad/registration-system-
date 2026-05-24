@@ -31,6 +31,22 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-05-24 — Field-Mapping Stage 3b (backfill run endpoint + hybrid batch writer)
+
+Backfill is now write-capable end-to-end from the API surface. No UI entry point yet — admins can hit the endpoints via curl, but the disabled "Apply to existing registrations" button on `FieldMappingSummaryCard` won't wire up until 3c lands. **Production verification deferred to 3c** — the full backfill flow gets verified end-to-end through the UI once dialog + result modal exist.
+
+**Field-Mapping Stage 3b** — `a9ec839` (PR #27, squash merge).
+
+Shipped:
+- `executeBackfillBatches(diffs)` in `field-mapping-backfill.service.ts` — hybrid fast-path/slow-path writer. Fast path: 100 updates in one `prisma.$transaction` (`BACKFILL_BATCH_SIZE = 100` exported). On batch failure, slow path replays the failed batch per-row with try/catch for per-row attribution (`contactName` + `contactEmail` in the failure object per Clarification 2). Outer try/catch (Clarification 3) returns `{updated, failed, interruptedAtRow}` if anything escapes the batch loop entirely (Prisma client crash, OOM); `interruptedAtRow` is the 1-indexed count of rows that finished processing before the orchestrator died.
+- `loadBackfillDecisions(eventId, overwriteNonEmpty)` — uncapped variant of the existing `computeBackfillPreview` (refactored to share the new internal `gatherBackfillDecisions` helper, single source of truth for the decision sweep). Writer operates on the full diff set, not the 500-cap'd UI subset.
+- `POST /api/events/[eventId]/field-mapping/backfill/run` — MANAGER role. Body `{overwriteNonEmpty, expectedWillUpdate}`. Stale guard: server re-runs `loadBackfillDecisions`; exact-match required on `willUpdate` count or 409 `BACKFILL_PREVIEW_STALE` with `{expectedWillUpdate, currentWillUpdate}`. Writer operates on the freshly-loaded diffs from the same re-run, not the client's snapshot. Single INFO log line per spec quality discipline (`[field-mapping-backfill] eventId=... adminUserId=... overwrite=... updated=... failed=... interruptedAtRow=?`) — IDs only, no PII.
+- `backfillRunSchema` + `MAPPING_ERROR_CODES.BACKFILL_PREVIEW_STALE` added to `src/lib/validations/field-mapping.ts`.
+
+Fixture replay covered 4 scenarios (happy path / fast-fail+slow-recover / fast-fail+slow-partial / single-batch-multi-failure). Outer-catch path not in fixture — synthesizing a Prisma client crash in JS replay requires contrivance that proves nothing; code path commented inline.
+
+Sub-chunk progress: 3a ✓ (preview, PR #26), **3b ✓ (run + writer, PR #27)**, 3c remains (UI: dialog + result modal + button wiring).
+
 ### 2026-05-24 — Field-Mapping Stage 3a (backfill preview service + endpoint)
 
 Read-only chunk of Stage 3 (backfill). Sets up the service layer + preview endpoint that the dialog (3c) and the run endpoint (3b) both consume. **No writes anywhere yet.** Productive Families historical Contact rows still show as `Reg #...` until 3b ships and an admin runs the backfill.
@@ -138,9 +154,7 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 ## Queue (in priority order)
 
-1. **Field-Mapping Stage 3b — backfill run endpoint.** `POST /api/events/[eventId]/field-mapping/backfill/run`. MANAGER role. Hybrid batch writer: fast path = 100/tx atomic; slow path = per-row retry on batch failure with `contactName` + `contactEmail` in the failure object for attribution. `expectedWillUpdate` guard re-runs preview server-side and 409s on exact-match mismatch (`BACKFILL_PREVIEW_STALE`). Outer try/catch returns `{updated, failed[], summary, interruptedAtRow?}` on full-loop failure. Stage 3a's `computeBackfillPreview` reused as-is for the round-trip validation. No UI work — that's 3c.
-
-2. **Field-Mapping Stage 3c — backfill UI.** Wires the disabled "Apply to existing registrations" button on `FieldMappingSummaryCard` to a preview dialog + result modal. Dialog: 3-bucket summary, overwrite toggle (default OFF), "Show details" expand for diff list. Result modal: success count + per-row failure list with copyable error text. Refreshes attendee list on close.
+1. **Field-Mapping Stage 3c — backfill UI.** Wires the disabled "Apply to existing registrations" button on `FieldMappingSummaryCard` to a preview dialog + result modal. Dialog: 3-bucket summary, overwrite toggle (default OFF), "Show details" expand for diff list. Result modal: success count + per-row failure list with copyable error text. Refreshes attendee list on close. **Production verification of the full 3a+3b+3c flow happens here** — backfill has no UI entry point until this lands, so end-to-end verification on Productive Families is gated on 3c shipping. **Reminder per `[[radix-dialog-post-refetch-race]]` memory:** dialog work is Radix territory — hard-stop after 2 fix attempts on any library-internal race.
 
 3. **Admin-Edit-Fix Stage 4 — audit trail display.** Smallest stage. Pure read-side UI consuming Admin-Edit Stage 1's audit columns: "Last edited by [Name] · [time]" on attendee detail header + approver/rejecter/reason in approvals dashboard. No backend, no Radix dialogs, no race surface. Expected ~1-2 hours. Can interleave anywhere.
 
@@ -224,7 +238,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `specs/FILE_FIELD_SPEC.md` — completed feature
 - `specs/EMAIL_OPTIONAL_EVENTS_SPEC.md` — completed feature
 - `specs/ADMIN_EDIT_FIX_SPEC.md` — Stages 1-3 complete (Stage 3 backend-only); Stage 4 next
-- `specs/FIELD_MAPPING_SPEC.md` — Stages 1, 2, 3a complete; 3b (run endpoint) + 3c (UI) remain
+- `specs/FIELD_MAPPING_SPEC.md` — Stages 1, 2, 3a, 3b complete; 3c (UI) is the last sub-chunk
 - `CLAUDE.md` — project conventions
 - `prisma/schema.prisma` — current schema
 - `PROJECT_HANDOFF.md` — this document
@@ -236,8 +250,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
 3. State what you want to work on:
-   - "Let's start Field-Mapping Stage 3b" → backfill run endpoint; 3a (preview) already shipped, contract is locked
-   - "Let's start Field-Mapping Stage 3c" → backfill UI; ONLY after 3b ships
+   - "Let's start Field-Mapping Stage 3c" → backfill UI; 3a + 3b backend shipped; this is the last sub-chunk and the point at which Productive Families historical data finally gets fixed end-to-end
    - "Let's start Admin-Edit-Fix Stage 4 (audit trail display)" → smallest stage, low complexity, can interleave
    - "I want to retry Stage 3 UI" → has diagnosis ready, requires sourcemap setup first
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
@@ -246,4 +259,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-05-24 after Field-Mapping Stage 3a merge. 3a is read-only (preview service + endpoint); 3b (run endpoint) is next, 3c (UI) after that. Productive Families historical Contact rows still show as Reg #... until 3b ships and an admin runs the backfill.*
+*Updated 2026-05-24 after Field-Mapping Stage 3b merge. Backfill is write-capable from the API surface but has no UI entry point yet — 3c (dialog + result modal + button wiring) is the last sub-chunk. Productive Families historical Contact rows still show as Reg #... until 3c ships and an admin runs the backfill end-to-end through the UI.*
