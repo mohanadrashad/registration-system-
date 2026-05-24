@@ -31,6 +31,31 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-05-24 — Field-Mapping Stage 1 (schema + API + form-builder UI)
+
+Stage 1 of the 3-stage field-mapping rollout. Admins can now tag any FormField with a Contact-column role from the form-builder. **Runtime registration behavior is unchanged in this stage** — Stage 2 (resolver in `/api/register`) is what actually fixes the Productive Families dashboard for new visitors. Tags saved now are read once Stage 2 ships.
+
+**Field-Mapping Stage 1** — `b2bf98a` (PR #24, squash merge). Three chunks: schema (`eee97a2`) + API (`4c58de8`) + form-builder UI (`b7d1494`).
+
+Shipped:
+- `FieldMapping` enum (7 values: FIRST_NAME, LAST_NAME, FULL_NAME, EMAIL, PHONE, ORGANIZATION, DESIGNATION) + nullable `FormField.mapsTo` column. Production Neon in sync (`prisma db push` confirmed by maintainer).
+- `PATCH /api/events/[eventId]/form-fields/[fieldId]` extended with mapsTo branch (validates type compat, single-value uniqueness, FULL_NAME mutual exclusion). Migrated to `authorizeEvent({role:"editor"})`. Cross-direction guard: changing a tagged field's type to one incompatible with its mapping is also rejected.
+- `POST /api/events/[eventId]/form-fields/[fieldId]/swap-mapping` — atomic 2-step Prisma transaction with `MAPPING_SWAP_STALE` guard so a stale UI can't silently overwrite a re-tagged role.
+- `GET /api/events/[eventId]/field-mapping/summary` — per-role summary endpoint. Public API contract; the form-builder summary card consumes in-memory phases data instead of this endpoint (Chunk 3 deviation — avoids extra round trip + race surface).
+- `src/lib/validations/field-mapping.ts` — Zod schemas + typed `MAPPING_ERROR_CODES` + pure `checkMappingConflict()` helper used by both PATCH and swap routes.
+- `src/lib/form-builder/field-mapping-labels.ts` — single source of truth for display labels, legacy formData keys, type-compat sets, multi-value roles set, FULL_NAME exclusion set. Consumed by both the validator and the UI.
+- Form-builder UI: `FieldMappingSummaryCard` pinned above the phase strip + `MapsToDropdown` chip on each compatible field row. Conflict UX lives inside the dropdown (taken option shows `Used by "X" [Swap →]` two-line item, NOT a row-level ribbon — addresses the Radix close+refetch race surface from admin-edit Stage 3). `setTimeout(0)` defer on parent refetch is load-bearing per the same lesson.
+
+Deviations:
+- swap-mapping body simplified from spec's `{from:{fieldId,mapsTo}, to:{fieldId,mapsTo}}` to `{fromFieldId, role}` — a swap by definition transfers the same role on both sides.
+- Cross-direction type-compat check added beyond spec acceptance criteria.
+- Summary card reads in-memory `phases` data, not `GET /summary` (the endpoint stays as public contract).
+- `MapsToDropdown` hides on incompatible field types with no existing mapping (TEXTAREA, NUMBER, layout fields). Renders if the field already has a mapping so admin can clear it.
+
+What's NOT shipped yet:
+- **Stage 2 (registration endpoint resolver)** — Productive Families dashboard still shows `Reg #...` for new registrations until this lands.
+- **Stage 3 (backfill)** — historical data fix. "Apply to existing registrations" button is rendered but disabled.
+
 ### 2026-05-23 — Admin Edit Fix Stages 1, 2, 3 (backend-only) + Email-Optional + FILE field
 
 Single marathon session. Three features fully shipped, one shipped backend-only with UI deferred.
@@ -67,17 +92,19 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 ## Queue (in priority order)
 
-1. **Admin-Edit-Fix Stage 4 — audit trail display.** Smallest stage. Pure read-side UI consuming Stage 1's audit columns: "Last edited by [Name] · [time]" on attendee detail header + approver/rejecter/reason in approvals dashboard. No backend, no Radix dialogs, no race surface. Expected ~1-2 hours.
+1. **Field-Mapping Stage 2 — registration endpoint resolver.** Unblocks Productive Families dashboard for NEW visitor registrations. Refactor `src/app/api/register/[eventSlug]/route.ts` to read `FormField.mapsTo` tags and assemble Contact columns via a `resolveContactColumns()` helper. Replaces today's destructure + fullName fallback. Email lowercase + synthesis stay where they are. LAST_NAME multi-field join order follows `FormField.order`. Legacy `body.fullName` splitter preserved as final-rung fallback. Code-only (no schema). Spec at `specs/FIELD_MAPPING_SPEC.md`. Expected 1-2 chunks.
 
-2. **Field-mapping (new feature — Approach 2 from late-night conversation).** Solves Productive Families' name display problem. Admin tags form fields with "Maps to: First Name / Last Name / Email / Phone / Organization / Designation / Category" in the form-builder. Registration endpoint reads tags and populates Contact columns. Will need its own spec conversation before implementation. Probably 2-3 stages.
+2. **Field-Mapping Stage 3 — backfill with preview.** Wires the "Apply to existing registrations" button to actual endpoints. Preview + run routes, batched writes (100/tx), idempotency, synthetic-email replacement rule (always replaces regardless of overwrite toggle). Lower urgency than Stage 2 — fixes historical Productive Families data after Stage 2 fixes new submissions.
 
-3. **Stage 3 UI retry — Replace/Remove buttons + provenance.** Deferred from Stage 3 backend merge. See "Known unresolved bugs" for diagnosis-to-build-on.
+3. **Admin-Edit-Fix Stage 4 — audit trail display.** Smallest stage. Pure read-side UI consuming Admin-Edit Stage 1's audit columns: "Last edited by [Name] · [time]" on attendee detail header + approver/rejecter/reason in approvals dashboard. No backend, no Radix dialogs, no race surface. Expected ~1-2 hours. Can interleave anywhere.
 
-4. **Admin-upload-from-empty (new feature requested late session).** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
+4. **Stage 3 UI retry — Replace/Remove buttons + provenance.** Deferred from FILE-field admin-edit Stage 3 backend merge. See "Known unresolved bugs" for diagnosis-to-build-on.
 
-5. **PhaseReceipt buildReceiptPathname cleanup.** Small dead-code follow-up from FILE Stage 3 audit.
+5. **Admin-upload-from-empty (new feature requested late session).** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
 
-6. **Contact GET handler per-event auth.** Surfaced during Stage 2 audit. Read-only handler still uses legacy `auth()`. Lower-stakes since cross-event filter at line 30 prevents data leak; only consequence is unauthenticated-to-event users could poll for known contactIds. Mechanical migration matching Stage 2's pattern.
+6. **PhaseReceipt buildReceiptPathname cleanup.** Small dead-code follow-up from FILE Stage 3 audit.
+
+7. **Contact GET handler per-event auth.** Surfaced during Admin-Edit Stage 2 audit. Read-only handler still uses legacy `auth()`. Lower-stakes since cross-event filter at line 30 prevents data leak; only consequence is unauthenticated-to-event users could poll for known contactIds. Mechanical migration matching Stage 2's pattern.
 
 ---
 
@@ -135,6 +162,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `admin-edit-stage2-complete.md` — five-route migration, cross-event guard, audit stamping, RoleRequirement enum lesson, single-commit shape
 - `admin-edit-stage3-complete.md` — backend services + endpoints + invariants + Bug #1 webhook auth pattern + three failed UI fix attempts
 - `radix-dialog-post-refetch-race.md` — standalone race writeup with revival path
+- `field-mapping-stage1-complete.md` — schema + API + form-builder UI shipped; resolver (Stage 2) and backfill (Stage 3) standing by
 
 ---
 
@@ -149,6 +177,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `specs/FILE_FIELD_SPEC.md` — completed feature
 - `specs/EMAIL_OPTIONAL_EVENTS_SPEC.md` — completed feature
 - `specs/ADMIN_EDIT_FIX_SPEC.md` — Stages 1-3 complete (Stage 3 backend-only); Stage 4 next
+- `specs/FIELD_MAPPING_SPEC.md` — Stage 1 complete; Stage 2 (resolver) next
 - `CLAUDE.md` — project conventions
 - `prisma/schema.prisma` — current schema
 - `PROJECT_HANDOFF.md` — this document
@@ -160,8 +189,9 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
 3. State what you want to work on:
-   - "Let's start Stage 4 (audit trail display)" → smallest next stage, low complexity
-   - "Let's spec the field-mapping feature" → blocker for Productive Families launch, needs design conversation first
+   - "Let's start Field-Mapping Stage 2" → unblocks Productive Families dashboard for new visitors; spec ready, ~1-2 chunks
+   - "Let's start Field-Mapping Stage 3" → backfill for historical Productive Families data; only after Stage 2 ships
+   - "Let's start Admin-Edit-Fix Stage 4 (audit trail display)" → smallest stage, low complexity, can interleave
    - "I want to retry Stage 3 UI" → has diagnosis ready, requires sourcemap setup first
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
 
@@ -169,4 +199,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated end of marathon session 2026-05-23. Three of four admin-edit-fix stages done. Deferred work has clear diagnosis. Field-mapping is the next blocker for Productive Families launch.*
+*Updated 2026-05-24 after Field-Mapping Stage 1 merge. Stage 2 (registration endpoint resolver) is the next blocker for Productive Families' dashboard fix.*
