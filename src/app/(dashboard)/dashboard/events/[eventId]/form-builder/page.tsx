@@ -62,7 +62,7 @@ import {
   Lock,
   X,
 } from "lucide-react";
-import { FieldType, FieldWidth, PhaseType } from "@prisma/client";
+import { FieldType, FieldWidth, FieldMapping, PhaseType } from "@prisma/client";
 import type { PhaseSelectionMode } from "@prisma/client";
 import {
   PhaseOptionsPanel,
@@ -72,6 +72,8 @@ import { OptionsEditor } from "@/components/admin/options-editor";
 import { OtherOptionEditor } from "@/components/admin/other-option-editor";
 import { MaxSelectionsEditor } from "@/components/admin/max-selections-editor";
 import { FieldTextFields } from "@/components/admin/field-text-fields";
+import { FieldMappingSummaryCard } from "@/components/admin/field-mapping-summary-card";
+import { MapsToDropdown } from "@/components/admin/maps-to-dropdown";
 import {
   FileFieldSettings,
   defaultFileFieldMetadata,
@@ -130,6 +132,10 @@ interface FormField {
   // field types ignore it. Always normalize through parseFileFieldMetadata
   // before passing into the FILE settings editor.
   metadata?: unknown;
+  // Contact column mapping (Stage 1 of FIELD_MAPPING_SPEC). Null = no
+  // mapping; the register endpoint falls back to legacy literal-key
+  // destructure for unmapped roles.
+  mapsTo?: FieldMapping | null;
 }
 
 interface Step {
@@ -860,6 +866,36 @@ export default function FormBuilderPage() {
     [phases]
   );
 
+  // Stage 1 of FIELD_MAPPING_SPEC: all FormFields across phases/steps
+  // with their mapsTo tag. The summary card groups by role; the
+  // MapsToDropdown looks up "taken by" sibling for the conflict UX.
+  // Order is preserved (phases.order → steps.order → fields.order via
+  // fetchEverything's existing orderBy) so LAST_NAME join order is
+  // deterministic for the summary card.
+  const allFieldsWithMapping = useMemo(
+    () =>
+      phases.flatMap((p) =>
+        p.steps.flatMap((s) =>
+          s.fields.map((f) => ({
+            id: f.id,
+            label: f.label,
+            mapsTo: f.mapsTo ?? null,
+          }))
+        )
+      ),
+    [phases]
+  );
+
+  const taggedFields = useMemo(
+    () =>
+      allFieldsWithMapping.flatMap((f) =>
+        f.mapsTo !== null
+          ? [{ id: f.id, name: f.id, label: f.label, mapsTo: f.mapsTo }]
+          : []
+      ),
+    [allFieldsWithMapping]
+  );
+
   // ── Field operations ───────────────────────────────────────────────
 
   async function seedDefaultFields() {
@@ -1406,6 +1442,13 @@ export default function FormBuilderPage() {
         </Dialog>
       </PageHeader>
 
+      {/* Field mapping summary — pinned above the phase list. Reads
+          from in-memory phases data (no extra fetch); recomputes
+          automatically when fetchEverything updates phases. The
+          "Apply to existing registrations" backfill wires up in a
+          later chunk. */}
+      <FieldMappingSummaryCard taggedFields={taggedFields} />
+
       {/* Phase strip — only shown when there's more than one phase, or
           postRegPhases module is on (so the "+ Phase" affordance exists). */}
       {(totalPhases > 1 || postRegEnabled) && (
@@ -1704,6 +1747,18 @@ export default function FormBuilderPage() {
                     {FIELD_TYPE_LABELS[field.type]} &middot; {field.name}
                   </div>
                 </div>
+                {/* Maps-to chip (Stage 1 of FIELD_MAPPING_SPEC). The
+                    component returns null for field types with no
+                    compatible role AND no current mapping, so layout
+                    fields and other non-mappable types render unchanged. */}
+                <MapsToDropdown
+                  eventId={eventId}
+                  fieldId={field.id}
+                  fieldType={field.type}
+                  currentMapsTo={field.mapsTo ?? null}
+                  siblings={allFieldsWithMapping}
+                  onChanged={fetchEverything}
+                />
                 <div className="flex items-center gap-1">
                   <Button
                     variant="ghost"

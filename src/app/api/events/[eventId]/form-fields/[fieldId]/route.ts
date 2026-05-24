@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorize } from "@/lib/api-auth";
+import { authorize, authorizeEvent } from "@/lib/api-auth";
 import { FieldType, FieldWidth } from "@prisma/client";
 import { FIELD_TYPES } from "@/lib/form-builder/field-types";
 import { fieldOptionsInputSchema } from "@/lib/validations/form-field";
 import { validateFileFieldMetadataInput } from "@/lib/validations/file-field-metadata";
+import {
+  checkMappingConflict,
+  mapsToInputSchema,
+} from "@/lib/validations/field-mapping";
 import { findReferencedOptionValues } from "@/lib/form-builder/option-value-lock";
 import {
   parseFormFieldOptions,
@@ -44,10 +48,10 @@ export async function GET(request: Request, { params }: RouteParams) {
 // PATCH - Update a form field
 export async function PATCH(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize("editor");
+    const { eventId, fieldId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor" });
     if (ctx instanceof NextResponse) return ctx;
 
-    const { eventId, fieldId } = await params;
     const body = await request.json();
 
     // Check if field exists
@@ -189,6 +193,63 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         }
       }
       updateData.metadata = body.metadata;
+    }
+
+    // Field mapping (`mapsTo`). The check fires when EITHER the mapping
+    // OR the field type is changing, so that flipping a tagged field's
+    // type to something incompatible is caught from either direction
+    // (mirrors the option-value-lock pattern above). When neither
+    // changes, the lookup of sibling fields is skipped.
+    if (body.mapsTo !== undefined || body.type !== undefined) {
+      const parsedMapsTo = mapsToInputSchema.safeParse(body.mapsTo);
+      if (!parsedMapsTo.success) {
+        return NextResponse.json(
+          {
+            error: "Invalid mapsTo value",
+            details: parsedMapsTo.error.flatten(),
+          },
+          { status: 400 }
+        );
+      }
+      const effectiveType =
+        (updateData.type as FieldType | undefined) ?? existing.type;
+      const effectiveMapsTo =
+        parsedMapsTo.data !== undefined ? parsedMapsTo.data : existing.mapsTo;
+
+      if (effectiveMapsTo !== null) {
+        const siblings = await prisma.formField.findMany({
+          where: { eventId },
+          select: {
+            id: true,
+            name: true,
+            label: true,
+            type: true,
+            mapsTo: true,
+          },
+        });
+        const check = checkMappingConflict(
+          {
+            fieldId: existing.id,
+            type: effectiveType,
+            role: effectiveMapsTo,
+          },
+          siblings
+        );
+        if (!check.ok) {
+          return NextResponse.json(
+            {
+              error: check.message,
+              code: check.code,
+              conflict: check.conflict,
+            },
+            { status: check.status }
+          );
+        }
+      }
+
+      if (parsedMapsTo.data !== undefined) {
+        updateData.mapsTo = parsedMapsTo.data;
+      }
     }
 
     const field = await prisma.formField.update({
