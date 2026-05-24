@@ -31,6 +31,27 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-05-24 — Field-Mapping Stage 2 (registration endpoint resolver)
+
+The register endpoint now reads each FormField's `mapsTo` tag to assemble Contact column values, with legacy literal-key + body.fullName fallbacks preserved. **Productive Families dashboard fix for NEW visitor registrations is now live** — once the form's three fields are tagged (First Name → FIRST_NAME, Middel Name + Third Name → 2× LAST_NAME), incoming registrations populate Contact.firstName and Contact.lastName correctly. Historical visitors still show `Reg #...` — Stage 3 (backfill) handles those.
+
+**Field-Mapping Stage 2** — `acee376` (PR #25, squash merge). Two commits collapsed into one: `0c2aa84` feature + `839b06d` TS-strict cast fix on `metadata` (zero runtime delta — Prisma's `InputJsonValue` excludes null but runtime accepts it; matches existing pattern at `contacts/[contactId]/route.ts:130-135`).
+
+Shipped:
+- `src/lib/services/field-mapping.service.ts` — pure `resolveContactColumns(registrationFields, formData, legacyBodyFullName)` function. No DB access. Reused by Stage 3 backfill. Resolution order: mapped FULL_NAME → mapped FIRST_NAME/LAST_NAME(multi)/EMAIL/PHONE/ORG/DESIG → legacy literal-key formData read → final-rung body.fullName splitter (firstName + lastName only).
+- `src/app/api/register/[eventSlug]/route.ts` — removed legacy destructure (line 188) + legacy fullName splitter block (lines 419-442). Replaced with resolver call. Six `||` non-empty-wins guards on Contact update branch preserved BYTE-FOR-BYTE (only LHS expressions changed). Create branch uses `?? ""` for NOT NULL columns + raw nullable values for the rest.
+- FULL_NAME drift defense: validator should prevent FIRST_NAME/LAST_NAME alongside FULL_NAME, but if drift exists, resolver emits one `console.warn` and proceeds with FULL_NAME winning. Never throws — registration submissions must not crash on bad mapping state.
+
+Behavior changes (called out in PR description for traceability):
+- **Trim-on-read** (positive). `readString` returns null for empty-after-trim. Visitor typing `"  Mohamed  "` now persists as `"Mohamed"`. Non-string values in text fields no longer cause Prisma type errors at the DB layer.
+- **`body.fullName` no longer lands in Contact.metadata.** The new `LEGACY_KEYS` filter strips 7 keys (the 6 contact columns + `fullName`) when computing `additionalFields`; pre-Stage-2 only stripped 6. Niche but real for untagged events that relied on `Contact.metadata.fullName`.
+
+Deviations:
+- Dropped the staging-harness requirement from Stage 2 acceptance criteria. No persistent staging env exists (Preview deployments are ephemeral); legacy fallback IS the safety mechanism — untagged events behave identically to today. Verification runs directly on production via the 4-step gate documented in PR #25.
+
+Lesson:
+- `npm run lint` doesn't run TS strict-mode; Vercel's `next build` does. Run `npx tsc --noEmit` locally before `git push` from now on, especially for files that touch Prisma input types. First Stage 2 push failed Vercel TS check on a metadata `||` chain narrowing to a union containing null.
+
 ### 2026-05-24 — Field-Mapping Stage 1 (schema + API + form-builder UI)
 
 Stage 1 of the 3-stage field-mapping rollout. Admins can now tag any FormField with a Contact-column role from the form-builder. **Runtime registration behavior is unchanged in this stage** — Stage 2 (resolver in `/api/register`) is what actually fixes the Productive Families dashboard for new visitors. Tags saved now are read once Stage 2 ships.
@@ -92,9 +113,7 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 ## Queue (in priority order)
 
-1. **Field-Mapping Stage 2 — registration endpoint resolver.** Unblocks Productive Families dashboard for NEW visitor registrations. Refactor `src/app/api/register/[eventSlug]/route.ts` to read `FormField.mapsTo` tags and assemble Contact columns via a `resolveContactColumns()` helper. Replaces today's destructure + fullName fallback. Email lowercase + synthesis stay where they are. LAST_NAME multi-field join order follows `FormField.order`. Legacy `body.fullName` splitter preserved as final-rung fallback. Code-only (no schema). Spec at `specs/FIELD_MAPPING_SPEC.md`. Expected 1-2 chunks.
-
-2. **Field-Mapping Stage 3 — backfill with preview.** Wires the "Apply to existing registrations" button to actual endpoints. Preview + run routes, batched writes (100/tx), idempotency, synthetic-email replacement rule (always replaces regardless of overwrite toggle). Lower urgency than Stage 2 — fixes historical Productive Families data after Stage 2 fixes new submissions.
+1. **Field-Mapping Stage 3 — backfill with preview.** Wires the "Apply to existing registrations" button (currently disabled placeholder in the summary card) to actual endpoints. Preview + run routes, batched writes (100/tx), idempotency, synthetic-email replacement rule (always replaces regardless of overwrite toggle). Resolver from Stage 2 (`resolveContactColumns()`) reused as-is — no duplication. Fixes historical Productive Families dashboard after maintainer confirms Stage 2 production verification passes for new registrations. Spec at `specs/FIELD_MAPPING_SPEC.md` "Stage 3 — Backfill with preview" section.
 
 3. **Admin-Edit-Fix Stage 4 — audit trail display.** Smallest stage. Pure read-side UI consuming Admin-Edit Stage 1's audit columns: "Last edited by [Name] · [time]" on attendee detail header + approver/rejecter/reason in approvals dashboard. No backend, no Radix dialogs, no race surface. Expected ~1-2 hours. Can interleave anywhere.
 
@@ -163,6 +182,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `admin-edit-stage3-complete.md` — backend services + endpoints + invariants + Bug #1 webhook auth pattern + three failed UI fix attempts
 - `radix-dialog-post-refetch-race.md` — standalone race writeup with revival path
 - `field-mapping-stage1-complete.md` — schema + API + form-builder UI shipped; resolver (Stage 2) and backfill (Stage 3) standing by
+- `field-mapping-stage2-complete.md` — resolver wired; Productive Families new-registration fix live; TS-strict gotcha lesson (tsc --noEmit before push)
 
 ---
 
@@ -177,7 +197,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `specs/FILE_FIELD_SPEC.md` — completed feature
 - `specs/EMAIL_OPTIONAL_EVENTS_SPEC.md` — completed feature
 - `specs/ADMIN_EDIT_FIX_SPEC.md` — Stages 1-3 complete (Stage 3 backend-only); Stage 4 next
-- `specs/FIELD_MAPPING_SPEC.md` — Stage 1 complete; Stage 2 (resolver) next
+- `specs/FIELD_MAPPING_SPEC.md` — Stages 1-2 complete; Stage 3 (backfill) next, gated on production verification of Stage 2
 - `CLAUDE.md` — project conventions
 - `prisma/schema.prisma` — current schema
 - `PROJECT_HANDOFF.md` — this document
@@ -189,8 +209,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
 3. State what you want to work on:
-   - "Let's start Field-Mapping Stage 2" → unblocks Productive Families dashboard for new visitors; spec ready, ~1-2 chunks
-   - "Let's start Field-Mapping Stage 3" → backfill for historical Productive Families data; only after Stage 2 ships
+   - "Let's start Field-Mapping Stage 3" → backfill for historical Productive Families data; ONLY after maintainer confirms Stage 2 production verification passes
    - "Let's start Admin-Edit-Fix Stage 4 (audit trail display)" → smallest stage, low complexity, can interleave
    - "I want to retry Stage 3 UI" → has diagnosis ready, requires sourcemap setup first
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
@@ -199,4 +218,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-05-24 after Field-Mapping Stage 1 merge. Stage 2 (registration endpoint resolver) is the next blocker for Productive Families' dashboard fix.*
+*Updated 2026-05-24 after Field-Mapping Stage 2 merge. Production verification of Stage 2 on Productive Families is the gate before Stage 3 (backfill) implementation.*
