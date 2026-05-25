@@ -31,6 +31,40 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-05-25 — Admin-Edit-Fix Stage 4 + ARC COMPLETE
+
+Stage 4 of the admin-edit-fix arc — the user-visible payoff for the audit columns Stage 1 shipped. Admins now see who edited a contact + when, and who approved/rejected each registration. **With this on production, the entire admin-edit-fix arc is fully realized** (Stages 1, 2, 3 backend-only, 4 — UI deferred from Stage 3 is the only outstanding item).
+
+**Admin-Edit-Fix Stage 4** — `77761d1` (PR #29, squash merge).
+
+Shipped:
+- `src/lib/format-relative-time.ts` — bucketed "just now / N minutes / N hours / N days" → flips to short absolute date past 14 days. Future-dated input also falls through to absolute (clock-skew defensive). Extracted (not inlined) for reuse by future audit surfaces.
+- `approvalService.getRecentDecisions(eventId, limit=100)` — new service method. Filters to rows with `approvedAt` OR `rejectedAt` set; two-pass sort (Prisma orderBy approvedAt + rejectedAt then in-memory merge by max-of-both, since Prisma can't express `coalesce` in orderBy). Returns `{decisions, totalRecent}`.
+- `/api/events/[eventId]/approvals` GET extended with `recentDecisions` + `totalRecentDecisions` in the response.
+- `/api/events/[eventId]/contacts/[contactId]` GET extended to include `updater` on Contact + `updater`/`approver`/`rejecter` on Registration with `UserRef`-shaped select (id/name/email only — no role, no password hash).
+- Attendee header: new "Last edited by [Name] · relative time" line, conditional on `contact.updater !== null`.
+- AdminCard: new "Decision" labeled section showing approver/rejecter + timestamp + reason, conditional on either relation being non-null.
+- Approvals dashboard: new third tab "Recent Decisions" with Action/By/When/Reason columns, "(unknown)" actor fallback for legacy rows, "Showing N of M total" footer only when truncated.
+
+Two pre-push diff-review refinements applied:
+- Anchor-comment near `contact.updater` render explaining the `contact.updatedAt` ↔ `updatedBy` synchrony (catches the fragility for future writers who might bump `updatedAt` without setting `updatedBy`).
+- "Decision" uppercase section header on AdminCard's audit block — matches the form-builder Step strip's small-uppercase pattern, neutral label works for both approve + reject branches.
+
+Time-estimate reframe noted in the PR: queue had this as "~1-2 hours, no backend" but actual was ~3-5 hours with real backend work (GET extension + new service method + new endpoint field). Future read-only audit features should assume relation joins need adding unless audit confirms otherwise.
+
+### Admin-Edit-Fix arc — close-out
+
+All 4 stages shipped:
+
+| PR  | Stage              | Commit     | Shipped                                                                |
+|-----|--------------------|------------|------------------------------------------------------------------------|
+| #21 | Stage 1            | `98f8813`  | CSV-drift fix + audit-trail schema (6 cols, 4 relations, 3 indexes)    |
+| #22 | Stage 2            | `63a588e`  | Five routes migrated to authorizeEvent; cross-event guards             |
+| #23 | Stage 3 (backend)  | `be18a8a`  | adminReplaceFile/adminRemoveFile + endpoints + RequiredFieldWarning    |
+| #29 | Stage 4            | `77761d1`  | Audit trail display (header + AdminCard + Recent Decisions tab)        |
+
+What's outstanding from this arc: **Stage 3 UI** (Replace/Remove buttons + provenance line) was reverted before Stage 3 merge due to the Radix race documented in `[[radix-dialog-post-refetch-race]]`. Backend is live; UI revival requires local-dev-build-with-sourcemaps diagnosis per the memory's revival path. Stays in queue.
+
 ### 2026-05-24 — Field-Mapping Stage 3c + FEATURE COMPLETE
 
 Final sub-chunk of Stage 3. **The entire field-mapping feature is now live and end-to-end usable on production.** Admins can preview the backfill diff, toggle overwrite, apply, and see per-row failure attribution without leaving the form-builder page. Pending the maintainer's final production-verification walk on Productive Families, the original Reg #cmpjoqs3 visitors that started this conversation should now display their real names after one backfill click.
@@ -184,15 +218,13 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 ## Queue (in priority order)
 
-1. **Admin-Edit-Fix Stage 4 — audit trail display.** Smallest stage. Pure read-side UI consuming Admin-Edit Stage 1's audit columns: "Last edited by [Name] · [time]" on attendee detail header + approver/rejecter/reason in approvals dashboard. No backend, no Radix dialogs, no race surface. Expected ~1-2 hours.
+1. **Stage 3 UI retry — Replace/Remove buttons + provenance.** Deferred from FILE-field admin-edit Stage 3 backend merge. Backend (services + endpoints + meta endpoint) is live; UI raced on Radix DOMException per `[[radix-dialog-post-refetch-race]]`. Revival starts with local dev build + sourcemaps to identify which library throws, then lift dialogs to page-level scope per the gold-standard pattern from quick-actions-card.tsx (now also followed by backfill-dialog.tsx). Hard-stop discipline still applies: 2 fix attempts max on any library-internal race.
 
-2. **Stage 3 UI retry — Replace/Remove buttons + provenance.** Deferred from FILE-field admin-edit Stage 3 backend merge. See "Known unresolved bugs" for diagnosis-to-build-on.
+2. **Admin-upload-from-empty.** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
 
-3. **Admin-upload-from-empty (new feature requested late session).** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
+3. **PhaseReceipt buildReceiptPathname cleanup.** Small dead-code follow-up from FILE Stage 3 audit.
 
-4. **PhaseReceipt buildReceiptPathname cleanup.** Small dead-code follow-up from FILE Stage 3 audit.
-
-5. **Contact GET handler per-event auth.** Surfaced during Admin-Edit Stage 2 audit. Read-only handler still uses legacy `auth()`. Lower-stakes since cross-event filter at line 30 prevents data leak; only consequence is unauthenticated-to-event users could poll for known contactIds. Mechanical migration matching Stage 2's pattern.
+4. **Contact GET handler per-event auth.** Surfaced during Admin-Edit Stage 2 audit. Read-only handler still uses legacy `auth()` (Stage 4 extended its query but left the auth shape alone — out of scope for read-only UI work). Lower-stakes since cross-event filter at line 30 prevents data leak; only consequence is unauthenticated-to-event users could poll for known contactIds. Mechanical migration matching Stage 2's pattern.
 
 ---
 
@@ -253,6 +285,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `field-mapping-stage1-complete.md` — schema + API + form-builder UI shipped; resolver (Stage 2) and backfill (Stage 3) standing by
 - `field-mapping-stage2-complete.md` — resolver wired; Productive Families new-registration fix live; TS-strict gotcha lesson (tsc --noEmit before push)
 - `field-mapping-stage3-complete.md` — feature complete; backfill preview + run + UI live; 10 locked invariants; 4 spec deviations; 2 pre-push diff-review bug catches
+- `admin-edit-stage4-complete.md` — audit trail display + arc close-out; contact.updatedAt ↔ updatedBy synchrony invariant for future Contact writers; UserRef leak-surface guidance; time-estimate reframe heuristic for read-only audit features
 
 ---
 
@@ -266,7 +299,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `specs/OTHER_AND_MAX_SELECTIONS_SPEC.md` — completed feature
 - `specs/FILE_FIELD_SPEC.md` — completed feature
 - `specs/EMAIL_OPTIONAL_EVENTS_SPEC.md` — completed feature
-- `specs/ADMIN_EDIT_FIX_SPEC.md` — Stages 1-3 complete (Stage 3 backend-only); Stage 4 next
+- `specs/ADMIN_EDIT_FIX_SPEC.md` — ARC COMPLETE on production (Stages 1, 2, 4); Stage 3 backend live, Stage 3 UI deferred per `[[radix-dialog-post-refetch-race]]`
 - `specs/FIELD_MAPPING_SPEC.md` — FEATURE COMPLETE (all 5 PRs shipped: #24, #25, #26, #27, #28)
 - `CLAUDE.md` — project conventions
 - `prisma/schema.prisma` — current schema
@@ -279,8 +312,9 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
 3. State what you want to work on:
-   - "Let's start Admin-Edit-Fix Stage 4 (audit trail display)" → smallest stage, low complexity, pure read-side UI
-   - "I want to retry Stage 3 UI (FILE Replace/Remove)" → has diagnosis ready, requires sourcemap setup first
+   - "I want to retry Stage 3 UI (FILE Replace/Remove)" → has diagnosis ready, requires sourcemap setup first (the last outstanding item from the admin-edit-fix arc)
+   - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
+   - "Let's clean up PhaseReceipt buildReceiptPathname" → small dead-code follow-up
    - "I want to retry Stage 3 UI" → has diagnosis ready, requires sourcemap setup first
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
 
@@ -288,4 +322,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-05-24 after Field-Mapping Stage 3c merge. **Field-mapping feature COMPLETE** — all 5 PRs shipped. Productive Families launch unblocked: new registrations populate Contact columns correctly (Stage 2 resolver), historical Reg #... visitors get retroactively fixed via the admin-triggered backfill (Stage 3 UI). Pending maintainer's final production-verification walk on Productive Families.*
+*Updated 2026-05-25 after Admin-Edit-Fix Stage 4 merge. **Admin-edit-fix arc COMPLETE** on production (Stages 1, 2, 4; Stage 3 backend live with UI deferred). Outstanding: Stage 3 UI retry — requires local dev build + sourcemaps to diagnose the Radix race that blocked it last time. Field-mapping also COMPLETE (separate arc). Next priority: FILE Stage 3 UI retry per queue item #1.*
