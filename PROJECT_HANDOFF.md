@@ -31,6 +31,14 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-05-25 — PhaseReceipt buildReceiptPathname cleanup
+
+Mechanical dead-code follow-up from FILE field Stage 3 audit. `buildReceiptPathname` in `receipt.service.ts` was being called inside `onBeforeGenerateToken` but the SDK never consumed its return value — `@vercel/blob` `handleUpload` doesn't expose a pathname override (the SDK ceiling documented in `[[vercel-blob-pathname-ceiling]]`). The `_serverComputedPath` field the result was stashed in was explicitly labeled "marker for grep / debugging" and ignored.
+
+**PhaseReceipt cleanup** — `2979316` (PR #31, squash merge). 2 files, −48 net lines (50 removed, 6 added). Removed: `buildReceiptPathname` function + its `CONTENT_TYPE_EXT` helper + the import + the dead `serverPath` computation + three stale comment blocks pointing at the dead computation + the `_serverComputedPath` marker spread. Replacement: a single tight 6-line comment pinned to `@vercel/blob v2.3.3` so a future reader who finds it can check whether the SDK has moved before assuming the limitation persists.
+
+Net delta beat the audit estimate (−48 vs the audit's −44) because of whitespace collapse around the removed blocks. Zero behavior change — the SDK never consumed the dead computation; storage path scoping (per-event signed token + addRandomSuffix + allowedContentTypes + maximumSizeInBytes) is unchanged. Sibling-dead-code sweep confirmed no other unused exports in `receipt.service.ts`.
+
 ### 2026-05-25 — Contact GET handlers migrated to authorizeEvent
 
 Mechanical auth migration. Closes the asymmetric posture surfaced during Admin-Edit-Fix Stage 2 audit: writes were gated per-event but the matching Contact reads stayed on legacy `auth()`, letting any authenticated user (across any event) list/read/export another event's Contact data. Cross-event filters at query/row level prevented data leak between events, but membership wasn't checked.
@@ -242,9 +250,7 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 2. **Admin-upload-from-empty.** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
 
-3. **PhaseReceipt buildReceiptPathname cleanup.** Small dead-code follow-up from FILE Stage 3 audit.
-
-4. **Auth posture sweep (deferred from Contact GET migration).** Migrate the remaining legacy-`auth()` handlers across `src/app/api/events/[eventId]/*` to `authorizeEvent`. Candidates per the audit during PR #30: `contacts/import/route.ts` POST (write, needs role decision), `registrations/export`, `statistics`, `whatsapp/*`, `emails/*`, `badges/*`, `checkin/*`. Each handler needs its own audit + role decision (read = `authenticated`, write = `editor` or `manager`, plus module-gating where applicable). Bundle as a single sweep stage, not piecemeal. ~25 handlers in scope.
+3. **Auth posture sweep (deferred from Contact GET migration).** Migrate the remaining legacy-`auth()` handlers across `src/app/api/events/[eventId]/*` to `authorizeEvent`. Candidates per the audit during PR #30: `contacts/import/route.ts` POST (write, needs role decision), `registrations/export`, `statistics`, `whatsapp/*`, `emails/*`, `badges/*`, `checkin/*`. Each handler needs its own audit + role decision (read = `authenticated`, write = `editor` or `manager`, plus module-gating where applicable). Bundle as a single sweep stage, not piecemeal. ~25 handlers in scope.
 
 ---
 
@@ -334,7 +340,6 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 3. State what you want to work on:
    - "I want to retry Stage 3 UI (FILE Replace/Remove)" → has diagnosis ready, requires sourcemap setup first (the last outstanding item from the admin-edit-fix arc)
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
-   - "Let's clean up PhaseReceipt buildReceiptPathname" → small dead-code follow-up
    - "Let's do the auth posture sweep" → ~25 legacy-`auth()` handlers across events API, each needs its own audit + role decision; one larger PR
    - "I want to retry Stage 3 UI" → has diagnosis ready, requires sourcemap setup first
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
@@ -343,4 +348,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-05-25 after Contact GET auth migration merge. **Admin-edit-fix arc COMPLETE** on production (Stages 1, 2, 4; Stage 3 backend live with UI deferred) + **field-mapping feature COMPLETE**. Contact GET auth migration also shipped (3 handlers, asymmetric posture closed). Next priority: FILE Stage 3 UI retry per queue item #1.*
+*Updated 2026-05-25 after PhaseReceipt cleanup merge. **Admin-edit-fix arc COMPLETE** + **field-mapping feature COMPLETE** + 2 polish PRs shipped same day (Contact GET auth migration + PhaseReceipt cleanup). Next priority: FILE Stage 3 UI retry per queue item #1.*
