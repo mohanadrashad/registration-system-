@@ -28,31 +28,6 @@ export const RECEIPT_ALLOWED_TYPES = [
 
 export const RECEIPT_MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
-// Maps content type → file extension, used when constructing pathnames
-// from the server side. Client-supplied filenames are never trusted.
-const CONTENT_TYPE_EXT: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "application/pdf": ".pdf",
-};
-
-/**
- * Build the canonical pathname for a receipt blob. Pure function — no
- * side effects, no random suffix (the SDK appends one). Caller is
- * responsible for ensuring eventId / registrationId / selectionId all
- * belong to authorised owners before reaching this function.
- */
-export function buildReceiptPathname(args: {
-  eventId: string;
-  registrationId: string;
-  selectionId: string;
-  contentType: string;
-}): string {
-  const ext = CONTENT_TYPE_EXT[args.contentType] ?? "";
-  const ts = Date.now();
-  return `events/${args.eventId}/receipts/${args.registrationId}/${args.selectionId}-${ts}${ext}`;
-}
-
 // ─── Idempotent write (called from onUploadCompleted) ────────────────
 
 export interface WriteReceiptInput {
