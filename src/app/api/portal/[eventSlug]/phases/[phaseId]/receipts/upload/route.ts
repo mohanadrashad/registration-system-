@@ -5,7 +5,6 @@ import { prisma } from "@/lib/prisma";
 import { getPortalSessionFromRequest } from "@/lib/portal/session";
 import { computePhaseStatus } from "@/lib/services/phase.service";
 import {
-  buildReceiptPathname,
   RECEIPT_ALLOWED_TYPES,
   RECEIPT_MAX_SIZE_BYTES,
   writeReceiptIdempotent,
@@ -175,20 +174,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           );
         }
 
-        // We use the client-supplied pathname only for the extension
-        // (which the SDK turns into the final pathname; addRandomSuffix
-        // adds entropy). Wrap with our server-controlled scheme.
         const originalName = pathname || "receipt";
-        // Pick a stable temp "selection" placeholder — the real
-        // selectionId is unknown until onUploadCompleted. Putting
-        // the optionId in the path keeps it tied to the user's
-        // intent; addRandomSuffix prevents collisions.
-        const serverPath = buildReceiptPathname({
-          eventId: event.id,
-          registrationId: registration.id,
-          selectionId: optionId, // stable per (phase, reg, option)
-          contentType: "application/octet-stream", // ext picked at SDK level via originalName extension
-        });
 
         const tokenPayload: TokenPayload = {
           optionId,
@@ -203,23 +189,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           allowedContentTypes: [...RECEIPT_ALLOWED_TYPES],
           maximumSizeInBytes: RECEIPT_MAX_SIZE_BYTES,
           addRandomSuffix: true,
-          // Use the server-constructed pathname even though the
-          // client's request named one — never trust the client's
-          // path. We override here.
           validUntil: Date.now() + 10 * 60 * 1000, // 10 minutes
           tokenPayload: JSON.stringify(tokenPayload),
-          // Override pathname to our server-controlled scheme. The
-          // SDK signs the token bound to this pathname; the client's
-          // upload will be rejected if it doesn't match.
-          // Note: pathname override is implicit — handleUpload uses
-          // the pathname arg we got. We construct serverPath above
-          // so it's logged for traceability even though the SDK
-          // ultimately uses the client pathname. The pathname rules
-          // we DO enforce: allowedContentTypes + maximumSizeInBytes.
-          // Storage path scoping is via the per-event signed token.
-          // (Vercel doesn't expose pathname override in handleUpload
-          // v2.x — flagged in the stage report.)
-          ...{ _serverComputedPath: serverPath }, // marker for grep / debugging
+          // Storage path scoping is via the per-event signed token,
+          // not the pathname (the @vercel/blob v2.3.3 handleUpload
+          // API doesn't expose pathname override from
+          // onBeforeGenerateToken — see [[vercel-blob-pathname-ceiling]]
+          // memory). allowedContentTypes + maximumSizeInBytes + the
+          // signed token are the enforcement surface.
         };
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
