@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
 import { authorizeEvent } from "@/lib/api-auth";
 import {
   updateContactSchema,
@@ -13,10 +12,16 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ eventId: string; contactId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { eventId, contactId } = await params;
+  // Read-only endpoint: any event member can fetch this.
+  // "authenticated" is the lowest RoleRequirement and maps to
+  // canViewEvent (passes when eventRole !== null OR SUPER_ADMIN).
+  // Mirrors the Stage 2 approvals-GET migration — closes the
+  // asymmetric posture where Stage 2's PUT/DELETE/POST migrations
+  // gated writes per-event but reads remained open to any logged-in
+  // user across the codebase.
+  const ctx = await authorizeEvent(eventId, { role: "authenticated" });
+  if (ctx instanceof NextResponse) return ctx;
 
   // Stage 4 of ADMIN_EDIT_FIX_SPEC: include the User-relation joins
   // (updater on Contact + updater/approver/rejecter on Registration)
