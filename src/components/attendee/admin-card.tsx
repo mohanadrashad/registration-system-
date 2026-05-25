@@ -176,6 +176,63 @@ export function AdminCard({
                     )}
                   </button>
                 </div>
+
+                {/* Stage 4 of ADMIN_EDIT_FIX_SPEC: approval/rejection
+                    metadata. Section omitted entirely when both
+                    approver and rejecter are null (PENDING_APPROVAL +
+                    legacy pre-Stage-1 rows + visitor-flow CANCELLED
+                    look the same: no approval data visible). The
+                    "Decision" label is neutral so it works for both
+                    the approval and rejection branches below. */}
+                {(contact.registration.approver || contact.registration.rejecter) && (
+                  <div className="pt-3 mt-3 border-t space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Decision
+                    </div>
+                    {contact.registration.approver && contact.registration.approvedAt && (
+                      <>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-muted-foreground">Approved by</span>
+                          <span className="font-medium">
+                            {contact.registration.approver.name ??
+                              contact.registration.approver.email}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-muted-foreground">on</span>
+                          <span className="font-medium">
+                            {fmtDate(contact.registration.approvedAt)}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {contact.registration.rejecter && contact.registration.rejectedAt && (
+                      <>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-muted-foreground">Rejected by</span>
+                          <span className="font-medium">
+                            {contact.registration.rejecter.name ??
+                              contact.registration.rejecter.email}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-muted-foreground">on</span>
+                          <span className="font-medium">
+                            {fmtDate(contact.registration.rejectedAt)}
+                          </span>
+                        </div>
+                        {contact.registration.rejectionReason && (
+                          <div className="flex justify-between gap-3 items-start">
+                            <span className="text-muted-foreground shrink-0">Reason</span>
+                            <span className="font-medium italic text-right max-w-[60%]">
+                              &ldquo;{contact.registration.rejectionReason}&rdquo;
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </>

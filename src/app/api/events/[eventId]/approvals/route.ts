@@ -20,16 +20,25 @@ export async function GET(request: Request, { params }: RouteParams) {
     const ctx = await authorizeEvent(eventId, { role: "authenticated" });
     if (ctx instanceof NextResponse) return ctx;
 
-    const [capacityInfo, pendingApprovals, waitlist] = await Promise.all([
-      approvalService.getCapacityInfo(eventId),
-      approvalService.getPendingApprovals(eventId),
-      approvalService.getWaitlist(eventId),
-    ]);
+    const [capacityInfo, pendingApprovals, waitlist, recent] =
+      await Promise.all([
+        approvalService.getCapacityInfo(eventId),
+        approvalService.getPendingApprovals(eventId),
+        approvalService.getWaitlist(eventId),
+        // Stage 4 of ADMIN_EDIT_FIX_SPEC: recent approval/rejection
+        // decisions for the new "Recent Decisions" tab. Capped at
+        // 100; totalRecent surfaces the full count so the UI can
+        // render the "Showing 100 most recent" footer only when
+        // truncated.
+        approvalService.getRecentDecisions(eventId),
+      ]);
 
     return NextResponse.json({
       capacity: capacityInfo,
       pendingApprovals,
       waitlist,
+      recentDecisions: recent.decisions,
+      totalRecentDecisions: recent.totalRecent,
     });
   } catch (error) {
     console.error("Error getting approvals:", error);

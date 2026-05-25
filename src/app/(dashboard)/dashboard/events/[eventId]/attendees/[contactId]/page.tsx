@@ -29,6 +29,7 @@ import { EBadgeCard } from "@/components/attendee/ebadge-card";
 import { EmailHistoryCard } from "@/components/attendee/email-history-card";
 import { QuickActionsCard } from "@/components/attendee/quick-actions-card";
 import { RequiredFieldWarning } from "@/components/attendee/required-field-warning";
+import { formatRelativeTime } from "@/lib/format-relative-time";
 
 /**
  * Attendee detail — three-column layout.
@@ -217,6 +218,25 @@ export default function AttendeeDetailPage() {
                 {contact.category || "Uncategorized"}
               </span>
             </div>
+            {/* Stage 4 of ADMIN_EDIT_FIX_SPEC: audit-trail display.
+                Omit entirely when updater is null — legacy pre-Stage-1
+                rows + visitor-driven writes (portal self-edit) leave
+                Contact.updatedBy null by design.
+
+                Anchor on contact.updatedAt — synchronized with updatedBy
+                because every write that sets updatedBy is in the same
+                Prisma update call. If a future writer bumps updatedAt
+                without setting updatedBy, the header would show a stale
+                "Last edited by" name. */}
+            {contact.updater && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Last edited by{" "}
+                <span className="font-medium">
+                  {contact.updater.name ?? contact.updater.email}
+                </span>{" "}
+                · {formatRelativeTime(contact.updatedAt)}
+              </p>
+            )}
           </div>
         </div>
         {userCanEdit && (

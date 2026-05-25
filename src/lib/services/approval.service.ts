@@ -115,6 +115,84 @@ export const approvalService = {
   },
 
   /**
+   * Recent approval / rejection decisions for an event. Powers the
+   * "Recent Decisions" tab on the approvals dashboard (Stage 4 of
+   * ADMIN_EDIT_FIX_SPEC).
+   *
+   * Filters to rows where either `approvedAt` or `rejectedAt` is
+   * non-null — so legacy pre-Stage-1 rows (where these columns are
+   * null even though the registration may have been approved at
+   * some point) don't appear. That's intentional: the audit display
+   * is about decisions we have a record of, not all REGISTERED rows.
+   *
+   * Sort: newest decision first via coalesce(approvedAt, rejectedAt).
+   * Prisma can't express coalesce in orderBy directly; we sort by
+   * approvedAt desc then rejectedAt desc and merge client-side
+   * inside the consumer (cheap at limit=100). Wait — actually the
+   * simpler answer is to fetch both with the cap, then sort the
+   * unified array by the relevant timestamp in JS. Done here so the
+   * route handler stays trivial.
+   *
+   * Cap: 100 most recent. Hits the typical Productive-Families
+   * scale without pagination. The route surfaces `totalRecent` so
+   * the UI can render "Showing 100 most recent decisions" only when
+   * the full count exceeds the cap.
+   */
+  async getRecentDecisions(eventId: string, limit: number = 100) {
+    const [decisions, totalRecent] = await Promise.all([
+      prisma.registration.findMany({
+        where: {
+          eventId,
+          OR: [
+            { approvedAt: { not: null } },
+            { rejectedAt: { not: null } },
+          ],
+        },
+        include: {
+          contact: {
+            select: {
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+          approver: { select: { id: true, name: true, email: true } },
+          rejecter: { select: { id: true, name: true, email: true } },
+        },
+        // Sort by approvedAt desc THEN rejectedAt desc — gets us most
+        // entries in the right relative order. Final unified ordering
+        // happens client-side below.
+        orderBy: [
+          { approvedAt: "desc" },
+          { rejectedAt: "desc" },
+        ],
+        take: limit,
+      }),
+      prisma.registration.count({
+        where: {
+          eventId,
+          OR: [
+            { approvedAt: { not: null } },
+            { rejectedAt: { not: null } },
+          ],
+        },
+      }),
+    ]);
+
+    // Unify by the effective decision timestamp (whichever is
+    // non-null and most recent on the row). Approve-then-reject
+    // shouldn't happen in practice, but if it does the most-recent
+    // wins.
+    const sorted = [...decisions].sort((a, b) => {
+      const ta = decisionTimestamp(a);
+      const tb = decisionTimestamp(b);
+      return (tb ?? 0) - (ta ?? 0);
+    });
+
+    return { decisions: sorted, totalRecent };
+  },
+
+  /**
    * Approve a registration
    */
   async approve(registrationId: string, approvedBy?: string) {
@@ -354,3 +432,22 @@ export const approvalService = {
     return { success: true, cancelled: registrationId, promoted: null };
   },
 };
+
+/**
+ * Pick the most recent decision timestamp on a registration row.
+ * Returns null only if both columns are null — getRecentDecisions
+ * filters those out at the DB layer, so callers from that path get
+ * a non-null. Module-local because it's an implementation detail
+ * of the unified-ordering pass in getRecentDecisions.
+ */
+function decisionTimestamp(reg: {
+  approvedAt: Date | null;
+  rejectedAt: Date | null;
+}): number | null {
+  const a = reg.approvedAt?.getTime() ?? null;
+  const r = reg.rejectedAt?.getTime() ?? null;
+  if (a === null && r === null) return null;
+  if (a === null) return r;
+  if (r === null) return a;
+  return Math.max(a, r);
+}

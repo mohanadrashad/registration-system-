@@ -38,6 +38,7 @@ import {
   RefreshCw,
   Loader2,
   AlertCircle,
+  History,
 } from "lucide-react";
 
 interface Contact {
@@ -54,6 +55,21 @@ interface Registration {
   status: string;
   createdAt: string;
   contact: Contact;
+}
+
+// Stage 4 of ADMIN_EDIT_FIX_SPEC: Recent Decisions tab row shape.
+// Only includes the columns + relations the table renders — the
+// approval.service.getRecentDecisions sends the full Registration
+// row but the UI is narrow on purpose.
+interface RecentDecision {
+  id: string;
+  status: string;
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string | null;
+  approver: { id: string; name: string | null; email: string } | null;
+  rejecter: { id: string; name: string | null; email: string } | null;
+  contact: { firstName: string; lastName: string; email: string };
 }
 
 interface CapacityInfo {
@@ -74,6 +90,8 @@ export default function ApprovalsPage() {
   const [capacityInfo, setCapacityInfo] = useState<CapacityInfo | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<Registration[]>([]);
   const [waitlist, setWaitlist] = useState<Registration[]>([]);
+  const [recentDecisions, setRecentDecisions] = useState<RecentDecision[]>([]);
+  const [totalRecentDecisions, setTotalRecentDecisions] = useState(0);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
@@ -95,6 +113,8 @@ export default function ApprovalsPage() {
         setCapacityInfo(data.capacity);
         setPendingApprovals(data.pendingApprovals);
         setWaitlist(data.waitlist);
+        setRecentDecisions(data.recentDecisions ?? []);
+        setTotalRecentDecisions(data.totalRecentDecisions ?? 0);
         setNewCapacity(data.capacity?.capacity?.toString() || "");
       }
     } catch (error) {
@@ -335,7 +355,7 @@ export default function ApprovalsPage() {
         </CardContent>
       </Card>
 
-      {/* Tabs for Pending and Waitlist */}
+      {/* Tabs for Pending, Waitlist, and Recent Decisions */}
       <Tabs defaultValue="pending">
         <TabsList>
           <TabsTrigger value="pending">
@@ -345,6 +365,10 @@ export default function ApprovalsPage() {
           <TabsTrigger value="waitlist">
             <ListOrdered className="w-4 h-4 mr-2" />
             Waitlist ({waitlist.length})
+          </TabsTrigger>
+          <TabsTrigger value="recent">
+            <History className="w-4 h-4 mr-2" />
+            Recent Decisions ({totalRecentDecisions})
           </TabsTrigger>
         </TabsList>
 
@@ -484,6 +508,101 @@ export default function ApprovalsPage() {
                     ))}
                   </TableBody>
                 </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Stage 4 of ADMIN_EDIT_FIX_SPEC: Recent Decisions tab.
+            Read-only history of approval/rejection events. Filtered
+            server-side to rows with approvedAt OR rejectedAt set —
+            legacy pre-Stage-1 rows don't appear because their audit
+            columns are null. Capped at 100; footer surfaces total
+            only when truncated. */}
+        <TabsContent value="recent" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Decisions</CardTitle>
+              <CardDescription>
+                Approval and rejection history for this event.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {recentDecisions.length === 0 ? (
+                <p className="text-center text-muted-foreground py-8">
+                  No recent decisions yet
+                </p>
+              ) : (
+                <>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Action</TableHead>
+                        <TableHead>By</TableHead>
+                        <TableHead>When</TableHead>
+                        <TableHead>Reason</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {recentDecisions.map((reg) => {
+                        const wasRejected = reg.rejectedAt !== null;
+                        const actor = wasRejected ? reg.rejecter : reg.approver;
+                        const when = wasRejected ? reg.rejectedAt : reg.approvedAt;
+                        return (
+                          <TableRow key={reg.id}>
+                            <TableCell className="font-medium">
+                              {reg.contact.firstName} {reg.contact.lastName}
+                            </TableCell>
+                            <TableCell>
+                              {wasRejected ? (
+                                <span className="inline-flex items-center gap-1 text-destructive">
+                                  <XCircle className="h-4 w-4" />
+                                  Rejected
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-green-600">
+                                  <CheckCircle className="h-4 w-4" />
+                                  Approved
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {actor ? (
+                                <span className="font-medium">
+                                  {actor.name ?? actor.email}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground italic">
+                                  (unknown)
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {when
+                                ? new Date(when).toLocaleDateString()
+                                : "—"}
+                            </TableCell>
+                            <TableCell
+                              className="max-w-xs truncate"
+                              title={reg.rejectionReason ?? undefined}
+                            >
+                              {reg.rejectionReason ?? (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                  {totalRecentDecisions > recentDecisions.length && (
+                    <p className="mt-3 text-xs text-muted-foreground text-center">
+                      Showing {recentDecisions.length} most recent decisions of{" "}
+                      {totalRecentDecisions} total
+                    </p>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
