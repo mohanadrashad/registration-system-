@@ -30,6 +30,12 @@ export interface FormFieldDef {
   required: boolean;
 }
 
+export interface UserRef {
+  id: string;
+  name: string | null;
+  email: string;
+}
+
 export interface ContactDetail {
   id: string;
   firstName: string;
@@ -45,6 +51,12 @@ export interface ContactDetail {
   importBatch: string | null;
   createdAt: string;
   updatedAt: string;
+  // Stage 4 of ADMIN_EDIT_FIX_SPEC: audit-trail display. updatedBy is
+  // the FK; updater is the joined User (null on legacy pre-Stage-1
+  // rows AND on visitor-driven writes — the portal self-edit path
+  // intentionally leaves it null because visitors aren't Users).
+  updatedBy: string | null;
+  updater: UserRef | null;
   registration: {
     id: string;
     status: string;
@@ -52,6 +64,16 @@ export interface ContactDetail {
     confirmationCode: string;
     badgeEmailSent: boolean;
     badgeGenerated: boolean;
+    // Stage 4 audit-trail surfaces on Registration:
+    updatedBy: string | null;
+    updater: UserRef | null;
+    approvedBy: string | null;
+    approvedAt: string | null;
+    approver: UserRef | null;
+    rejectedBy: string | null;
+    rejectedAt: string | null;
+    rejecter: UserRef | null;
+    rejectionReason: string | null;
   } | null;
   emailLogs: { id: string; status: string; sentAt: string | null; subject: string }[];
   event: { slug: string; name: string; categories: string[] };

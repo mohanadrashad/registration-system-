@@ -18,10 +18,39 @@ export async function GET(
 
   const { eventId, contactId } = await params;
 
+  // Stage 4 of ADMIN_EDIT_FIX_SPEC: include the User-relation joins
+  // (updater on Contact + updater/approver/rejecter on Registration)
+  // so the attendee header can render "Last edited by ..." and the
+  // AdminCard can render approval/rejection metadata. Approval
+  // columns themselves (approvedAt, rejectedAt, rejectionReason) are
+  // also pulled in. UserRef select shape (id/name/email) is the
+  // smallest leak surface — no role, no password hash.
+  const userRefSelect = {
+    select: { id: true, name: true, email: true },
+  } as const;
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
     include: {
-      registration: { select: { id: true, status: true, registeredAt: true, confirmationCode: true, badgeEmailSent: true, badgeGenerated: true } },
+      updater: userRefSelect,
+      registration: {
+        select: {
+          id: true,
+          status: true,
+          registeredAt: true,
+          confirmationCode: true,
+          badgeEmailSent: true,
+          badgeGenerated: true,
+          updatedBy: true,
+          updater: userRefSelect,
+          approvedBy: true,
+          approvedAt: true,
+          approver: userRefSelect,
+          rejectedBy: true,
+          rejectedAt: true,
+          rejecter: userRefSelect,
+          rejectionReason: true,
+        },
+      },
       emailLogs: { select: { id: true, status: true, sentAt: true, subject: true }, orderBy: { sentAt: "desc" } },
       event: { select: { slug: true, name: true, categories: true } },
     },
