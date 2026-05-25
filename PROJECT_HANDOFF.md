@@ -31,6 +31,26 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-05-25 — Contact GET handlers migrated to authorizeEvent
+
+Mechanical auth migration. Closes the asymmetric posture surfaced during Admin-Edit-Fix Stage 2 audit: writes were gated per-event but the matching Contact reads stayed on legacy `auth()`, letting any authenticated user (across any event) list/read/export another event's Contact data. Cross-event filters at query/row level prevented data leak between events, but membership wasn't checked.
+
+**Contact GET auth migration** — `8988b00` (PR #30, squash merge).
+
+Audit-driven scope expansion: queue item was a single handler (`contacts/[contactId]/route.ts` GET), audit found two siblings with identical vulnerability shape. Bundled all three in one PR:
+
+| Handler | Cross-event scoping (preserved) |
+|---|---|
+| `contacts/[contactId]/route.ts` GET | Row-level: `contact.eventId !== eventId` post-query |
+| `contacts/route.ts` GET (list) | Query-level: `where: { eventId }` |
+| `contacts/export/route.ts` GET (CSV) | Query-level: `where: { eventId }` (orphan per [[csv-export-routes]]; migrated for posture consistency) |
+
+Migration mechanic (identical 3×): drop `auth` import (sibling write handlers in each file already use `authorizeEvent`), move `await params` above the auth call, replace `auth() + null check` with `authorizeEvent(eventId, {role: "authenticated"}) + ctx instanceof NextResponse` early return. Identical 7-line comment per handler explaining the role choice (Stage 2 approvals-GET precedent at `src/app/api/events/[eventId]/approvals/route.ts:20` is the canonical pattern).
+
+Behavior change for legitimate callers: NONE. Admin users with event membership see the same data. Only cross-event polling by authenticated-but-not-member users is closed.
+
+What's NOT in scope: `contacts/import/route.ts` POST (different threat model — write, not read; role decision deferred) + ~25 other legacy-`auth()` files across `src/app/api/events/[eventId]/*`. Each deserves its own audit + role decision. Bundle into a future "auth posture sweep" stage if warranted.
+
 ### 2026-05-25 — Admin-Edit-Fix Stage 4 + ARC COMPLETE
 
 Stage 4 of the admin-edit-fix arc — the user-visible payoff for the audit columns Stage 1 shipped. Admins now see who edited a contact + when, and who approved/rejected each registration. **With this on production, the entire admin-edit-fix arc is fully realized** (Stages 1, 2, 3 backend-only, 4 — UI deferred from Stage 3 is the only outstanding item).
@@ -224,7 +244,7 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 3. **PhaseReceipt buildReceiptPathname cleanup.** Small dead-code follow-up from FILE Stage 3 audit.
 
-4. **Contact GET handler per-event auth.** Surfaced during Admin-Edit Stage 2 audit. Read-only handler still uses legacy `auth()` (Stage 4 extended its query but left the auth shape alone — out of scope for read-only UI work). Lower-stakes since cross-event filter at line 30 prevents data leak; only consequence is unauthenticated-to-event users could poll for known contactIds. Mechanical migration matching Stage 2's pattern.
+4. **Auth posture sweep (deferred from Contact GET migration).** Migrate the remaining legacy-`auth()` handlers across `src/app/api/events/[eventId]/*` to `authorizeEvent`. Candidates per the audit during PR #30: `contacts/import/route.ts` POST (write, needs role decision), `registrations/export`, `statistics`, `whatsapp/*`, `emails/*`, `badges/*`, `checkin/*`. Each handler needs its own audit + role decision (read = `authenticated`, write = `editor` or `manager`, plus module-gating where applicable). Bundle as a single sweep stage, not piecemeal. ~25 handlers in scope.
 
 ---
 
@@ -315,6 +335,7 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
    - "I want to retry Stage 3 UI (FILE Replace/Remove)" → has diagnosis ready, requires sourcemap setup first (the last outstanding item from the admin-edit-fix arc)
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
    - "Let's clean up PhaseReceipt buildReceiptPathname" → small dead-code follow-up
+   - "Let's do the auth posture sweep" → ~25 legacy-`auth()` handlers across events API, each needs its own audit + role decision; one larger PR
    - "I want to retry Stage 3 UI" → has diagnosis ready, requires sourcemap setup first
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
 
@@ -322,4 +343,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-05-25 after Admin-Edit-Fix Stage 4 merge. **Admin-edit-fix arc COMPLETE** on production (Stages 1, 2, 4; Stage 3 backend live with UI deferred). Outstanding: Stage 3 UI retry — requires local dev build + sourcemaps to diagnose the Radix race that blocked it last time. Field-mapping also COMPLETE (separate arc). Next priority: FILE Stage 3 UI retry per queue item #1.*
+*Updated 2026-05-25 after Contact GET auth migration merge. **Admin-edit-fix arc COMPLETE** on production (Stages 1, 2, 4; Stage 3 backend live with UI deferred) + **field-mapping feature COMPLETE**. Contact GET auth migration also shipped (3 handlers, asymmetric posture closed). Next priority: FILE Stage 3 UI retry per queue item #1.*
