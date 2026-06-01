@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { whatsAppService } from "@/lib/services/whatsapp.service";
 import { WhatsAppStatus } from "@prisma/client";
 
@@ -10,12 +10,10 @@ interface RouteParams {
 // GET - Get WhatsApp message logs
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "authenticated", module: "whatsApp" });
+    if (ctx instanceof NextResponse) return ctx;
+
     const { searchParams } = new URL(request.url);
 
     const limit = parseInt(searchParams.get("limit") || "50");
