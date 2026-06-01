@@ -31,6 +31,25 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-06-01 — Cross-event isolation closed on email campaigns + emails routes migrated
+
+Security fix bundled with PR 5 of the auth-posture sweep. The `campaigns/[campaignId]` GET and DELETE handlers used unscoped `findUnique` / `delete` operations keyed only on `id`. Even after the caller's authorization was verified against the URL `eventId`, the actual data op would proceed against any campaign by id regardless of event. A user with `authenticated` access to Event A could read any Event B campaign by knowing its CUID; a user with MANAGER access to Event A could delete one. Same class as PR #32 (form-fields cross-event isolation), but data-layer rather than auth-layer. Practical exploit requires knowing the target CUID (not enumerable from another event's UI), but the gap is real.
+
+**Cross-event scoping + emails auth migration** — `bdd5654` (PR #36, squash merge). 3 files, +37/−24.
+
+| Handler | Cross-event fix |
+|---|---|
+| `GET` | `findUnique({ where: { id } })` → `findFirst({ where: { id, eventId } })`. Returns 404 if campaign belongs to another event. |
+| `DELETE` | `delete({ where: { id } })` → `deleteMany({ where: { id, eventId } })` + count-based 404. Single round-trip, no read-then-write race window. |
+
+Same row-level scoping pattern as `contacts/[contactId]/route.ts:18-22` ("canViewEvent ... ; also row-level: contact.eventId !== eventId post-query"). Defensive comments added on both handlers prevent a future cleanup pass from "simplifying" back to the unscoped form. No exploitation evidence in production logs (handlers don't emit user+event identity, same as PR #32).
+
+**Second cross-event isolation gap surfaced and closed by the sweep.** Both finds emerged from the same audit discipline: verify the `authorizeEvent` call AND verify the data ops scope by `eventId`. The data-op verification is the easy-to-miss half — see the new `[[auth-migration-audit-pattern]]` memory for the codified rule.
+
+Behavior change alongside the security fix: campaign DELETE role tightened from per-event `editor` to per-event `manager`. Pre-flight production data check cleared: 0 non-SUPER_ADMIN users without MANAGER membership exist on prod; 0 events have DRAFT campaigns (the only deletable category — `EmailLog.campaignId` FK with `NO ACTION` already blocks deletion of campaigns with logs). Two-layer safety net: role bump + FK constraint.
+
+Six handlers migrated total: templates GET/POST (`authenticated`/`editor`), campaigns GET/POST (`authenticated`/`editor`), campaigns/[campaignId] GET/DELETE (`authenticated`/`manager`, both with cross-event scoping). No module gates (no `emails` flag in EventModules — email is core). Sweep progress: 5 of 6 PRs done. Only PR 6 (domain + email-settings, `customEmail` module gate, pre-cleared) remains.
+
 ### 2026-06-01 — WhatsApp + Check-in handlers migrated, module gates introduced
 
 PR 4 of 6 in the auth-posture sweep. Five handlers across five files migrated from legacy `auth()` to `authorizeEvent` AND module-gated for the first time in the sweep: `whatsapp/stats` (GET + module `whatsApp`), `whatsapp/send` (POST editor + module `whatsApp`), `whatsapp/logs` (GET + module `whatsApp`), `checkin/recent` (GET + module `checkIn`), `checkin/search` (GET + module `checkIn`).
