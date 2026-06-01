@@ -31,6 +31,40 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-06-01 — Auth posture sweep — ARC COMPLETE (6 of 6 PRs shipped)
+
+The auth posture sweep is closed. Six PRs migrated **34 handlers** across `/api/events/[eventId]/*` from legacy `auth()` to `authorizeEvent`, closed **2 cross-event isolation bugs** (one auth-helper layer, one data layer), and introduced or normalized **4 module gates**. Zero legacy `auth()` call sites remain in the surface — verified by grep on the final merge commit (`7c5ebfe`).
+
+**Final PR — Domain + email-settings auth migration** — `7c5ebfe` (PR #37, squash merge). 9 handlers, 5 files, +29/−87 (−58 net). Biggest cleanup of the sweep. Introduces `customEmail` module gate (all 5 email-settings handlers, new enforcement) and normalizes `customDomain` (2 handlers via inline-check collapse, 2 via new gate addition). Drops 2 redundant `prisma.event.findUnique` lookups in `domain` GET + POST per the PR #34 precedent. Pre-flight cleared both gates (0 affected events on prod).
+
+**Sweep close-out table:**
+
+| PR | What shipped | Handlers | Notable |
+|---|---|---|---|
+| #32 | `form-fields/[fieldId]` cross-event isolation | 2 | 🔴 Security finding — auth-helper layer |
+| #33 | Statistics + Registrations reads | 4 | First pure-mechanical PR |
+| #34 | Misc admin + `contacts/import` role tightening | 8 | Closes PR #30 deferral; first dead-code drops |
+| #35 | WhatsApp + Check-in | 5 | First module gates; `whatsapp/send` audit catch (inline check kept) |
+| #36 | Email campaigns cross-event isolation + emails routes | 6 | 🔴 Second security finding — data-layer; spawned `[[auth-migration-audit-pattern]]` memory |
+| #37 | Domain + email-settings | 9 | Biggest cleanup, last legacy `auth()` in the surface |
+
+**Cumulative findings:**
+
+- **34 handlers** migrated to `authorizeEvent` (2+4+8+5+6+9).
+- **2 cross-event isolation bugs closed:**
+  - PR #32 — auth-helper layer: `form-fields/[fieldId]` GET + DELETE used global `authorize()` without per-event membership check.
+  - PR #36 — data layer: `emails/campaigns/[campaignId]` GET + DELETE had correct `authorizeEvent` gates but unscoped data ops — a MANAGER on Event A could delete any campaign by CUID.
+- **4 module gates introduced or normalized:** `whatsApp` + `checkIn` (PR #35), `customEmail` + `customDomain` (PR #37).
+- **~80 lines net reduction across the sweep.** Categories: dead `event.findUnique` lookups (PR #34, PR #37), redundant inline checks superseded by module gates (PR #37), multi-step auth collapsed to single `authorizeEvent` calls (every PR).
+- **`authorizeEvent` is now canonical** across `/api/events/[eventId]/*`. Verified by three independent greps on the final merge commit: zero `await auth()`, zero `auth()` calls of any shape, zero `from "@/lib/auth"` imports in the surface.
+- **One latent UX gap surfaced** during PR #35 smoke (module-gated pages remain visible in sidebar when module off; sub-endpoints correctly 403 but the console fills with errors). Pre-existing — the sweep made it visible, didn't cause it. Documented under "Known unresolved bugs" and added to the queue.
+
+**Durable artifacts from the sweep:**
+- `[[auth-migration-audit-pattern]]` memory — codifies the audit step that caught the two cross-event bugs (verify BOTH the `authorizeEvent` gate AND row-level scoping on data ops). Two confirmed applications with the inline-check verification refinement (PR #35 WhatsApp = semantically distinct, kept; PR #37 customDomain = equivalent, dropped) — opposite outcomes from the same discipline.
+- `[[auth-posture-sweep-complete]]` memory — captures the operational state (canonical pattern, no legacy auth) plus the reusable module-gate pre-flight shape ("0 affected events → ship preventatively").
+
+The audit discipline this sweep developed is worth reapplying to any future migration touching `/api/events/[eventId]/*` handlers.
+
 ### 2026-06-01 — Cross-event isolation closed on email campaigns + emails routes migrated
 
 Security fix bundled with PR 5 of the auth-posture sweep. The `campaigns/[campaignId]` GET and DELETE handlers used unscoped `findUnique` / `delete` operations keyed only on `id`. Even after the caller's authorization was verified against the URL `eventId`, the actual data op would proceed against any campaign by id regardless of event. A user with `authenticated` access to Event A could read any Event B campaign by knowing its CUID; a user with MANAGER access to Event A could delete one. Same class as PR #32 (form-fields cross-event isolation), but data-layer rather than auth-layer. Practical exploit requires knowing the target CUID (not enumerable from another event's UI), but the gap is real.
@@ -320,7 +354,9 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 2. **Admin-upload-from-empty.** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
 
-3. **Auth posture sweep (deferred from Contact GET migration).** Migrate the remaining legacy-`auth()` handlers across `src/app/api/events/[eventId]/*` to `authorizeEvent`. Candidates per the audit during PR #30: `contacts/import/route.ts` POST (write, needs role decision), `registrations/export`, `statistics`, `whatsapp/*`, `emails/*`, `badges/*`, `checkin/*`. Each handler needs its own audit + role decision (read = `authenticated`, write = `editor` or `manager`, plus module-gating where applicable). Bundle as a single sweep stage, not piecemeal. ~25 handlers in scope.
+3. **Radix race investigation — approvals/capacity surfaces.** Surfaced during PR #34 + PR #35 smokes. Capacity-save second-save throws `DOMException: Node.removeChild` from Radix vendor internals; approvals page suspected to share the pattern. Same race class as the FILE Stage 3 UI deferral above — worth bundling the investigation with item 1, since two confirmed surfaces strengthen the library-level diagnosis case (dev build + sourcemaps) over feature-by-feature mitigation.
+
+4. **Module-gated pages — sidebar visibility UX.** WhatsApp + Check-in + Email Settings + Domain menu items still render in the dashboard sidebar even when the corresponding `EventModules.X` flag is off. Sub-endpoints correctly return 403 with `MODULE_NOT_ENABLED` after the auth posture sweep (PR #35, PR #37), so pages load but the console fills with 403s. Single small UX PR can resolve all module-gated menu items at once — gate visibility on `EventModules` booleans in the dashboard layout. Not blocking Productive Families (visible 403s don't break the UI, just noise the console).
 
 ---
 
