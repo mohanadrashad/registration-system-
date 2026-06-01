@@ -31,6 +31,20 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-06-01 — WhatsApp + Check-in handlers migrated, module gates introduced
+
+PR 4 of 6 in the auth-posture sweep. Five handlers across five files migrated from legacy `auth()` to `authorizeEvent` AND module-gated for the first time in the sweep: `whatsapp/stats` (GET + module `whatsApp`), `whatsapp/send` (POST editor + module `whatsApp`), `whatsapp/logs` (GET + module `whatsApp`), `checkin/recent` (GET + module `checkIn`), `checkin/search` (GET + module `checkIn`).
+
+**WhatsApp + check-in auth migration with module gates** — `7ba283c` (PR #35, squash merge). 5 files, +25/−31 (−6 net).
+
+Two callouts:
+
+(a) **New behavior — module gates introduced for the first time in the sweep.** Events without `EventModules.whatsApp = true` or `EventModules.checkIn = true` now get a 403 with code `MODULE_NOT_ENABLED` (per `api-auth.ts:127-135`) instead of reaching the handler. Pre-flight production data check cleared: 0 events have WhatsApp/Check-in data while the corresponding module is off. The pattern PRs 5 and 6 will follow for their respective module gates.
+
+(b) **Audit catch.** `whatsapp/send`'s inline `whatsAppService.isEnabled(eventId)` check was originally flagged as redundant by the sweep audit. Pre-push review caught that the module gate and the inline check are semantically different: the module gate reads `EventModules.whatsApp` (feature toggled on?), the inline `isEnabled` reads `EventWhatsAppSettings.isActive && accessToken && phoneNumberId` (credentials configured?). An event can have the module on but no credentials yet. The inline check stays; comment rewritten to disambiguate. Lesson for PRs 5–6: assume inline post-auth checks are semantically distinct from module gates until proven otherwise — read the implementation, don't infer from the variable name.
+
+Smoke surfaced a latent UI quirk (sidebar visibility on module-off events) — pre-existing, see "Known unresolved bugs" below. Sweep progress: 4 of 6 PRs done. PRs 5–6 remaining (emails templates + campaigns; domain + email-settings).
+
 ### 2026-06-01 — Misc admin handlers migrated + contacts/import role tightened
 
 PR 3 of 6 in the auth-posture sweep. Eight handlers across six files migrated from legacy `auth()` to `authorizeEvent`: capacity (GET + POST), badges/template (GET + PUT), attendees (GET), form-fields/reorder (POST), form-fields/seed (POST), and contacts/import (POST).
@@ -318,6 +332,16 @@ Same race class as the FILE Stage 3 entry above. Surfaced during PR #34 smoke te
 **Implication:** the race is not feature-specific. Two surfaces now confirmed (FILE Stage 3 UI + capacity-save) with at least one more suspected (approvals). That strengthens the case for the library-level diagnosis path (local dev build + sourcemaps, lift dialogs to page-level scope) over feature-by-feature mitigation. Bundle the investigation with the Stage 3 UI retry effort in the queue rather than spinning a separate diagnostic arc per surface.
 
 **Reproducer:** open Settings → Capacity, save value A, save value B (any second save in the same dialog session). Throws on dialog close after the parent state mutates.
+
+### Module-gated pages remain visible in sidebar when module is off (2026-06-01)
+
+**Symptom:** WhatsApp and Check-in menu items show in the dashboard sidebar even when `EventModules.whatsApp = false` / `EventModules.checkIn = false` for the current event. Pages are reachable. After PR #35 (sweep PR 4), sub-endpoints (`whatsapp/stats`, `whatsapp/logs`, `checkin/recent`, `checkin/search`) correctly return 403 with `MODULE_NOT_ENABLED` instead of the prior 200-with-empty-data, so the page renders but the console fills with red 403s.
+
+**Why this is in scope now:** PR 4 of the auth-posture sweep introduced the API-layer module gate. The UI's prior behavior was "silently empty when module off"; the new behavior is "loudly 403 when module off." The UX gap was latent — the sweep didn't cause it but did make it visible.
+
+**Will repeat:** PR 5 (emails) and PR 6 (domain + email-settings) will exhibit the same pattern for any event with the corresponding modules off. Each adds its own API-layer module gate without touching the sidebar/menu UI. The pattern is consistent enough that a single "gate sidebar menu items on `EventModules` booleans" UX PR resolves all of them at once.
+
+**Fix path:** small UX PR. Read the relevant `EventModules.*` flag in the dashboard layout component (probably `src/app/(dashboard)/dashboard/events/[eventId]/layout.tsx` or equivalent), conditionally render each menu item. ~half a day. Not blocking the sweep; not blocking Productive Families (the visible 403s don't break the UI, just noise the console).
 
 ---
 
