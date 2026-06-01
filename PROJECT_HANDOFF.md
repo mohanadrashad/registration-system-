@@ -31,6 +31,19 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-06-01 — form-fields cross-event isolation closed + authorizeEvent sweep opens
+
+Security fix. `form-fields/[fieldId]` GET and DELETE used the global `authorize()` helper, which checks only the caller's global role and NOT per-event `EventMember` status. A user with any global editor-tier role who is a member of Event A could read or delete a form field belonging to Event B by knowing the field id — the `eventId` in the URL was decorative. PATCH on the same file already used `authorizeEvent` and was unaffected. No exploitation evidence in production logs (handlers don't emit user+event identity, so the question is unanswerable from logs alone). Shipped on security-fix merit regardless.
+
+**form-fields cross-event isolation** — `5c16dfa` (PR #32, squash merge). 1 file, +5/−7.
+
+| Handler | Before | After |
+|---|---|---|
+| `GET` | `authorize()` — global role only | `authorizeEvent(eventId, { role: "authenticated" })` |
+| `DELETE` | `authorize("editor")` — global editor only | `authorizeEvent(eventId, { role: "editor" })` |
+
+Also opens the broader auth-posture sweep — audit identified ~30 handlers across `src/app/api/events/[eventId]/...` still on legacy `auth()`. Ships in 5 more route-family PRs. Behavior-change PRs (customEmail module gate; campaign DELETE role bump) pinned to the end of the ship order; both pre-cleared by production data check (0 `EventEmailSettings` rows with `customEmail` off; `EmailLog.campaignId` FK already blocks deletion of campaigns with logs).
+
 ### 2026-05-25 — PhaseReceipt buildReceiptPathname cleanup
 
 Mechanical dead-code follow-up from FILE field Stage 3 audit. `buildReceiptPathname` in `receipt.service.ts` was being called inside `onBeforeGenerateToken` but the SDK never consumed its return value — `@vercel/blob` `handleUpload` doesn't expose a pathname override (the SDK ceiling documented in `[[vercel-blob-pathname-ceiling]]`). The `_serverComputedPath` field the result was stashed in was explicitly labeled "marker for grep / debugging" and ignored.
