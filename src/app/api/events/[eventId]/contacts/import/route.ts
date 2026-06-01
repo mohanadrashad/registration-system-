@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
-import { getRole, canEdit } from "@/lib/permissions";
+import { authorizeEvent } from "@/lib/api-auth";
 import { validateCategoryForEvent } from "@/lib/validations/contact";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
@@ -12,11 +11,9 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canEdit(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
   const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "editor" });
+  if (ctx instanceof NextResponse) return ctx;
 
   const formData = await req.formData();
   const file = formData.get("file") as File;
@@ -43,13 +40,8 @@ export async function POST(
     return NextResponse.json({ error: "Unsupported file format. Use CSV or Excel." }, { status: 400 });
   }
 
-  const event = await prisma.event.findUnique({
-    where: { id: eventId },
-    select: { categories: true },
-  });
-  if (!event) {
-    return NextResponse.json({ error: "Event not found" }, { status: 404 });
-  }
+  // Reuse ctx.event (loaded by authorizeEvent) instead of re-fetching.
+  const event = ctx.event;
 
   const importBatch = nanoid(10);
   let created = 0;

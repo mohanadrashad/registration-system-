@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 
 interface RouteParams {
@@ -9,12 +9,9 @@ interface RouteParams {
 // GET - Get event capacity
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "authenticated" });
+    if (ctx instanceof NextResponse) return ctx;
 
     const event = await prisma.event.findUnique({
       where: { id: eventId },
@@ -38,12 +35,10 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Update event capacity
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor" });
+    if (ctx instanceof NextResponse) return ctx;
+
     const body = await request.json();
 
     const { capacity } = body;
