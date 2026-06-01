@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import dns from "dns";
 import { promisify } from "util";
@@ -13,12 +13,9 @@ interface RouteParams {
 // POST - Verify custom domain
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor", module: "customDomain" });
+    if (ctx instanceof NextResponse) return ctx;
 
     // Get domain settings
     const domain = await prisma.eventDomain.findUnique({

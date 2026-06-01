@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { EmailProvider } from "@prisma/client";
 import {
   testEmailSettings,
@@ -14,12 +14,9 @@ interface RouteParams {
 // GET - Get email settings for an event
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "authenticated", module: "customEmail" });
+    if (ctx instanceof NextResponse) return ctx;
 
     const settings = await prisma.eventEmailSettings.findUnique({
       where: { eventId },
@@ -54,12 +51,10 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Create or update email settings
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor", module: "customEmail" });
+    if (ctx instanceof NextResponse) return ctx;
+
     const body = await request.json();
 
     // Validate provider
@@ -167,12 +162,9 @@ export async function POST(request: Request, { params }: RouteParams) {
 // DELETE - Remove custom email settings (revert to system)
 export async function DELETE(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor", module: "customEmail" });
+    if (ctx instanceof NextResponse) return ctx;
 
     await prisma.eventEmailSettings.deleteMany({
       where: { eventId },

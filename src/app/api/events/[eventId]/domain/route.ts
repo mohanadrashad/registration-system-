@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
 
@@ -10,34 +10,15 @@ interface RouteParams {
 // GET - Get domain settings for an event
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "authenticated", module: "customDomain" });
+    if (ctx instanceof NextResponse) return ctx;
 
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      include: {
-        domain: true,
-        modules: true,
-      },
+    const domain = await prisma.eventDomain.findUnique({
+      where: { eventId },
     });
 
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
-    }
-
-    // Check if custom domain module is enabled
-    if (!event.modules?.customDomain) {
-      return NextResponse.json(
-        { error: "Custom domain module is not enabled for this event" },
-        { status: 403 }
-      );
-    }
-
-    return NextResponse.json(event.domain || {
+    return NextResponse.json(domain || {
       customDomain: null,
       isVerified: false,
       verificationRecord: null,
@@ -54,31 +35,11 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Create or update domain settings
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor", module: "customDomain" });
+    if (ctx instanceof NextResponse) return ctx;
+
     const body = await request.json();
-
-    // Check if event exists and module is enabled
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      include: { modules: true },
-    });
-
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
-    }
-
-    if (!event.modules?.customDomain) {
-      return NextResponse.json(
-        { error: "Custom domain module is not enabled for this event" },
-        { status: 403 }
-      );
-    }
-
     const { customDomain } = body;
 
     // If domain changed, reset verification
@@ -122,12 +83,9 @@ export async function POST(request: Request, { params }: RouteParams) {
 // DELETE - Remove custom domain for an event
 export async function DELETE(_request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor", module: "customDomain" });
+    if (ctx instanceof NextResponse) return ctx;
 
     const existing = await prisma.eventDomain.findUnique({
       where: { eventId },
