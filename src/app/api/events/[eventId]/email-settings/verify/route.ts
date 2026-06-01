@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { verifyEmailSettings } from "@/lib/services/email-provider.service";
 
 interface RouteParams {
@@ -10,12 +10,9 @@ interface RouteParams {
 // POST - Verify email settings (test connection and mark as verified)
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor", module: "customEmail" });
+    if (ctx instanceof NextResponse) return ctx;
 
     // Get current settings
     const settings = await prisma.eventEmailSettings.findUnique({
