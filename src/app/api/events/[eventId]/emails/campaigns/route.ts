@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { createEmailCampaignSchema } from "@/lib/validations/email-template";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "authenticated" });
+  if (ctx instanceof NextResponse) return ctx;
+
   const campaigns = await prisma.emailCampaign.findMany({
     where: { eventId },
     include: {
@@ -26,10 +26,10 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "editor" });
+  if (ctx instanceof NextResponse) return ctx;
+
   const body = await req.json();
   const result = createEmailCampaignSchema.safeParse(body);
 
