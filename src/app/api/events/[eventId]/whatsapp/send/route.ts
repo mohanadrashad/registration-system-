@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { whatsAppService } from "@/lib/services/whatsapp.service";
 
@@ -10,17 +10,19 @@ interface RouteParams {
 // POST - Send WhatsApp message
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor", module: "whatsApp" });
+    if (ctx instanceof NextResponse) return ctx;
+
     const body = await request.json();
 
     const { type, registrationId, contactIds } = body;
 
-    // Check if WhatsApp is enabled
+    // Inline credentials check (separate concern from the module gate
+    // above): the module being on means the feature is enabled for
+    // this event; this check verifies the actual WhatsApp credentials
+    // are configured and active. An event can have the module on but
+    // no credentials yet — 400 instead of letting the send attempt fail.
     const isEnabled = await whatsAppService.isEnabled(eventId);
     if (!isEnabled) {
       return NextResponse.json(

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { whatsAppService } from "@/lib/services/whatsapp.service";
 
 interface RouteParams {
@@ -9,12 +9,10 @@ interface RouteParams {
 // GET - Get WhatsApp statistics
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "authenticated", module: "whatsApp" });
+    if (ctx instanceof NextResponse) return ctx;
+
     const stats = await whatsAppService.getStats(eventId);
 
     return NextResponse.json(stats);
