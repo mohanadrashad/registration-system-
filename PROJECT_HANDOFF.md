@@ -31,6 +31,16 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-06-01 — Statistics + Registrations GET handlers migrated to authorizeEvent
+
+PR 2 of 6 in the auth-posture sweep. Four read-only GET handlers under `/api/events/[eventId]/...` migrated from legacy `auth()` to `authorizeEvent(eventId, { role: "authenticated" })`: `statistics/route.ts`, `registrations/route.ts`, `registrations/stats/route.ts`, `registrations/export/route.ts`. Pure mechanical pattern migration — same shape as PR #30 (Contact GET) and the GET portion of PR #32 (form-fields).
+
+**Statistics + Registrations auth migration** — `865f558` (PR #33, squash merge). 4 files, +13/−16.
+
+No security finding this round, unlike PR #32. Every migrated handler already scopes its query by `eventId` at the Prisma layer, so cross-event data leakage was not possible — only cross-event metadata polling by authenticated-but-not-member users. Migration closes that polling gap and brings these four in line with the auth-posture pattern. Behavior unchanged for legitimate admin callers.
+
+Vercel preview build hit a transient Neon `P1001` cold-start during `prisma db push --skip-generate`; redeploy passed cleanly without code changes.
+
 ### 2026-06-01 — form-fields cross-event isolation closed + authorizeEvent sweep opens
 
 Security fix. `form-fields/[fieldId]` GET and DELETE used the global `authorize()` helper, which checks only the caller's global role and NOT per-event `EventMember` status. A user with any global editor-tier role who is a member of Event A could read or delete a form field belonging to Event B by knowing the field id — the `eventId` in the URL was decorative. PATCH on the same file already used `authorizeEvent` and was unaffected. No exploitation evidence in production logs (handlers don't emit user+event identity, so the question is unanswerable from logs alone). Shipped on security-fix merit regardless.
