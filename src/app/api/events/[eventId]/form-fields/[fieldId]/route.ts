@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorize, authorizeEvent } from "@/lib/api-auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { FieldType, FieldWidth } from "@prisma/client";
 import { FIELD_TYPES } from "@/lib/form-builder/field-types";
 import { fieldOptionsInputSchema } from "@/lib/validations/form-field";
@@ -22,10 +22,9 @@ interface RouteParams {
 // GET - Get a single form field
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize();
-    if (ctx instanceof NextResponse) return ctx;
-
     const { eventId, fieldId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "authenticated" });
+    if (ctx instanceof NextResponse) return ctx;
 
     const field = await prisma.formField.findFirst({
       where: { id: fieldId, eventId },
@@ -278,10 +277,9 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 // DELETE - Delete a form field
 export async function DELETE(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize("editor");
-    if (ctx instanceof NextResponse) return ctx;
-
     const { eventId, fieldId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor" });
+    if (ctx instanceof NextResponse) return ctx;
 
     // Check if field exists
     const existing = await prisma.formField.findFirst({
