@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "authenticated" });
+  if (ctx instanceof NextResponse) return ctx;
+
   const searchParams = req.nextUrl.searchParams;
   const status = searchParams.get("status");
   const search = searchParams.get("search");

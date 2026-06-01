@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { listPhaseOptionStats } from "@/lib/services/selection.service";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "authenticated" });
+  if (ctx instanceof NextResponse) return ctx;
 
   try {
     const [event, contacts, emailLogs, campaigns, modules, phases, registeredRegCount] =
