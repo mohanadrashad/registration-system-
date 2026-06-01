@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { getDefaultFieldsForEvent } from "@/lib/form-builder";
 import { getOrCreateDefaultRegistrationStep } from "@/lib/services/phase.service";
 
@@ -11,21 +11,9 @@ interface RouteParams {
 // POST - Seed default fields for an event
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { eventId } = await params;
-
-    // Check if event exists
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-    });
-
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
-    }
+    const ctx = await authorizeEvent(eventId, { role: "editor" });
+    if (ctx instanceof NextResponse) return ctx;
 
     // Check if fields already exist
     const existingFields = await prisma.formField.count({
