@@ -31,6 +31,20 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-06-01 — Misc admin handlers migrated + contacts/import role tightened
+
+PR 3 of 6 in the auth-posture sweep. Eight handlers across six files migrated from legacy `auth()` to `authorizeEvent`: capacity (GET + POST), badges/template (GET + PUT), attendees (GET), form-fields/reorder (POST), form-fields/seed (POST), and contacts/import (POST).
+
+**Misc admin auth migration + contacts/import role tightening** — `f447f31` (PR #34, squash merge). 6 files, +29/−56 (−27 net).
+
+Two callouts beyond the mechanical pattern:
+
+(a) **`contacts/import` role tightened** from global `canEdit(getRole(session))` to per-event `editor`. Closes the deferral from PR #30. Pre-flight production data check confirmed risk surface = 0: only 2 global EDITOR+ users exist (both `SUPER_ADMIN`, which bypasses `authorizeEvent` per `api-auth.ts:97`); zero non-SUPER_ADMIN global editors; zero events with imports in the last 30 days. Tightening is preventative against future global-editor accounts being added without per-event membership.
+
+(b) **Two redundant `prisma.event.findUnique` lookups dropped** in `form-fields/seed` and `contacts/import`. `authorizeEvent` already loads the event (`api-auth.ts:91-92`) and 404s if missing, so the inline lookups were dead post-migration. Same cleanup pattern PR #30 used in `contacts/route.ts:149` (*"Reuse ctx.event (loaded by authorizeEvent) instead of re-fetching"*). For `contacts/import`, kept the local `const event = ctx.event` binding so downstream `event.categories` reference didn't need touching.
+
+Smoke surfaced the [[radix-dialog-post-refetch-race]] on a new surface (capacity-save, second save in a row); pre-existing bug not caused by this PR, see "Known unresolved bugs" below. Sweep progress: 3 of 6 PRs done. PRs 4–6 remaining (WhatsApp + check-in; emails templates + campaigns; domain + email-settings).
+
 ### 2026-06-01 — Statistics + Registrations GET handlers migrated to authorizeEvent
 
 PR 2 of 6 in the auth-posture sweep. Four read-only GET handlers under `/api/events/[eventId]/...` migrated from legacy `auth()` to `authorizeEvent(eventId, { role: "authenticated" })`: `statistics/route.ts`, `registrations/route.ts`, `registrations/stats/route.ts`, `registrations/export/route.ts`. Pure mechanical pattern migration — same shape as PR #30 (Contact GET) and the GET portion of PR #32 (form-fields).
@@ -296,6 +310,14 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 3. **Switch FieldEditInput to uncontrolled dialog pattern.** Use Radix's `defaultOpen` instead of controlled `open` prop. May sidestep FocusScope's restoration logic.
 
 **Lesson worth remembering:** when patching library-internal races, set a cycle limit before starting. Three patches without progress is the signal to revert and diagnose properly.
+
+### Radix Dialog race surfaces on capacity-save (2026-06-01)
+
+Same race class as the FILE Stage 3 entry above. Surfaced during PR #34 smoke test: on `/dashboard/events/<id>/settings`, first capacity save (500) lands cleanly; second save in a row (501) throws the same `DOMException: Node.removeChild` from Radix FocusScope vendor internals. User noted approvals page likely exhibits the same pattern (not directly verified in PR #34 smoke). Pre-existing on main — PR #34 only touched backend auth handlers and cannot have introduced this.
+
+**Implication:** the race is not feature-specific. Two surfaces now confirmed (FILE Stage 3 UI + capacity-save) with at least one more suspected (approvals). That strengthens the case for the library-level diagnosis path (local dev build + sourcemaps, lift dialogs to page-level scope) over feature-by-feature mitigation. Bundle the investigation with the Stage 3 UI retry effort in the queue rather than spinning a separate diagnostic arc per surface.
+
+**Reproducer:** open Settings → Capacity, save value A, save value B (any second save in the same dialog session). Throws on dialog close after the parent state mutates.
 
 ---
 
