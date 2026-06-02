@@ -1029,7 +1029,7 @@ export default function RegisterPage() {
         className="min-h-screen bg-[#fafafa] flex items-center justify-center py-8 px-4 sm:py-12"
         dir={isRtl ? "rtl" : "ltr"}
       >
-        <div className="w-full max-w-[460px] bg-white rounded-2xl border border-gray-200/70 shadow-sm overflow-hidden">
+        <div className="w-full max-w-[640px] bg-white rounded-2xl border border-gray-200/70 shadow-sm overflow-hidden">
           <div className="bg-[#0c0c0e] px-6 py-7 flex items-center justify-center">
             {headerLogo ? (
               <img
