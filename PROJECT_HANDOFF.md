@@ -31,6 +31,20 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-06-02 — Module-gated sidebar UX (auth-sweep follow-up)
+
+Resolves the latent UX gap surfaced by the auth posture sweep close-out (yesterday's queue item). Sidebar menu items for WhatsApp, Check-in, and Email Config now hide when their corresponding `EventModules.X` flag is `false` on the current event. No more console-noise from clicks into pages for disabled modules.
+
+**Module-gated sidebar UX** — `9b938f5` (PR #38, squash merge). 5 files, +60/−15.
+
+Infrastructure was half-built before this PR: the Sidebar declared a `module?: string` field on each nav item with the comment `// will be filtered based on enabled modules`, but the filter logic was never applied. PR #38 connects the wires via a module-level `ENFORCED_MODULES = new Set(["checkIn", "whatsApp", "customEmail"])`. Data flow: per-event Server layout fetches `EventModules` alongside membership, passes through `DashboardShell` → both `Sidebar` (desktop rail) and `Topbar` (mobile drawer wraps the same Sidebar component).
+
+**Approvals intentionally excluded** from the filter — sidebar already declared `module: "approvalWorkflow"` but the auth sweep didn't add an API gate, so hiding the menu while sub-pages remain reachable by direct URL would be a half-measure. Activation breadcrumb in the sidebar comment notes that a future PR adding API-level `approvalWorkflow` gating just needs to add the key to `ENFORCED_MODULES` — the existing sidebar declaration on the Approvals item will activate automatically.
+
+**Smoke-driven amendment**: `router.refresh()` added to the Modules settings page toggle handler success branch. Smoke surfaced that the original 4-file change correctly filtered on layout render but required a manual page reload after toggling a module. The 3-line amendment re-fetches the server-side `EventModules` so the sidebar updates immediately. Failure branches don't refresh. Demonstrates the standard discipline working: pre-push diff review approved the original scope, Preview smoke caught the polish-issue, PR amendment closed it before merge.
+
+Test Event 2026 drift surfaced during pre-flight (1 `PENDING_APPROVAL` row on an event with `approvalWorkflow = false`) but not addressed by this PR — `approvalWorkflow` is excluded from the filter anyway, so the menu stays visible and the data stays reachable.
+
 ### 2026-06-01 — Auth posture sweep — ARC COMPLETE (6 of 6 PRs shipped)
 
 The auth posture sweep is closed. Six PRs migrated **34 handlers** across `/api/events/[eventId]/*` from legacy `auth()` to `authorizeEvent`, closed **2 cross-event isolation bugs** (one auth-helper layer, one data layer), and introduced or normalized **4 module gates**. Zero legacy `auth()` call sites remain in the surface — verified by grep on the final merge commit (`7c5ebfe`).
@@ -355,8 +369,6 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 2. **Admin-upload-from-empty.** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
 
 3. **Radix race investigation — approvals/capacity surfaces.** Surfaced during PR #34 + PR #35 smokes. Capacity-save second-save throws `DOMException: Node.removeChild` from Radix vendor internals; approvals page suspected to share the pattern. Same race class as the FILE Stage 3 UI deferral above — worth bundling the investigation with item 1, since two confirmed surfaces strengthen the library-level diagnosis case (dev build + sourcemaps) over feature-by-feature mitigation.
-
-4. **Module-gated pages — sidebar visibility UX.** WhatsApp + Check-in + Email Settings + Domain menu items still render in the dashboard sidebar even when the corresponding `EventModules.X` flag is off. Sub-endpoints correctly return 403 with `MODULE_NOT_ENABLED` after the auth posture sweep (PR #35, PR #37), so pages load but the console fills with 403s. Single small UX PR can resolve all module-gated menu items at once — gate visibility on `EventModules` booleans in the dashboard layout. Not blocking Productive Families (visible 403s don't break the UI, just noise the console).
 
 ---
 
