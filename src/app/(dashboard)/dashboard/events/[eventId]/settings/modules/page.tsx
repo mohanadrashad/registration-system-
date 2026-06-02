@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -152,6 +152,7 @@ interface Modules {
 export default function ModulesSettingsPage() {
   const params = useParams();
   const eventId = params.eventId as string;
+  const router = useRouter();
   const [modules, setModules] = useState<Modules | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
 
@@ -183,6 +184,7 @@ export default function ModulesSettingsPage() {
       if (res.ok) {
         const updated = await res.json();
         setModules(updated);
+        router.refresh();
         toast.success(`${enabled ? "Enabled" : "Disabled"} successfully`);
       } else {
         toast.error("Failed to update module");
