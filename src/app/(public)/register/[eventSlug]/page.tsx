@@ -827,7 +827,11 @@ export default function RegisterPage() {
             typeof max === "number" && max > 0 && parsed.showSelectionCounter !== false;
           const otherSelected = arr.includes(OTHER_VALUE);
 
-          const renderPill = (
+          // Renders one option as a bordered card with a leading radio
+          // dot. Selected/disabled visuals are themed off the event's
+          // primaryColor (border + low-alpha tint + filled dot) so each
+          // event keeps its own brand on this large, prominent control.
+          const renderCard = (
             optionValue: string,
             labelText: string
           ) => {
@@ -844,31 +848,51 @@ export default function RegisterPage() {
                 handleFieldChange(`${field.name}${OTHER_SUFFIX}`, "");
               }
             };
-            const btn = (
+            const card = (
               <button
                 type="button"
                 key={optionValue}
+                aria-pressed={selected}
                 aria-disabled={disabled}
                 onClick={handleClick}
-                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                className={`flex w-full items-start gap-3 rounded-[11px] border px-3.5 py-3 text-sm transition-colors ${
                   selected
-                    ? "border-transparent text-white"
+                    ? "font-medium"
                     : disabled
-                    ? "border-gray-200 bg-gray-50/50 text-gray-400 cursor-not-allowed opacity-60"
-                    : "border-gray-200 bg-gray-50/50 text-gray-600 hover:bg-gray-100"
+                    ? "border-[#e3e4e8] text-gray-400 cursor-not-allowed opacity-60"
+                    : "border-[#e3e4e8] text-gray-700 hover:border-gray-300 hover:bg-gray-50/60 cursor-pointer"
                 }`}
                 style={
-                  selected ? { backgroundColor: primaryColor } : undefined
+                  selected
+                    ? {
+                        borderColor: primaryColor,
+                        backgroundColor: `${primaryColor}1a`,
+                        color: textColor,
+                      }
+                    : undefined
                 }
               >
-                {labelText}
+                <span
+                  className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border"
+                  style={{
+                    borderColor: selected ? primaryColor : "#d1d5db",
+                  }}
+                >
+                  {selected && (
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: primaryColor }}
+                    />
+                  )}
+                </span>
+                <span className="min-w-0 break-words">{labelText}</span>
               </button>
             );
-            if (!disabled || typeof max !== "number") return btn;
+            if (!disabled || typeof max !== "number") return card;
             return (
               <Tooltip key={optionValue}>
                 <TooltipTrigger asChild>
-                  <span>{btn}</span>
+                  <span>{card}</span>
                 </TooltipTrigger>
                 <TooltipContent>{t.maxReachedTooltip(max)}</TooltipContent>
               </Tooltip>
@@ -877,12 +901,12 @@ export default function RegisterPage() {
 
           return (
             <TooltipProvider delayDuration={150}>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {parsed.options.map((option) =>
-                  renderPill(option.value, getOptionLabel(option))
+                  renderCard(option.value, getOptionLabel(option))
                 )}
                 {parsed.other &&
-                  renderPill(
+                  renderCard(
                     OTHER_VALUE,
                     resolveOtherLabel(parsed.other, lang)
                   )}
