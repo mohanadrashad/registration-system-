@@ -83,6 +83,7 @@ interface Branding {
   backgroundColor?: string | null;
   textColor?: string | null;
   logoUrl?: string | null;
+  logoWhiteUrl?: string | null;
   headerImageUrl?: string | null;
   welcomeTitle?: string | null;
   welcomeTitleAr?: string | null;
