@@ -1,5 +1,6 @@
 "use client";
 
+import type { EventModules } from "@prisma/client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -114,13 +115,35 @@ export function getEventNavItems(eventId: string): EventNavItem[] {
   ];
 }
 
-export function Sidebar({ eventId }: { eventId?: string }) {
+// Module keys whose menu items hide when EventModules.X === false.
+// Limited to modules with API-layer gates (auth posture sweep PRs #35
+// and #37). approvalWorkflow has a sidebar-data declaration but no API
+// gate — hiding the menu while sub-pages remain reachable by direct URL
+// would be a half-measure. If approvalWorkflow gets API enforcement in
+// a future PR, add it to this set and the existing module: "approvalWorkflow"
+// declaration on the Approvals nav item will activate automatically.
+const ENFORCED_MODULES = new Set<string>(["checkIn", "whatsApp", "customEmail"]);
+
+export function Sidebar({
+  eventId,
+  modules,
+}: {
+  eventId?: string;
+  modules?: EventModules | null;
+}) {
   const pathname = usePathname();
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role;
   const isSuperAdmin = role === "SUPER_ADMIN";
 
-  const eventNavItems = eventId ? getEventNavItems(eventId) : [];
+  const eventNavItems = (eventId ? getEventNavItems(eventId) : []).filter((item) => {
+    // No module key declared → always show (core items like Attendees, Form Builder).
+    if (!item.module) return true;
+    // Module declared but not in the enforced set → still show (see comment above).
+    if (!ENFORCED_MODULES.has(item.module)) return true;
+    // In enforced set → show only if the module flag is truthy on this event.
+    return modules?.[item.module as keyof EventModules] === true;
+  });
 
   return (
     <aside className="hidden w-64 shrink-0 border-r bg-background md:block">

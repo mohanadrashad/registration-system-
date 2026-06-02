@@ -18,13 +18,23 @@ export default async function EventLayout({
 
   if (!userId) notFound();
 
-  if (role !== "SUPER_ADMIN") {
-    const membership = await prisma.eventMember.findUnique({
-      where: { userId_eventId: { userId, eventId } },
-      select: { id: true },
-    });
-    if (!membership) notFound();
-  }
+  // Parallelize membership check + module fetch. Modules feeds the
+  // sidebar gate so menu items hide when their module is off.
+  const [membership, modules] = await Promise.all([
+    role === "SUPER_ADMIN"
+      ? null
+      : prisma.eventMember.findUnique({
+          where: { userId_eventId: { userId, eventId } },
+          select: { id: true },
+        }),
+    prisma.eventModules.findUnique({ where: { eventId } }),
+  ]);
 
-  return <DashboardShell eventId={eventId}>{children}</DashboardShell>;
+  if (role !== "SUPER_ADMIN" && !membership) notFound();
+
+  return (
+    <DashboardShell eventId={eventId} modules={modules}>
+      {children}
+    </DashboardShell>
+  );
 }

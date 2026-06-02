@@ -1,5 +1,6 @@
 "use client";
 
+import type { EventModules } from "@prisma/client";
 import { signOut, useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +14,13 @@ import { LogOut, Menu } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Sidebar } from "./sidebar";
 
-export function Topbar({ eventId }: { eventId?: string }) {
+export function Topbar({
+  eventId,
+  modules,
+}: {
+  eventId?: string;
+  modules?: EventModules | null;
+}) {
   const { data: session } = useSession();
   const initials = session?.user?.name
     ?.split(" ")
@@ -30,7 +37,7 @@ export function Topbar({ eventId }: { eventId?: string }) {
           </Button>
         </SheetTrigger>
         <SheetContent side="left" className="w-64 p-0">
-          <Sidebar eventId={eventId} />
+          <Sidebar eventId={eventId} modules={modules} />
         </SheetContent>
       </Sheet>
 
