@@ -104,8 +104,15 @@ export default function ApprovalsPage() {
     fetchData();
   }, [eventId]);
 
-  async function fetchData() {
-    setLoading(true);
+  // Refetches triggered by user actions must pass { silent: true }.
+  // Toggling `loading` collapses the entire JSX tree to <Loader2 /> via
+  // the render guard below, which races React's commit phase against
+  // toast.success() portal mounts and `finally`-block setState cleanups
+  // → DOMException in commitPlacement. Initial mount keeps the full
+  // spinner; everything else refreshes silently. See
+  // [[radix-dialog-post-refetch-race]] memory for the full diagnosis.
+  async function fetchData(opts: { silent?: boolean } = {}) {
+    if (!opts.silent) setLoading(true);
     try {
       const res = await fetch(`/api/events/${eventId}/approvals`);
       if (res.ok) {
@@ -115,13 +122,15 @@ export default function ApprovalsPage() {
         setWaitlist(data.waitlist);
         setRecentDecisions(data.recentDecisions ?? []);
         setTotalRecentDecisions(data.totalRecentDecisions ?? 0);
-        setNewCapacity(data.capacity?.capacity?.toString() || "");
+        // Don't wipe the user's in-progress draft on action-triggered refetches.
+        // Initial-mount load syncs the input; afterward newCapacity is user-owned.
+        if (!opts.silent) setNewCapacity(data.capacity?.capacity?.toString() || "");
       }
     } catch (error) {
       console.error("Failed to fetch approvals:", error);
       toast.error("Failed to load approval data");
     } finally {
-      setLoading(false);
+      if (!opts.silent) setLoading(false);
     }
   }
 
@@ -136,7 +145,7 @@ export default function ApprovalsPage() {
 
       if (res.ok) {
         toast.success("Registration approved");
-        fetchData();
+        fetchData({ silent: true });
       } else {
         const error = await res.json();
         toast.error(error.error || "Failed to approve");
@@ -168,7 +177,7 @@ export default function ApprovalsPage() {
         setRejectDialogOpen(false);
         setSelectedRegistration(null);
         setRejectReason("");
-        fetchData();
+        fetchData({ silent: true });
       } else {
         const error = await res.json();
         toast.error(error.error || "Failed to reject");
@@ -191,7 +200,7 @@ export default function ApprovalsPage() {
 
       if (res.ok) {
         toast.success("Person promoted from waitlist");
-        fetchData();
+        fetchData({ silent: true });
       } else {
         const error = await res.json();
         toast.error(error.error || "Failed to promote");
@@ -216,7 +225,7 @@ export default function ApprovalsPage() {
 
       if (res.ok) {
         toast.success("Capacity updated");
-        fetchData();
+        fetchData({ silent: true });
       } else {
         const error = await res.json();
         toast.error(error.error || "Failed to update capacity");
@@ -242,7 +251,7 @@ export default function ApprovalsPage() {
         title="Approvals & Waitlist"
         description="Manage registration approvals and waitlist"
       >
-        <Button variant="outline" onClick={fetchData}>
+        <Button variant="outline" onClick={() => fetchData({ silent: true })}>
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>
@@ -259,11 +268,12 @@ export default function ApprovalsPage() {
               <div>
                 <p className="text-2xl font-bold">
                   {capacityInfo?.confirmed || 0}
-                  {capacityInfo?.capacity && (
-                    <span className="text-sm text-muted-foreground">
-                      /{capacityInfo.capacity}
-                    </span>
-                  )}
+                  {/* Source #1 of placement-race fix: always-mount span; CSS-hide
+                      when capacity is null. Avoids conditional-mount placement
+                      during saveCapacity refetch — see [[radix-dialog-post-refetch-race]]. */}
+                  <span className={`text-sm text-muted-foreground ${capacityInfo?.capacity ? "" : "hidden"}`}>
+                    /{capacityInfo?.capacity ?? ""}
+                  </span>
                 </p>
                 <p className="text-sm text-muted-foreground">Confirmed</p>
               </div>
@@ -303,11 +313,11 @@ export default function ApprovalsPage() {
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
               <div className={`rounded-full p-3 ${capacityInfo?.isAtCapacity ? "bg-red-100" : "bg-green-100"}`}>
-                {capacityInfo?.isAtCapacity ? (
-                  <AlertCircle className="h-5 w-5 text-red-600" />
-                ) : (
-                  <CheckCircle className="h-5 w-5 text-green-600" />
-                )}
+                {/* Source #2 of placement-race fix: both icons always mount;
+                    CSS-hides the inactive one. Component-type swap was the
+                    primary saveCapacity race trigger. */}
+                <AlertCircle className={`h-5 w-5 text-red-600 ${capacityInfo?.isAtCapacity ? "" : "hidden"}`} />
+                <CheckCircle className={`h-5 w-5 text-green-600 ${capacityInfo?.isAtCapacity ? "hidden" : ""}`} />
               </div>
               <div>
                 <p className="text-2xl font-bold">
@@ -346,9 +356,10 @@ export default function ApprovalsPage() {
               </p>
             </div>
             <Button onClick={saveCapacity} disabled={savingCapacity}>
-              {savingCapacity ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
+              {/* Source #3 of placement-race fix: Loader2 always mounts;
+                  CSS-hide when not saving. Defensive against cumulative
+                  placement pressure during save commits. */}
+              <Loader2 className={`mr-2 h-4 w-4 animate-spin ${savingCapacity ? "" : "hidden"}`} />
               Save
             </Button>
           </div>
@@ -381,11 +392,16 @@ export default function ApprovalsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {pendingApprovals.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  No pending approvals
-                </p>
-              ) : (
+              {/* Source #4 of placement-race fix: always-mount both branches.
+                  Empty-state ternary swap previously raced commitDeletion when
+                  the list emptied (approve/reject the last pending row). Now:
+                  always mount both <p> and the wrapper <div>; CSS-hide the
+                  inactive one. shadcn Table routes className to the inner
+                  <table>, so wrap in a div for visibility toggling. */}
+              <p className={`text-center text-muted-foreground py-8 ${pendingApprovals.length === 0 ? "" : "hidden"}`}>
+                No pending approvals
+              </p>
+              <div className={pendingApprovals.length === 0 ? "hidden" : ""}>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -415,14 +431,17 @@ export default function ApprovalsPage() {
                             onClick={() => handleApprove(reg.id)}
                             disabled={processingId === reg.id}
                           >
-                            {processingId === reg.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <>
-                                <CheckCircle className="h-4 w-4 mr-1" />
-                                Approve
-                              </>
-                            )}
+                            {/* Source #8 of placement-race fix: always-mount
+                                Loader2 + label span; CSS-hide based on
+                                processingId. Prevents the inner content
+                                swap from racing the row deletion when
+                                handleApprove removes this row from
+                                pendingApprovals. */}
+                            <Loader2 className={`h-4 w-4 animate-spin ${processingId === reg.id ? "" : "hidden"}`} />
+                            <span className={`inline-flex items-center ${processingId === reg.id ? "hidden" : ""}`}>
+                              <CheckCircle className="h-4 w-4 mr-1" />
+                              Approve
+                            </span>
                           </Button>
                           <Button
                             size="sm"
@@ -441,7 +460,7 @@ export default function ApprovalsPage() {
                     ))}
                   </TableBody>
                 </Table>
-              )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -455,11 +474,13 @@ export default function ApprovalsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {waitlist.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  No one on waitlist
-                </p>
-              ) : (
+              {/* Source #5 of placement-race fix: same empty-state pattern as
+                  #4. Fires on handlePromote when the last waitlist row gets
+                  promoted, emptying the list. */}
+              <p className={`text-center text-muted-foreground py-8 ${waitlist.length === 0 ? "" : "hidden"}`}>
+                No one on waitlist
+              </p>
+              <div className={waitlist.length === 0 ? "hidden" : ""}>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -486,29 +507,34 @@ export default function ApprovalsPage() {
                           {new Date(reg.createdAt).toLocaleDateString()}
                         </TableCell>
                         <TableCell className="text-right">
-                          {index === 0 && !capacityInfo?.isAtCapacity && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handlePromote(reg.id)}
-                              disabled={processingId === reg.id}
-                            >
-                              {processingId === reg.id ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <>
-                                  <ArrowUp className="h-4 w-4 mr-1" />
-                                  Promote
-                                </>
-                              )}
-                            </Button>
-                          )}
+                          {/* Sources #6 + #9 + #11 of placement-race fix:
+                              always-mount Button on every waitlist row;
+                              CSS-hide unless this is index 0 AND not at
+                              capacity. Inner content (Loader2 + label span)
+                              also always-mounted, CSS-hide based on
+                              processingId. Phase 3 #11 catch: the previous
+                              {index === 0 && ...} outer gate was itself a
+                              conditional mount that fires on row shifts
+                              when handlePromote removes the first row. */}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handlePromote(reg.id)}
+                            disabled={processingId === reg.id}
+                            className={index === 0 && !capacityInfo?.isAtCapacity ? "" : "hidden"}
+                          >
+                            <Loader2 className={`h-4 w-4 animate-spin ${processingId === reg.id ? "" : "hidden"}`} />
+                            <span className={`inline-flex items-center ${processingId === reg.id ? "hidden" : ""}`}>
+                              <ArrowUp className="h-4 w-4 mr-1" />
+                              Promote
+                            </span>
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
-              )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -528,13 +554,14 @@ export default function ApprovalsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {recentDecisions.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  No recent decisions yet
-                </p>
-              ) : (
-                <>
-                  <Table>
+              {/* Source #7 of placement-race fix: same empty-state pattern as
+                  #4 and #5. Fires on approve/reject when the FIRST decision
+                  is added (list goes 0 → 1). */}
+              <p className={`text-center text-muted-foreground py-8 ${recentDecisions.length === 0 ? "" : "hidden"}`}>
+                No recent decisions yet
+              </p>
+              <div className={recentDecisions.length === 0 ? "hidden" : ""}>
+                <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Name</TableHead>
@@ -596,14 +623,16 @@ export default function ApprovalsPage() {
                       })}
                     </TableBody>
                   </Table>
-                  {totalRecentDecisions > recentDecisions.length && (
-                    <p className="mt-3 text-xs text-muted-foreground text-center">
-                      Showing {recentDecisions.length} most recent decisions of{" "}
-                      {totalRecentDecisions} total
-                    </p>
-                  )}
-                </>
-              )}
+                  {/* Source #7b of placement-race fix: truncation footer
+                      conditional mount. Fires when approvals push total past
+                      100 (server-side cap on recentDecisions array). Rare
+                      but real — fix it now so we never reopen this when a
+                      real event crosses 100 decisions. */}
+                  <p className={`mt-3 text-xs text-muted-foreground text-center ${totalRecentDecisions > recentDecisions.length ? "" : "hidden"}`}>
+                    Showing {recentDecisions.length} most recent decisions of{" "}
+                    {totalRecentDecisions} total
+                  </p>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -641,9 +670,11 @@ export default function ApprovalsPage() {
               onClick={handleReject}
               disabled={processingId === selectedRegistration?.id}
             >
-              {processingId === selectedRegistration?.id ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
+              {/* Source #10 of placement-race fix: always-mount Loader2;
+                  CSS-hide when not processing. Prevents inner content
+                  swap from racing the Dialog Presence unmount when
+                  handleReject closes the dialog. */}
+              <Loader2 className={`mr-2 h-4 w-4 animate-spin ${processingId === selectedRegistration?.id ? "" : "hidden"}`} />
               Reject Registration
             </Button>
           </DialogFooter>
