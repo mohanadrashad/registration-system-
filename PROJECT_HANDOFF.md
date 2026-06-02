@@ -31,6 +31,38 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 
 ## What's shipped (recent activity, newest first)
 
+### 2026-06-02 — Three-phase placement-race fix on approvals page — CLOSES deferred "Radix race" investigation
+
+Closes the investigation deferred from Admin-Edit-Fix Stage 3 (PR #23), which hit a hard-stop on 2026-05-23 after 3 patch attempts at the wrong layer. The "Radix Dialog race" diagnosis was wrong — vendor-chunk obscured production stacks made React's reconciler look like a Radix internal. **Real cause:** React choking on conditional placement mutations (mount / unmount / component-type swap) during a commit already busy with a toast portal mount.
+
+**Approvals placement-race fix** — `80c3523` (PR #39, squash merge). 1 file, +108/−77.
+
+**Diagnostic breakthrough:** local repro with `next dev` (Next.js 16's Turbopack default, emits readable sourcemaps for vendor chunks) → DevTools showed the full stack from `react-dom-client.development.js` commit phase, NOT Radix. The "don't patch without sourcemaps" lesson from the 2026-05-23 hard-stop was validated — the real cause was visible in one inspection once the diagnostic environment was right.
+
+**Three-phase fix — 12 placement sources eliminated:**
+
+| Phase | Sources | Pattern |
+|---|---|---|
+| **Phase 1** (insertion race) | silent refetch + `(b)` draft guard + #1/#2/#3/#6 + Refresh TS catch | Capacity-card conditional renders + `setLoading(true)` page-tree collapse |
+| **Phase 2** (deletion race — list empty-states) | #4/#5/#7/#7b | `{list.length === 0 ? <p/> : <Table/>}` empty-state ternaries |
+| **Phase 3** (deletion race — per-row content) | #8/#9/#10/#11 | Per-row Loader2 ↔ label content swaps + `index === 0` structural mounts on list shifts |
+
+**KEY INSIGHT:** phases 2 and 3 races were ALWAYS present but MASKED by phase 1's `setLoading` page-tree-collapse which unmounted everything in one mass operation that absorbed the smaller races. Fixing phase 1 unmasked them — phases ship together as a unit. Each subsequent phase was caught by smoking the next action path after the previous phase shipped (phase 2 caught when last-row Approve failed; phase 3 caught when multi-row Approve failed). Source #11 was caught BY REASONING during the phase-3 audit — `{index === 0 && ...}` "structural" gates STILL flip on list shifts.
+
+**Fix pattern:** stable DOM is the antidote. Replace every conditional placement with attribute/className mutation. Always-mount both branches; CSS-hide the inactive one. What's left mounting on action handlers: only the irreducible toast portal (sonner), intentional Radix Dialog Presence (open/close), and atomic key-based row reconciliation.
+
+**Reusable template for FILE Stage 3 UI retry (queue item 1).** The deferred Replace/Remove buttons + provenance UI from PR #23 almost certainly suffers all three phases. The four-step template:
+1. Apply silent refetch (`opts.silent` parameter on the parent's refetch)
+2. Audit ALL action paths — not just one (the phase-1-only mistake)
+3. Stabilize every conditional mount / component-type swap with CSS-hide
+4. Smoke each action including last-row + multi-row + dialog paths
+
+Verified on both local dev (Turbopack) and Preview deployment (production-like bundling) — zero DOMExceptions across all action paths. Memory `[[radix-dialog-post-refetch-race]]` updated with full three-phase diagnosis + the COMPLETE PRINCIPLE.
+
+**UX bonuses (independent of race fix):**
+- Refresh button no longer collapses the page; refreshes data in place
+- User's in-progress capacity edit no longer wiped on action refetches
+
 ### 2026-06-02 — Module-gated sidebar UX (auth-sweep follow-up)
 
 Resolves the latent UX gap surfaced by the auth posture sweep close-out (yesterday's queue item). Sidebar menu items for WhatsApp, Check-in, and Email Config now hide when their corresponding `EventModules.X` flag is `false` on the current event. No more console-noise from clicks into pages for disabled modules.
@@ -364,51 +396,19 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 ## Queue (in priority order)
 
-1. **Stage 3 UI retry — Replace/Remove buttons + provenance.** Deferred from FILE-field admin-edit Stage 3 backend merge. Backend (services + endpoints + meta endpoint) is live; UI raced on Radix DOMException per `[[radix-dialog-post-refetch-race]]`. Revival starts with local dev build + sourcemaps to identify which library throws, then lift dialogs to page-level scope per the gold-standard pattern from quick-actions-card.tsx (now also followed by backfill-dialog.tsx). Hard-stop discipline still applies: 2 fix attempts max on any library-internal race.
+1. **Stage 3 UI retry — Replace/Remove buttons + provenance.** Deferred from FILE-field admin-edit Stage 3 backend merge. Backend (services + endpoints + meta endpoint) is live. The race that blocked the original UI is now fully diagnosed and has a reusable fix template from PR #39 — see updated `[[radix-dialog-post-refetch-race]]` memory. Four-step template: (1) silent refetch with `opts.silent` on parent's refetch; (2) audit ALL action paths, not just one; (3) stabilize every conditional placement with CSS-hide; (4) smoke last-row + multi-row + dialog paths. The hard part (diagnosis) is done; UI rebuild expected to be mechanical now.
 
 2. **Admin-upload-from-empty.** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
-
-3. **Radix race investigation — approvals/capacity surfaces.** Surfaced during PR #34 + PR #35 smokes. Capacity-save second-save throws `DOMException: Node.removeChild` from Radix vendor internals; approvals page suspected to share the pattern. Same race class as the FILE Stage 3 UI deferral above — worth bundling the investigation with item 1, since two confirmed surfaces strengthen the library-level diagnosis case (dev build + sourcemaps) over feature-by-feature mitigation.
 
 ---
 
 ## Known unresolved bugs
 
-### Radix Dialog + post-operation parent refetch race (Stage 3 UI deferred)
+### Radix Dialog post-refetch race — RESOLVED on approvals/page.tsx (2026-06-02)
 
-**Symptom:** When admin Replace/Remove of FILE field UI triggers a post-operation parent refetch that causes the inner conditional render to swap (e.g., `file` goes from truthy → null after Remove), Radix's FocusScope throws `DOMException: Node.removeChild` from vendor bundle internals. Replace eventually rendered clean with one mitigation; Remove kept crashing.
+**Status:** The original 2026-05-23 diagnosis was wrong (vendor-chunk obscured production stacks made React's reconciler look like a Radix internal). Real cause + three-phase fix shipped in PR #39 (`80c3523`). Full diagnosis + reusable fix template in `[[radix-dialog-post-refetch-race]]` memory.
 
-**Tried (none fully resolved):**
-1. Move dialogs outside `{file && ...}` conditional (kept dialogs mounted) — addressed dialog-level race but inner content still raced
-2. `setTimeout(250)` between dialog close and parent refetch — didn't help (matched dialog's 200ms CSS exit duration but cleanup ran longer than expected)
-3. CSS-hide buttons via `className={file ? "..." : "hidden"}` instead of conditional render — fixed Replace but not Remove (inner content like `FileMetaLine` and `ProvenanceLine` still race-unmounted)
-
-**Race appears to be in library internals** — vendor chunks `f2f58a7e93290fbb.js` and `8d82774e7f1a1490.js`, not application code. Application code triggers it but doesn't throw the actual `removeChild`.
-
-**Revival path (in priority order):**
-1. **Start with local dev build + sourcemaps.** Production builds strip filenames; dev build would give actual line numbers in `radix-ui/dialog.js` or React internals. We've been patching blind.
-2. **Lift dialogs to page-level scope.** Dialog state lives in parent component (attendee detail page), dialog elements render at page root. Page never unmounts during the racing transition. ~3-4 file touches.
-3. **Switch FieldEditInput to uncontrolled dialog pattern.** Use Radix's `defaultOpen` instead of controlled `open` prop. May sidestep FocusScope's restoration logic.
-
-**Lesson worth remembering:** when patching library-internal races, set a cycle limit before starting. Three patches without progress is the signal to revert and diagnose properly.
-
-### Radix Dialog race surfaces on capacity-save (2026-06-01)
-
-Same race class as the FILE Stage 3 entry above. Surfaced during PR #34 smoke test: on `/dashboard/events/<id>/settings`, first capacity save (500) lands cleanly; second save in a row (501) throws the same `DOMException: Node.removeChild` from Radix FocusScope vendor internals. User noted approvals page likely exhibits the same pattern (not directly verified in PR #34 smoke). Pre-existing on main — PR #34 only touched backend auth handlers and cannot have introduced this.
-
-**Implication:** the race is not feature-specific. Two surfaces now confirmed (FILE Stage 3 UI + capacity-save) with at least one more suspected (approvals). That strengthens the case for the library-level diagnosis path (local dev build + sourcemaps, lift dialogs to page-level scope) over feature-by-feature mitigation. Bundle the investigation with the Stage 3 UI retry effort in the queue rather than spinning a separate diagnostic arc per surface.
-
-**Reproducer:** open Settings → Capacity, save value A, save value B (any second save in the same dialog session). Throws on dialog close after the parent state mutates.
-
-### Module-gated pages remain visible in sidebar when module is off (2026-06-01)
-
-**Symptom:** WhatsApp and Check-in menu items show in the dashboard sidebar even when `EventModules.whatsApp = false` / `EventModules.checkIn = false` for the current event. Pages are reachable. After PR #35 (sweep PR 4), sub-endpoints (`whatsapp/stats`, `whatsapp/logs`, `checkin/recent`, `checkin/search`) correctly return 403 with `MODULE_NOT_ENABLED` instead of the prior 200-with-empty-data, so the page renders but the console fills with red 403s.
-
-**Why this is in scope now:** PR 4 of the auth-posture sweep introduced the API-layer module gate. The UI's prior behavior was "silently empty when module off"; the new behavior is "loudly 403 when module off." The UX gap was latent — the sweep didn't cause it but did make it visible.
-
-**Will repeat:** PR 5 (emails) and PR 6 (domain + email-settings) will exhibit the same pattern for any event with the corresponding modules off. Each adds its own API-layer module gate without touching the sidebar/menu UI. The pattern is consistent enough that a single "gate sidebar menu items on `EventModules` booleans" UX PR resolves all of them at once.
-
-**Fix path:** small UX PR. Read the relevant `EventModules.*` flag in the dashboard layout component (probably `src/app/(dashboard)/dashboard/events/[eventId]/layout.tsx` or equivalent), conditionally render each menu item. ~half a day. Not blocking the sweep; not blocking Productive Families (the visible 403s don't break the UI, just noise the console).
+**Still outstanding:** the FILE Stage 3 UI retry (queue item 1) hasn't been re-attempted yet. The race that originally blocked it has a known fix template now (silent refetch + audit all action paths + CSS-hide every conditional placement + smoke last-row/multi-row/dialog paths). UI rebuild expected to be mechanical when picked up.
 
 ---
 
