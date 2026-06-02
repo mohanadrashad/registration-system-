@@ -126,6 +126,22 @@ interface DraftPayload {
 
 const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Crisp registration-form input style: white bg, soft border, green
+// focus ring driven by brand green (#7EC43F). Shared across all
+// inputs/textarea/date-time on the public registration page so the
+// look stays consistent and there's one literal to edit, not seven.
+// Textarea callers override h-[46px] with h-auto + min-h to keep the
+// component multi-line.
+const INPUT_CLASSES =
+  "bg-white border-[#e3e4e8] rounded-[11px] h-[46px] transition-colors focus-visible:border-[#7EC43F] focus-visible:ring-[#7EC43F]/15 focus-visible:ring-[3px] focus-visible:ring-offset-0";
+
+// SelectTrigger variant: same crisp look, but shadcn's SelectTrigger
+// handles its own transitions and doesn't need focus:bg-white. Kept
+// structurally separate from INPUT_CLASSES because Select is a
+// button-like trigger, not an <input>.
+const SELECT_TRIGGER_CLASSES =
+  "bg-white border-[#e3e4e8] rounded-[11px] h-[46px] focus-visible:border-[#7EC43F] focus-visible:ring-[#7EC43F]/15 focus-visible:ring-[3px] focus-visible:ring-offset-0";
+
 interface OtherTextInputProps {
   fieldName: string;
   value: string;
@@ -156,7 +172,7 @@ function OtherTextInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+        className={INPUT_CLASSES}
       />
     </div>
   );
@@ -634,7 +650,7 @@ export default function RegisterPage() {
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             placeholder={placeholder}
             required={field.required}
-            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={INPUT_CLASSES}
           />
         )}
 
@@ -647,7 +663,7 @@ export default function RegisterPage() {
             placeholder={placeholder}
             required={field.required}
             rows={3}
-            className="rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={`${INPUT_CLASSES} h-auto min-h-[88px] py-2.5`}
           />
         )}
 
@@ -666,7 +682,7 @@ export default function RegisterPage() {
                 }}
                 required={field.required}
               >
-                <SelectTrigger className="h-11 rounded-lg border-gray-200 bg-gray-50/50">
+                <SelectTrigger className={SELECT_TRIGGER_CLASSES}>
                   <SelectValue placeholder={placeholder || "Select..."} />
                 </SelectTrigger>
                 <SelectContent>
@@ -706,7 +722,7 @@ export default function RegisterPage() {
             onValueChange={(v) => handleFieldChange(field.name, v)}
             required={field.required}
           >
-            <SelectTrigger className="h-11 rounded-lg border-gray-200 bg-gray-50/50">
+            <SelectTrigger className={SELECT_TRIGGER_CLASSES}>
               <SelectValue
                 placeholder={
                   placeholder ||
@@ -910,7 +926,7 @@ export default function RegisterPage() {
             value={value as string}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.required}
-            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={INPUT_CLASSES}
           />
         )}
         {field.type === "TIME" && (
@@ -921,7 +937,7 @@ export default function RegisterPage() {
             value={value as string}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.required}
-            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={INPUT_CLASSES}
           />
         )}
         {field.type === "DATETIME" && (
@@ -932,7 +948,7 @@ export default function RegisterPage() {
             value={value as string}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.required}
-            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={INPUT_CLASSES}
           />
         )}
 
