@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,6 +83,7 @@ interface Branding {
   backgroundColor?: string | null;
   textColor?: string | null;
   logoUrl?: string | null;
+  logoWhiteUrl?: string | null;
   headerImageUrl?: string | null;
   welcomeTitle?: string | null;
   welcomeTitleAr?: string | null;
@@ -125,6 +126,22 @@ interface DraftPayload {
 
 const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Crisp registration-form input style: white bg, soft border, green
+// focus ring driven by brand green (#7EC43F). Shared across all
+// inputs/textarea/date-time on the public registration page so the
+// look stays consistent and there's one literal to edit, not seven.
+// Textarea callers override h-[46px] with h-auto + min-h to keep the
+// component multi-line.
+const INPUT_CLASSES =
+  "bg-white border-[#e3e4e8] rounded-[11px] h-[46px] transition-colors focus-visible:border-[#7EC43F] focus-visible:ring-[#7EC43F]/15 focus-visible:ring-[3px] focus-visible:ring-offset-0";
+
+// SelectTrigger variant: same crisp look, but shadcn's SelectTrigger
+// handles its own transitions and doesn't need focus:bg-white. Kept
+// structurally separate from INPUT_CLASSES because Select is a
+// button-like trigger, not an <input>.
+const SELECT_TRIGGER_CLASSES =
+  "bg-white border-[#e3e4e8] rounded-[11px] h-[46px] focus-visible:border-[#7EC43F] focus-visible:ring-[#7EC43F]/15 focus-visible:ring-[3px] focus-visible:ring-offset-0";
+
 interface OtherTextInputProps {
   fieldName: string;
   value: string;
@@ -155,7 +172,7 @@ function OtherTextInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+        className={INPUT_CLASSES}
       />
     </div>
   );
@@ -633,7 +650,7 @@ export default function RegisterPage() {
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             placeholder={placeholder}
             required={field.required}
-            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={INPUT_CLASSES}
           />
         )}
 
@@ -646,7 +663,7 @@ export default function RegisterPage() {
             placeholder={placeholder}
             required={field.required}
             rows={3}
-            className="rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={`${INPUT_CLASSES} h-auto min-h-[88px] py-2.5`}
           />
         )}
 
@@ -665,7 +682,7 @@ export default function RegisterPage() {
                 }}
                 required={field.required}
               >
-                <SelectTrigger className="h-11 rounded-lg border-gray-200 bg-gray-50/50">
+                <SelectTrigger className={SELECT_TRIGGER_CLASSES}>
                   <SelectValue placeholder={placeholder || "Select..."} />
                 </SelectTrigger>
                 <SelectContent>
@@ -705,7 +722,7 @@ export default function RegisterPage() {
             onValueChange={(v) => handleFieldChange(field.name, v)}
             required={field.required}
           >
-            <SelectTrigger className="h-11 rounded-lg border-gray-200 bg-gray-50/50">
+            <SelectTrigger className={SELECT_TRIGGER_CLASSES}>
               <SelectValue
                 placeholder={
                   placeholder ||
@@ -909,7 +926,7 @@ export default function RegisterPage() {
             value={value as string}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.required}
-            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={INPUT_CLASSES}
           />
         )}
         {field.type === "TIME" && (
@@ -920,7 +937,7 @@ export default function RegisterPage() {
             value={value as string}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.required}
-            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={INPUT_CLASSES}
           />
         )}
         {field.type === "DATETIME" && (
@@ -931,7 +948,7 @@ export default function RegisterPage() {
             value={value as string}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.required}
-            className="h-11 rounded-lg border-gray-200 bg-gray-50/50 focus:bg-white transition-colors"
+            className={INPUT_CLASSES}
           />
         )}
 
@@ -996,384 +1013,286 @@ export default function RegisterPage() {
   const customStyles = branding?.customCss ? (
     <style dangerouslySetInnerHTML={{ __html: branding.customCss }} />
   ) : null;
-  const headerImage = branding?.headerImageUrl || "/gathering-header.jpg";
+  // Brand gradient used by the header accent line and the submit/next
+  // buttons. Falls back to green→magenta when secondaryColor is unset.
+  const submitGradient = `linear-gradient(90deg, ${primaryColor}, ${
+    branding?.secondaryColor ?? "#CB1681"
+  })`;
+  // Dark header strip prefers the white-logo variant; falls back to
+  // logoUrl so events that haven't uploaded a white logo still render.
+  const headerLogo = branding?.logoWhiteUrl ?? branding?.logoUrl ?? null;
 
-  if (success) {
-    return (
-      <>
-        {customStyles}
-        <div
-          className="min-h-screen lg:grid lg:grid-cols-2"
-          dir={isRtl ? "rtl" : "ltr"}
-        >
-          <div
-            className="hidden lg:flex flex-col items-center justify-center p-12"
-            style={{
-              background: branding?.secondaryColor
-                ? `linear-gradient(135deg, ${branding.secondaryColor} 0%, #2d2d2d 50%, ${branding.secondaryColor} 100%)`
-                : "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)",
-            }}
-          >
-            {branding?.logoUrl && (
-              <img
-                src={branding.logoUrl}
-                alt={eventData.eventName}
-                className="max-h-16 mb-8"
-              />
-            )}
-            <img
-              src={headerImage}
-              alt={eventData.eventName}
-              className="w-full max-w-md rounded-xl shadow-2xl"
-            />
-          </div>
-
-          <div
-            className="flex min-h-screen lg:min-h-0 items-center justify-center p-6 lg:p-12"
-            style={{ backgroundColor }}
-          >
-            <div className="w-full max-w-md text-center">
-              <div
-                className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full"
-                style={{ backgroundColor: `${primaryColor}20` }}
-              >
-                <CheckCircle
-                  className="h-10 w-10"
-                  style={{ color: primaryColor }}
-                />
-              </div>
-              <h2
-                className="mb-3 text-2xl font-bold"
-                style={{ color: textColor }}
-              >
-                {t.successTitle}
-              </h2>
-              <p className="text-gray-500 text-base">{t.successMessage}</p>
-            </div>
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  return (
+  const renderCardShell = (body: ReactNode) => (
     <>
       {customStyles}
       <div
-        className="min-h-screen lg:grid lg:grid-cols-2"
+        className="min-h-screen bg-[#fafafa] flex items-center justify-center py-8 px-4 sm:py-12"
         dir={isRtl ? "rtl" : "ltr"}
       >
-        {/* Left branding panel */}
-        <div
-          className="hidden lg:flex flex-col items-center justify-center p-12 sticky top-0 h-screen"
-          style={{
-            background: branding?.secondaryColor
-              ? `linear-gradient(135deg, ${branding.secondaryColor} 0%, #2d2d2d 50%, ${branding.secondaryColor} 100%)`
-              : "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)",
-          }}
-        >
-          {branding?.logoUrl && (
-            <img
-              src={branding.logoUrl}
-              alt={eventData.eventName}
-              className="max-h-16 mb-8"
-            />
-          )}
-          <img
-            src={headerImage}
-            alt={eventData.eventName}
-            className="w-full max-w-lg rounded-xl shadow-2xl"
-          />
-          <div className="mt-10 text-center space-y-4">
-            <div
-              data-event-date
-              className="flex items-center justify-center gap-3 text-gray-300"
-            >
-              <CalendarDays
-                className="h-5 w-5"
-                style={{ color: primaryColor }}
+        <div className="w-full max-w-[640px] bg-white rounded-2xl border border-gray-200/70 shadow-sm overflow-hidden">
+          <div className="bg-[#0c0c0e] px-6 py-7 flex items-center justify-center">
+            {headerLogo ? (
+              <img
+                src={headerLogo}
+                alt={eventData.eventName}
+                className="max-h-12"
               />
-              <span className="text-base">
-                {formatDate(eventData.startDate)}
+            ) : (
+              <span className="text-white text-lg font-semibold">
+                {eventData.eventName}
               </span>
-            </div>
-            <div
-              data-event-time
-              className="flex items-center justify-center gap-3 text-gray-300"
-            >
-              <Clock className="h-5 w-5" style={{ color: primaryColor }} />
-              <span className="text-base">
-                {formatTime(eventData.startDate)}
-              </span>
-            </div>
-            {eventData.venue && (
-              <div
-                data-event-venue
-                className="flex items-center justify-center gap-3 text-gray-300"
-              >
-                <MapPin className="h-5 w-5" style={{ color: primaryColor }} />
-                <span className="text-base">{eventData.venue}</span>
-              </div>
             )}
           </div>
-        </div>
-
-        {/* Right form panel */}
-        <div className="flex flex-col" style={{ backgroundColor }}>
-          <div className="lg:hidden">
-            <div
-              style={{
-                background: branding?.secondaryColor
-                  ? `linear-gradient(135deg, ${branding.secondaryColor} 0%, #2d2d2d 50%, ${branding.secondaryColor} 100%)`
-                  : "linear-gradient(135deg, #3a3a3a 0%, #2d2d2d 50%, #3a3a3a 100%)",
-              }}
-            >
-              {branding?.logoUrl && (
-                <div className="p-4 flex justify-center">
-                  <img
-                    src={branding.logoUrl}
-                    alt={eventData.eventName}
-                    className="max-h-12"
-                  />
-                </div>
-              )}
-              <img
-                src={headerImage}
-                alt={eventData.eventName}
-                className="w-full h-auto block"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-1 items-center justify-center p-6 lg:p-12">
-            <div className="w-full max-w-md">
-              <div className="flex items-center justify-between mb-2">
-                <h1
-                  className="text-2xl lg:text-3xl font-bold"
-                  style={{ color: textColor }}
-                >
-                  {welcomeTitle}
-                </h1>
-                <button
-                  type="button"
-                  onClick={() => setLang(lang === "ar" ? "en" : "ar")}
-                  className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors border border-gray-200 rounded-full px-3 py-1"
-                >
-                  <Globe className="h-3 w-3" />
-                  {t.switchLang}
-                </button>
-              </div>
-              <p className="text-sm text-gray-400 mb-6">{welcomeMessage}</p>
-
-              <div className="lg:hidden flex flex-wrap gap-3 mb-6 text-xs text-gray-500">
-                <span
-                  data-event-date
-                  className="flex items-center gap-1"
-                >
-                  <CalendarDays
-                    className="h-3.5 w-3.5"
-                    style={{ color: primaryColor }}
-                  />
-                  {formatDate(eventData.startDate)}
-                </span>
-                <span
-                  data-event-time
-                  className="flex items-center gap-1"
-                >
-                  <Clock
-                    className="h-3.5 w-3.5"
-                    style={{ color: primaryColor }}
-                  />
-                  {formatTime(eventData.startDate)}
-                </span>
-                {eventData.venue && (
-                  <span
-                    data-event-venue
-                    className="flex items-center gap-1"
-                  >
-                    <MapPin
-                      className="h-3.5 w-3.5"
-                      style={{ color: primaryColor }}
-                    />
-                    {eventData.venue}
-                  </span>
-                )}
-              </div>
-
-              {/* Stepper header — only when there's more than one step */}
-              {isMultiStep && (
-                <div className="mb-6">
-                  <div className="flex items-center gap-2">
-                    {steps.map((step, idx) => {
-                      const isActive = idx === currentStep;
-                      const isComplete = idx < currentStep;
-                      return (
-                        <div
-                          key={step.id}
-                          className="flex-1 flex items-center gap-2"
-                        >
-                          <div
-                            className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold border transition-colors"
-                            style={{
-                              backgroundColor:
-                                isActive || isComplete
-                                  ? primaryColor
-                                  : "transparent",
-                              borderColor:
-                                isActive || isComplete
-                                  ? primaryColor
-                                  : "#d1d5db",
-                              color:
-                                isActive || isComplete ? "#ffffff" : "#6b7280",
-                            }}
-                          >
-                            {isComplete ? (
-                              <CheckCircle className="h-4 w-4" />
-                            ) : (
-                              idx + 1
-                            )}
-                          </div>
-                          {idx < steps.length - 1 && (
-                            <div
-                              className="flex-1 h-px"
-                              style={{
-                                backgroundColor: isComplete
-                                  ? primaryColor
-                                  : "#e5e7eb",
-                              }}
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <p className="text-xs text-gray-500 mt-2">
-                    {t.stepOf(currentStep + 1, totalSteps)} ·{" "}
-                    <span className="font-medium" style={{ color: textColor }}>
-                      {activeStep ? getStepTitle(activeStep) : ""}
-                    </span>
-                  </p>
-                  {activeStep && getStepDescription(activeStep) && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {getStepDescription(activeStep)}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Resumed-draft banner */}
-              {draftRestored && (
-                <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs flex items-center justify-between gap-2">
-                  <span className="text-gray-600">{t.draftRestored}</span>
-                  <button
-                    type="button"
-                    onClick={handleStartOver}
-                    className="text-gray-500 underline hover:text-gray-700"
-                  >
-                    {t.startOver}
-                  </button>
-                </div>
-              )}
-
-              <form
-                onSubmit={onFormSubmit}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    (e.target as HTMLElement).tagName !== "TEXTAREA"
-                  ) {
-                    e.preventDefault();
-                    if (isMultiStep && !isLastStep) {
-                      goNext();
-                    } else {
-                      performSubmit();
-                    }
-                  }
-                }}
-                noValidate
-                className="space-y-5 registration-form"
-              >
-                {error && (
-                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-600">
-                    {error}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                  {visibleFields.map((field) => renderField(field))}
-                </div>
-
-                {isMultiStep ? (
-                  <div className="flex items-center gap-3 pt-2">
-                    {!isFirstStep && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={goBack}
-                        className="h-12 rounded-lg flex-1 cursor-pointer"
-                      >
-                        {isRtl ? (
-                          <ArrowRight className="h-4 w-4 mr-1" />
-                        ) : (
-                          <ArrowLeft className="h-4 w-4 mr-1" />
-                        )}
-                        {t.back}
-                      </Button>
-                    )}
-                    {isLastStep ? (
-                      <Button
-                        type="button"
-                        onClick={performSubmit}
-                        className="h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer submit-button flex-1"
-                        style={{
-                          backgroundColor: primaryColor,
-                          color: "#fff",
-                        }}
-                        disabled={loading}
-                      >
-                        {loading ? t.registering : t.register}
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        onClick={goNext}
-                        className="h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer flex-1"
-                        style={{
-                          backgroundColor: primaryColor,
-                          color: "#fff",
-                        }}
-                      >
-                        {t.next}
-                        {isRtl ? (
-                          <ArrowLeft className="h-4 w-4 ml-1" />
-                        ) : (
-                          <ArrowRight className="h-4 w-4 ml-1" />
-                        )}
-                      </Button>
-                    )}
-                  </div>
-                ) : (
-                  <Button
-                    type="button"
-                    onClick={performSubmit}
-                    className="w-full h-12 rounded-lg text-base font-semibold shadow-sm cursor-pointer submit-button"
-                    style={{ backgroundColor: primaryColor, color: "#fff" }}
-                    disabled={loading}
-                  >
-                    {loading ? t.registering : t.register}
-                  </Button>
-                )}
-              </form>
-
-              {footerText && (
-                <p className="text-center text-xs text-gray-400 mt-8">
-                  {footerText}
-                </p>
-              )}
-            </div>
-          </div>
+          <div
+            className="h-[3px] w-full"
+            style={{ background: submitGradient }}
+          />
+          <div className="p-6 sm:p-8">{body}</div>
         </div>
       </div>
+    </>
+  );
+
+  if (success) {
+    return renderCardShell(
+      <div className="text-center py-4">
+        <div
+          className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full"
+          style={{ backgroundColor: `${primaryColor}20` }}
+        >
+          <CheckCircle
+            className="h-10 w-10"
+            style={{ color: primaryColor }}
+          />
+        </div>
+        <h2
+          className="mb-3 text-2xl font-bold"
+          style={{ color: textColor }}
+        >
+          {t.successTitle}
+        </h2>
+        <p className="text-gray-500 text-base">{t.successMessage}</p>
+      </div>
+    );
+  }
+
+  return renderCardShell(
+    <>
+      <div className="flex items-center justify-end mb-3">
+        <button
+          type="button"
+          onClick={() => setLang(lang === "ar" ? "en" : "ar")}
+          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors border border-gray-200 rounded-full px-3 py-1"
+        >
+          <Globe className="h-3 w-3" />
+          {t.switchLang}
+        </button>
+      </div>
+
+      <h1
+        className="text-2xl font-bold text-center"
+        style={{ color: textColor }}
+      >
+        {welcomeTitle}
+      </h1>
+
+      {/* Event-meta row. data-event-date/time/venue are load-bearing:
+          existing per-event customCss (e.g. Productive Families) hides
+          them via these exact attribute selectors. */}
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 mt-3 text-xs text-gray-500">
+        <span data-event-date className="flex items-center gap-1">
+          <CalendarDays
+            className="h-3.5 w-3.5"
+            style={{ color: primaryColor }}
+          />
+          {formatDate(eventData.startDate)}
+        </span>
+        <span data-event-time className="flex items-center gap-1">
+          <Clock
+            className="h-3.5 w-3.5"
+            style={{ color: primaryColor }}
+          />
+          {formatTime(eventData.startDate)}
+        </span>
+        {eventData.venue && (
+          <span data-event-venue className="flex items-center gap-1">
+            <MapPin
+              className="h-3.5 w-3.5"
+              style={{ color: primaryColor }}
+            />
+            {eventData.venue}
+          </span>
+        )}
+      </div>
+
+      {welcomeMessage && (
+        <p className="text-sm text-center text-gray-500 mt-3 mb-6">
+          {welcomeMessage}
+        </p>
+      )}
+
+      {isMultiStep && (
+        <div className="mb-6">
+          <div className="flex items-center gap-2">
+            {steps.map((step, idx) => {
+              const isActive = idx === currentStep;
+              const isComplete = idx < currentStep;
+              return (
+                <div
+                  key={step.id}
+                  className="flex-1 flex items-center gap-2"
+                >
+                  <div
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold border transition-colors"
+                    style={{
+                      backgroundColor:
+                        isActive || isComplete
+                          ? primaryColor
+                          : "transparent",
+                      borderColor:
+                        isActive || isComplete
+                          ? primaryColor
+                          : "#d1d5db",
+                      color:
+                        isActive || isComplete ? "#ffffff" : "#6b7280",
+                    }}
+                  >
+                    {isComplete ? (
+                      <CheckCircle className="h-4 w-4" />
+                    ) : (
+                      idx + 1
+                    )}
+                  </div>
+                  {idx < steps.length - 1 && (
+                    <div
+                      className="flex-1 h-px"
+                      style={{
+                        backgroundColor: isComplete
+                          ? primaryColor
+                          : "#e5e7eb",
+                      }}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            {t.stepOf(currentStep + 1, totalSteps)} ·{" "}
+            <span className="font-medium" style={{ color: textColor }}>
+              {activeStep ? getStepTitle(activeStep) : ""}
+            </span>
+          </p>
+          {activeStep && getStepDescription(activeStep) && (
+            <p className="text-xs text-gray-500 mt-1">
+              {getStepDescription(activeStep)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {draftRestored && (
+        <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs flex items-center justify-between gap-2">
+          <span className="text-gray-600">{t.draftRestored}</span>
+          <button
+            type="button"
+            onClick={handleStartOver}
+            className="text-gray-500 underline hover:text-gray-700"
+          >
+            {t.startOver}
+          </button>
+        </div>
+      )}
+
+      <form
+        onSubmit={onFormSubmit}
+        onKeyDown={(e) => {
+          if (
+            e.key === "Enter" &&
+            (e.target as HTMLElement).tagName !== "TEXTAREA"
+          ) {
+            e.preventDefault();
+            if (isMultiStep && !isLastStep) {
+              goNext();
+            } else {
+              performSubmit();
+            }
+          }
+        }}
+        noValidate
+        className="space-y-5 registration-form"
+      >
+        {error && (
+          <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-600">
+            {error}
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-4">
+          {visibleFields.map((field) => renderField(field))}
+        </div>
+
+        {isMultiStep ? (
+          <div className="flex items-center gap-3 pt-2">
+            {!isFirstStep && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={goBack}
+                className="h-[48px] rounded-[11px] flex-1 cursor-pointer"
+              >
+                {isRtl ? (
+                  <ArrowRight className="h-4 w-4 mr-1" />
+                ) : (
+                  <ArrowLeft className="h-4 w-4 mr-1" />
+                )}
+                {t.back}
+              </Button>
+            )}
+            {isLastStep ? (
+              <Button
+                type="button"
+                onClick={performSubmit}
+                className="h-[48px] rounded-[11px] text-base font-semibold shadow-sm cursor-pointer submit-button flex-1"
+                style={{ background: submitGradient, color: "#fff" }}
+                disabled={loading}
+              >
+                {loading ? t.registering : t.register}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={goNext}
+                className="h-[48px] rounded-[11px] text-base font-semibold shadow-sm cursor-pointer flex-1"
+                style={{ background: submitGradient, color: "#fff" }}
+              >
+                {t.next}
+                {isRtl ? (
+                  <ArrowLeft className="h-4 w-4 ml-1" />
+                ) : (
+                  <ArrowRight className="h-4 w-4 ml-1" />
+                )}
+              </Button>
+            )}
+          </div>
+        ) : (
+          <Button
+            type="button"
+            onClick={performSubmit}
+            className="w-full h-[48px] rounded-[11px] text-base font-semibold shadow-sm cursor-pointer submit-button"
+            style={{ background: submitGradient, color: "#fff" }}
+            disabled={loading}
+          >
+            {loading ? t.registering : t.register}
+          </Button>
+        )}
+      </form>
+
+      {footerText && (
+        <p className="text-center text-xs text-gray-400 mt-8">
+          {footerText}
+        </p>
+      )}
     </>
   );
 }

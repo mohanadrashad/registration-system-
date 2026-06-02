@@ -107,6 +107,7 @@ export async function GET(
       backgroundColor: event.branding.backgroundColor,
       textColor: event.branding.textColor,
       logoUrl: event.branding.logoUrl,
+      logoWhiteUrl: event.branding.logoWhiteUrl,
       headerImageUrl: event.branding.headerImageUrl,
       welcomeTitle: event.branding.welcomeTitle,
       welcomeTitleAr: event.branding.welcomeTitleAr,
