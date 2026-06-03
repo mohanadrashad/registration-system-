@@ -1,13 +1,13 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-06-03 (Productive Families LIVE on the redesigned registration page; customization spec committed)
+**Last updated:** 2026-06-03 (Registration customization Feature A — header & logo controls + logo upload — COMPLETE and live on production)
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
-**Storage:** Vercel Blob (Frankfurt region, Private mode)
+**Storage — TWO Vercel Blob stores:** (1) **private** store (id `Q7RjwvBaaLwKE6eR`, env `BLOB_READ_WRITE_TOKEN`) — visitor FILE uploads + phase receipts, served via stream-through. (2) **`branding-public`** store (PUBLIC, id `store_O0LBuk4rM0qMcAYL`, env `BLOB_PUBLIC_READ_WRITE_TOKEN` — set in **Preview + Production**) — admin-uploaded logos/favicons, served as direct CDN URLs on the public registration page. A logo isn't secret; the private store rejects `access:"public"` (store-level), which forced the second store.
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
-**Branch in progress:** none — between projects (next queued: registration customization controls, specced not started)
-**Production branch:** `main`, HEAD at `f2fcbe5` (customization spec doc); last code change `7732b46` (registration redesign Stage 2 merge)
+**Branch in progress:** none — between projects (next queued: Feature B — per-field option columns, specced not started)
+**Production branch:** `main`, HEAD at `5ab3977` (Feature A merge, PR #42)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
@@ -30,6 +30,18 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-03 — Registration customization Feature A — COMPLETE (Stages 1+2+3), live on prod
+
+Per-event header & logo customization for the redesigned registration page. Merged as one squash commit `5ab3977` (PR #42) after shipping in three stages on `header-layout-controls`. Spec: `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` (§5, Feature A). Verified end-to-end on prod: register API returns the new columns (no schema-mismatch 500), Productive Families renders unchanged on defaults.
+
+- **Stage 1 — schema + renderer + API.** `EventBranding.headerColor String?` / `headerShowLogo Boolean @default(true)` / `logoHeight Int?` (additive, nullable/defaulted, no backfill — applied to staging + production Neon via `db push`). Public renderer: header bg = `headerColor ?? "#0c0c0e"`; **auto-contrast** text from header luminance (new `src/lib/color-contrast.ts`, replaces the hardcoded `text-white`); dark/light-aware logo pick; `headerShowLogo=false` = hard switch to event-name text; `logoHeight` as **max-height** (clamped 24–80). New `src/lib/validations/branding.ts` Zod. Plumbed through the public `Branding` interface + register GET projection.
+- **Stage 2 — admin Header card + auth migration.** Header card in the Colors tab (color picker + presets, Show logo / event-name switch, size slider, live preview, white-logo-on-light warning). Header Image URL relabeled "Legacy · not used" (column kept). Branding API migrated global `authorize()` → `authorizeEvent({role})`, gated on a production pre-flight (`prisma/scripts/preflight-branding-auth.ts`: 0 non-SUPER_ADMIN global editors → nobody's access changes).
+- **Stage 3 — upload-instead-of-link.** Authenticated `POST /api/events/[eventId]/branding/upload` → `put({access:"public", token: BLOB_PUBLIC_READ_WRITE_TOKEN})` to the new public store, returns the CDN URL stored in the existing `logoUrl`/`logoWhiteUrl`/`faviconUrl` column via the normal Save. Reusable `BrandingImageField` (upload + progress + preview); paste still works. **No visitor client-token flow** — plain authenticated server route. Gated on `prisma/scripts/public-put-smoke-test.ts` (proved public put is directly fetchable). **Required a second, public Blob store** — Stage 0's one-store assumption was wrong (access is store-level; the private store rejects `access:"public"`).
+
+**New infra:** the `branding-public` Blob store (see Storage note in the header) + `BLOB_PUBLIC_READ_WRITE_TOKEN` in Preview + Production.
+
+**Outstanding:** rotate the staging + production Neon passwords and the `branding-public` blob token (all surfaced in plaintext during setup). Minor: upload-then-leave-without-Save orphans a small public blob (no cleanup job).
 
 ### 2026-06-03 — Productive Families LIVE + customization spec committed
 
@@ -439,7 +451,7 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 2. **Admin-upload-from-empty.** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
 
-3. **Registration customization controls** — `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` (committed `f2fcbe5`). Two features: **Feature A** — admin header & logo controls; **Feature B** — per-field option columns. Status: specced, not started. Was parked until after the Productive Families launch, which is now done (2026-06-03), so this is the next queued substantive feature. The broader template system remains deferred as a separate future project.
+3. **Registration customization Feature B — per-field option columns** — `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` §6. **Feature A is done and live** (header & logo controls + upload, PR #42). Feature B remains: a per-field `OptionColumns` enum (AUTO/ONE/TWO) on `FormField` with renderer mapping + no-break guardrails + a form-builder select, scoped to the MULTISELECT card grid only (Stage 0 confirmed only MULTISELECT uses `renderCard`). Schema change (one enum + nullable-defaulted column). The broader template system remains deferred as a separate future project.
 
 ---
 
@@ -471,6 +483,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. The only rem
 
 ## Recent decisions and lessons (newest)
 
+- **Vercel Blob token identity = the embedded store id, NOT the env-var name.** Both Blob stores expose their read-write token in the dashboard under the *same* name `BLOB_READ_WRITE_TOKEN`; the custom name `BLOB_PUBLIC_READ_WRITE_TOKEN` exists only in our code/env. The store id is embedded in the token value — `vercel_blob_rw_<storeId>_…` — so verify which token you have by that, not the variable name. Public store = `O0LBuk4rM0qMcAYL`, private = `Q7RjwvBaaLwKE6eR`. This bit us: the private token was pasted into `BLOB_PUBLIC_READ_WRITE_TOKEN` on Vercel, and `put({access:"public"})` failed with *"Cannot use public access on a private store"* (a *valid* token for the *wrong* store — not an auth error). Confirm before deploying with: `vercel_blob_rw_` + store id.
+- **Blob `access` is a STORE-level setting, not per-blob.** A private store rejects `put({access:"public"})` outright — public and private blobs cannot coexist in one store. Public-serving branding assets needed a *separate* public store. The one-time `public-put-smoke-test.ts` gate caught this before any upload code was built.
 - **Spec literal hex on event-themed controls = flag for deviation review.** The MULTISELECT Stage 2 spec wrote selected state as `#7EC43F` border + `#f4faec` tint + green dot. For any event with a non-green `primaryColor` that would regress per-event theming on a large, prominent control. Defaulted to `primaryColor + alpha-derived tint` (`\`${primaryColor}1a\``) instead — Productive Families still renders the mockup exactly, other events theme to their own brand. Codified in `[[spec-literal-vs-event-theming]]`; apply whenever a spec writes literal color hex on a surface that currently reads from `EventBranding`.
 - **Smoke-test failure ≠ server bug.** Client and server are both code we wrote. Stage 1 over-stamping diagnosis initially blamed server; real root cause was client over-sending unchanged fields. Always investigate both sides.
 - **Diff-gate is the load-bearing invariant for Registration writes.** Server-side, not client-dependent. Self-heals historical CSV drift on first admin save of each row.
@@ -511,7 +525,7 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. The only rem
 - `specs/ADMIN_EDIT_FIX_SPEC.md` — ARC COMPLETE on production (Stages 1, 2, 4); Stage 3 backend live, Stage 3 UI deferred per `[[radix-dialog-post-refetch-race]]`
 - `specs/FIELD_MAPPING_SPEC.md` — FEATURE COMPLETE (all 5 PRs shipped: #24, #25, #26, #27, #28)
 - `specs/REGISTRATION_REDESIGN_SPEC.md` — FEATURE COMPLETE (Stages 1+2 shipped: PRs #40, #41)
-- `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` — SPECCED, NOT STARTED (committed `f2fcbe5`); next queued work. Feature A: admin header & logo controls; Feature B: per-field option columns. Template system deferred separately.
+- `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` — **Feature A COMPLETE** (header & logo controls + upload; Stages 1+2+3 merged PR #42, `5ab3977`); **Feature B NOT STARTED** (per-field option columns, §6 — next queued). Template system deferred separately.
 - `CLAUDE.md` — project conventions
 - `prisma/schema.prisma` — current schema
 - `PROJECT_HANDOFF.md` — this document
@@ -523,6 +537,7 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. The only rem
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
 3. State what you want to work on:
+   - "Let's build Feature B (per-field option columns)" → Feature A is done; spec §6 ready, MULTISELECT-scoped, one small schema change (queue #3)
    - "I want to retry Stage 3 UI (FILE Replace/Remove)" → has diagnosis ready, requires sourcemap setup first (the last outstanding item from the admin-edit-fix arc)
    - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
    - "Let's do the auth posture sweep" → ~25 legacy-`auth()` handlers across events API, each needs its own audit + role decision; one larger PR
@@ -533,4 +548,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-06-03. **Productive Families is LIVE** on the redesigned registration page — name display resolved (field-mapping complete, 4/4 real names), `logoWhiteUrl` configured, customCss meta-hiding confirmed. `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` committed (`f2fcbe5`) as the next queued work (Feature A header/logo controls + Feature B per-field option columns); template system still deferred separately. Outstanding functional gap: FILE Stage 3 UI retry (queue item #1).*
+*Updated 2026-06-03. **Registration customization Feature A is COMPLETE and live on production** (header color + auto-contrast, logo/event-name hard switch, logo size, logo/favicon upload — Stages 1+2+3, PR #42 `5ab3977`). New **`branding-public` public Blob store** + `BLOB_PUBLIC_READ_WRITE_TOKEN` (Preview+Prod) — there are now TWO blob stores; identify a token by its embedded store id, not the var name. **Feature B (per-field option columns)** is the next queued work; template system still deferred. Open gaps: FILE Stage 3 UI retry (queue #1); rotate the credentials surfaced during setup.*
