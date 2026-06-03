@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { COUNTRIES } from "@/lib/form-builder/countries";
 import { isFieldVisible } from "@/lib/form-conditional";
+import { prefersWhiteText, readableTextColor } from "@/lib/color-contrast";
 import {
   parseFormFieldOptions,
   resolveOtherLabel,
@@ -85,6 +86,9 @@ interface Branding {
   logoUrl?: string | null;
   logoWhiteUrl?: string | null;
   headerImageUrl?: string | null;
+  headerColor?: string | null;
+  headerShowLogo?: boolean | null;
+  logoHeight?: number | null;
   welcomeTitle?: string | null;
   welcomeTitleAr?: string | null;
   welcomeMessage?: string | null;
@@ -1042,9 +1046,30 @@ export default function RegisterPage() {
   const submitGradient = `linear-gradient(90deg, ${primaryColor}, ${
     branding?.secondaryColor ?? "#CB1681"
   })`;
-  // Dark header strip prefers the white-logo variant; falls back to
-  // logoUrl so events that haven't uploaded a white logo still render.
-  const headerLogo = branding?.logoWhiteUrl ?? branding?.logoUrl ?? null;
+  // ── Header (Feature A) ──────────────────────────────────────────────
+  // Resolved background; null → today's #0c0c0e strip (unchanged default).
+  const headerColor = branding?.headerColor ?? "#0c0c0e";
+  // Text color is auto-derived from the background, never stored. A light
+  // header yields near-black text instead of the old hardcoded white.
+  const headerTextColor = readableTextColor(headerColor);
+  const headerIsDark = prefersWhiteText(headerColor);
+  // Hard switch: headerShowLogo === false always shows the event-name text,
+  // even when a logo is configured. Default (true / null) keeps the logo.
+  const headerShowLogo = branding?.headerShowLogo !== false;
+  // Dark/light-aware logo pick (A2): a dark header prefers the white-logo
+  // variant, a light header prefers the normal logo; either falls back to
+  // the other, then to event-name text when neither is set.
+  const headerLogo = !headerShowLogo
+    ? null
+    : headerIsDark
+    ? branding?.logoWhiteUrl ?? branding?.logoUrl ?? null
+    : branding?.logoUrl ?? branding?.logoWhiteUrl ?? null;
+  // Logo size is a MAX-height (small logos are never upscaled). null → 48px
+  // (today's max-h-12). Defensively clamped 24–80 to mirror the API clamp.
+  const headerLogoMaxHeight = Math.min(
+    80,
+    Math.max(24, branding?.logoHeight ?? 48)
+  );
 
   const renderCardShell = (body: ReactNode) => (
     <>
@@ -1054,15 +1079,21 @@ export default function RegisterPage() {
         dir={isRtl ? "rtl" : "ltr"}
       >
         <div className="w-full max-w-[640px] bg-white rounded-2xl border border-gray-200/70 shadow-sm overflow-hidden">
-          <div className="bg-[#0c0c0e] px-6 py-7 flex items-center justify-center">
+          <div
+            className="px-6 py-7 flex items-center justify-center"
+            style={{ backgroundColor: headerColor }}
+          >
             {headerLogo ? (
               <img
                 src={headerLogo}
                 alt={eventData.eventName}
-                className="max-h-12"
+                style={{ maxHeight: headerLogoMaxHeight }}
               />
             ) : (
-              <span className="text-white text-lg font-semibold">
+              <span
+                className="text-lg font-semibold"
+                style={{ color: headerTextColor }}
+              >
                 {eventData.eventName}
               </span>
             )}

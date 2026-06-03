@@ -282,6 +282,11 @@ model EventBranding {
   faviconUrl     String?
   headerImageUrl String?
 
+  // Header (registration page — Feature A, REGISTRATION_CUSTOMIZATION_SPEC)
+  headerColor    String? // null → falls back to #0c0c0e (today's strip). Text color is auto-derived, never stored.
+  headerShowLogo Boolean @default(true) // false → always show event-name text (hard switch), even when a logo is set.
+  logoHeight     Int? // header logo max-height in px; null → 48 (today's max-h-12). Clamped 24–80 at the API.
+
   // Custom CSS
   customCss String? @db.Text
 
