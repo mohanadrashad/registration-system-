@@ -1,20 +1,20 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-05-23 (end of marathon shipping session)
+**Last updated:** 2026-06-03 (Productive Families LIVE on the redesigned registration page; customization spec committed)
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
 **Storage:** Vercel Blob (Frankfurt region, Private mode)
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
-**Branch in progress:** none — between projects
-**Production branch:** `main`, HEAD at `be18a8a` (Stage 3 backend merge)
+**Branch in progress:** none — between projects (next queued: registration customization controls, specced not started)
+**Production branch:** `main`, HEAD at `f2fcbe5` (customization spec doc); last code change `7732b46` (registration redesign Stage 2 merge)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
 
 ## What this project is
 
-Internal registration platform for La Gloire (Riyadh events/hospitality company). Multi-event, multi-tenant, runs at `registration.itsbader.com`. Productive Families is the next real event launching, 3+ days out at last check.
+Internal registration platform for La Gloire (Riyadh events/hospitality company). Multi-event, multi-tenant, runs at `registration.itsbader.com`. Productive Families is now **LIVE** on the redesigned registration page (launched 2026-06-03).
 
 ---
 
@@ -30,6 +30,45 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-03 — Productive Families LIVE + customization spec committed
+
+Status-tracking session — no application code shipped. The substantive outcomes are the launch confirmation, the name-display verification, and a new spec committed to `main`.
+
+- **Productive Families is LIVE** on the centered-card redesigned page (`registration.itsbader.com`). The redesign Stages 1+2 (PRs #40, #41) are now serving the real launch.
+- **Name display confirmed resolved.** Field-mapping (PRs #24–#28) is complete and PF's form fields are tagged (First Name → FIRST_NAME; Middel Name + Third Name → LAST_NAME). Dashboard verified — **4/4** existing rows show real names, zero `Reg #...` fallbacks. The long-standing "blocked on field-mapping" caveat is closed.
+- **`logoWhiteUrl` configured** for PF (`i.imgur.com/POuPyxt.png`) — the white LA GLOIRE logo renders on the dark header strip; no event-name-text fallback.
+- **New spec committed:** `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` (`f2fcbe5`, standalone docs commit to `main`). Covers **Feature A** (admin header & logo controls) + **Feature B** (per-field option columns). Specced, not started — the next queued substantive feature now that PF has launched. The broader template system stays deferred as a separate future project.
+
+### 2026-06-02 — Registration page redesign — FEATURE COMPLETE (Stages 1 + 2)
+
+Visual restyle of the public registration page into La Gloire's brand language. Centered white card on a soft-gray page with a dark branded header, gradient accent line, crisp fields with a green focus ring, and a 2-column MULTISELECT card grid. Shared renderer — every event benefits automatically. Spec: `specs/REGISTRATION_REDESIGN_SPEC.md` (also committed this session).
+
+**Stage 1 — Centered-card shell + crisp field styling** — `0e8b72f` (PR #40, squash merge). Bundles the spec doc + the gitignore chore + the shell/field work; ~+283 / -369 net on `src/app/(public)/register/[eventSlug]/page.tsx`.
+
+- Replaced `lg:grid lg:grid-cols-2` split-panel with a centered `max-w-[640px]` white card. Dark `#0c0c0e` header strip carries `logoWhiteUrl` (fallback `logoUrl`, fallback event-name text); 3px green→magenta gradient accent line beneath.
+- Both shells (form + success) restructured via a shared `renderCardShell` helper — the page never changes shape between submit and success.
+- Extracted `INPUT_CLASSES` + `SELECT_TRIGGER_CLASSES` constants, applied to all 9 input/textarea/date-time/select callsites — white bg, `#e3e4e8` border, 11px radius, 46px height, green focus ring (`#7EC43F`).
+- Submit + Next buttons themed off `primaryColor → secondaryColor` with green→magenta fallback. Back stays outline.
+- Plumbed `logoWhiteUrl` through the public `Branding` interface + the `api/register/[eventSlug]` GET selection (column already existed in `prisma/schema.prisma`; only the public read-path was missing).
+- Event-meta row preserved its exact `[data-event-date]`, `[data-event-time]`, `[data-event-venue]` attribute selectors — per-event customCss (Productive Families hides the meta this way) keeps working.
+
+Mid-stage tweak (user feedback on Preview): card max-width widened from spec's 460px to 640px — too cramped on desktop for 2-col field rows. Single-edit fix in the shared helper, both shells widened together.
+
+**Stage 2 — MULTISELECT 2-col card grid** — `7732b46` (PR #41, squash merge). 1 file, +37 / -13.
+
+- Container switched from `flex flex-wrap gap-2` (pill wall) to `grid grid-cols-1 sm:grid-cols-2 gap-2` (1-col narrow mobile, 2-col from `sm:` up).
+- Local `renderPill` → `renderCard`: bordered card, leading 16px radio dot + label, `rounded-[11px]`. NO per-option icons (options data has no icon field; deferred to a separate spec).
+- Selected state themes off `primaryColor`: border + filled dot in `primaryColor`, background tint via 8-digit hex `${primaryColor}1a` (~10% alpha) so the tint always matches the border.
+- Preserved exactly: `maxSelections` clamping (selected cards never disabled), at-max Tooltip wrap, `showSelectionCounter` gate + copy, "Other" card + conditional `OtherTextInput`, Other-deselect-clears-sibling-text, symmetric single/multi-select toggle.
+
+**Key spec deviation (codified in `[[spec-literal-vs-event-theming]]` memory):** Stage 2 spec wrote the selected card state in literal hex (`#7EC43F` border, `#f4faec` tint, green dot). User explicitly overrode to use `primaryColor + alpha-derived tint` instead — hardcoding green would regress per-event theming on a large prominent control for every event whose `primaryColor` isn't green. Productive Families (`primaryColor #7EC43F`) renders identically to the mockup. The general principle: spec literals on event-themed surfaces should be flagged as deviation questions before implementing.
+
+Other locked deviations (5 total): card width 640px not 460px; header strip falls back to event-name text when no logo configured; `headerImage` retired from the public page (still in schema/admin/DTO); Next button gets gradient alongside Submit; stepper kept its existing styling (already matched the new aesthetic).
+
+**Also this session:** `.claude/settings.local.json` removed from tracking and added to `.gitignore` (was repeatedly showing as modified and blocking rebases — see commit `16cae78`, included in the Stage 1 PR squash). `specs/REGISTRATION_REDESIGN_SPEC.md` committed under `specs/`.
+
+Memories saved: `[[register-redesign-complete]]` (feature summary + 5 locked deviations + retired surfaces), `[[spec-literal-vs-event-theming]]` (the deviation principle for future spec reads), `[[branch-cleanup-gh-api-delete]]` (codifies the squash-then-`gh api -X DELETE` workflow that's been muscle memory).
 
 ### 2026-06-02 — Three-phase placement-race fix on approvals page — CLOSES deferred "Radix race" investigation
 
@@ -400,6 +439,8 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 2. **Admin-upload-from-empty.** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
 
+3. **Registration customization controls** — `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` (committed `f2fcbe5`). Two features: **Feature A** — admin header & logo controls; **Feature B** — per-field option columns. Status: specced, not started. Was parked until after the Productive Families launch, which is now done (2026-06-03), so this is the next queued substantive feature. The broader template system remains deferred as a separate future project.
+
 ---
 
 ## Known unresolved bugs
@@ -412,22 +453,25 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 ---
 
-## Productive Families launch status
+## Productive Families launch status — LIVE (launched 2026-06-03)
 
-- ✅ Logo configured
-- ✅ Date/time/venue hidden via data attributes + customCss
+- ✅ Logo configured — `logoUrl` plus `logoWhiteUrl` = `i.imgur.com/POuPyxt.png`; the white LA GLOIRE logo renders on the dark header strip (no event-name-text fallback).
+- ✅ Date/time/venue hidden via data attributes + customCss — confirmed still hidden after the redesign shell restructure (the new event-meta row preserved the `[data-event-date]`/`[data-event-time]`/`[data-event-venue]` selectors verbatim).
 - ✅ Product category options configured (20 categories, EN+AR translations)
 - ✅ FILE field works end-to-end for visitor uploads
 - ✅ Email optional (so synthetic-email visitors can register without an email)
-- ⚠️ **Name display in dashboard list shows `Reg #cmpgck5x` instead of real names** — because form fields are named "First Name" / "Middel Name" / "Third Name" rather than the registration endpoint's expected `firstName` / `lastName`. **Blocked on field-mapping feature.**
-- ⚠️ **Admin can't fix wrong/missing visitor uploads from dashboard** — Stage 3 UI deferred. Workaround: ask visitor to re-register or fix via Prisma Studio.
+- ✅ New centered-card registration page in production (Stages 1+2 of the redesign)
+- ✅ **Name display resolved** — field-mapping is complete (PRs #24–#28) and PF's fields are tagged (First Name → FIRST_NAME; Middel Name + Third Name → LAST_NAME). Dashboard verified: **4/4** existing rows show real names, zero `Reg #...` fallbacks. No longer blocked.
+- ⚠️ **`secondaryColor = #CB1681` not confirmed set this session.** If unset, the submit-button gradient renders solid green instead of green→magenta — cosmetic only; the page is otherwise fully launched.
+- ⚠️ **Admin can't fix wrong/missing visitor uploads from dashboard** — Stage 3 UI still deferred (queue item 1). Workaround: ask visitor to re-register or fix via Prisma Studio.
 
-Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
+Launched 2026-06-03 on the redesigned page with field-mapping live. The only remaining functional gap is admin file Replace/Remove from the dashboard (queue item 1).
 
 ---
 
 ## Recent decisions and lessons (newest)
 
+- **Spec literal hex on event-themed controls = flag for deviation review.** The MULTISELECT Stage 2 spec wrote selected state as `#7EC43F` border + `#f4faec` tint + green dot. For any event with a non-green `primaryColor` that would regress per-event theming on a large, prominent control. Defaulted to `primaryColor + alpha-derived tint` (`\`${primaryColor}1a\``) instead — Productive Families still renders the mockup exactly, other events theme to their own brand. Codified in `[[spec-literal-vs-event-theming]]`; apply whenever a spec writes literal color hex on a surface that currently reads from `EventBranding`.
 - **Smoke-test failure ≠ server bug.** Client and server are both code we wrote. Stage 1 over-stamping diagnosis initially blamed server; real root cause was client over-sending unchanged fields. Always investigate both sides.
 - **Diff-gate is the load-bearing invariant for Registration writes.** Server-side, not client-dependent. Self-heals historical CSV drift on first admin save of each row.
 - **Spec wording may diverge from codebase enum values.** Stage 2 spec said `"viewer"` for role requirement; code uses `"authenticated"`. Code wins, document the deviation in PR.
@@ -448,6 +492,9 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `field-mapping-stage2-complete.md` — resolver wired; Productive Families new-registration fix live; TS-strict gotcha lesson (tsc --noEmit before push)
 - `field-mapping-stage3-complete.md` — feature complete; backfill preview + run + UI live; 10 locked invariants; 4 spec deviations; 2 pre-push diff-review bug catches
 - `admin-edit-stage4-complete.md` — audit trail display + arc close-out; contact.updatedAt ↔ updatedBy synchrony invariant for future Contact writers; UserRef leak-surface guidance; time-estimate reframe heuristic for read-only audit features
+- `register-redesign-complete.md` — Stages 1+2 shipped 2026-06-02; centered-card shell + MULTISELECT card grid; 5 locked spec deviations including primaryColor-themed MULTISELECT over hardcoded green
+- `spec-literal-vs-event-theming.md` — when a spec writes literal hex for visual states on controls themed off EventBranding, flag as deviation question; user prefers `primaryColor + alpha-derived tint` over hardcoded brand color
+- `branch-cleanup-gh-api-delete.md` — PR-merge cleanup uses `gh api -X DELETE refs/heads/<branch>`, NOT `--delete-branch`; required by the worktree setup. Codifies the squash → API-delete → detach → local-delete → watch-prod-deploy sequence.
 
 ---
 
@@ -463,6 +510,8 @@ Launch is 3+ days out per last check. Field-mapping needs to ship before launch.
 - `specs/EMAIL_OPTIONAL_EVENTS_SPEC.md` — completed feature
 - `specs/ADMIN_EDIT_FIX_SPEC.md` — ARC COMPLETE on production (Stages 1, 2, 4); Stage 3 backend live, Stage 3 UI deferred per `[[radix-dialog-post-refetch-race]]`
 - `specs/FIELD_MAPPING_SPEC.md` — FEATURE COMPLETE (all 5 PRs shipped: #24, #25, #26, #27, #28)
+- `specs/REGISTRATION_REDESIGN_SPEC.md` — FEATURE COMPLETE (Stages 1+2 shipped: PRs #40, #41)
+- `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` — SPECCED, NOT STARTED (committed `f2fcbe5`); next queued work. Feature A: admin header & logo controls; Feature B: per-field option columns. Template system deferred separately.
 - `CLAUDE.md` — project conventions
 - `prisma/schema.prisma` — current schema
 - `PROJECT_HANDOFF.md` — this document
@@ -484,4 +533,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-05-25 after PhaseReceipt cleanup merge. **Admin-edit-fix arc COMPLETE** + **field-mapping feature COMPLETE** + 2 polish PRs shipped same day (Contact GET auth migration + PhaseReceipt cleanup). Next priority: FILE Stage 3 UI retry per queue item #1.*
+*Updated 2026-06-03. **Productive Families is LIVE** on the redesigned registration page — name display resolved (field-mapping complete, 4/4 real names), `logoWhiteUrl` configured, customCss meta-hiding confirmed. `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` committed (`f2fcbe5`) as the next queued work (Feature A header/logo controls + Feature B per-field option columns); template system still deferred separately. Outstanding functional gap: FILE Stage 3 UI retry (queue item #1).*
