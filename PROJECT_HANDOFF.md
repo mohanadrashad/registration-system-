@@ -462,7 +462,7 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 - ✅ Email optional (so synthetic-email visitors can register without an email)
 - ✅ New centered-card registration page in production (Stages 1+2 of the redesign)
 - ✅ **Name display resolved** — field-mapping is complete (PRs #24–#28) and PF's fields are tagged (First Name → FIRST_NAME; Middel Name + Third Name → LAST_NAME). Dashboard verified: **4/4** existing rows show real names, zero `Reg #...` fallbacks. No longer blocked.
-- ⚠️ **`secondaryColor = #CB1681` not confirmed set this session.** If unset, the submit-button gradient renders solid green instead of green→magenta — cosmetic only; the page is otherwise fully launched.
+- ✅ **`secondaryColor = #CB1681` set** in the Colors tab — submit-button green→magenta gradient now active.
 - ⚠️ **Admin can't fix wrong/missing visitor uploads from dashboard** — Stage 3 UI still deferred (queue item 1). Workaround: ask visitor to re-register or fix via Prisma Studio.
 
 Launched 2026-06-03 on the redesigned page with field-mapping live. The only remaining functional gap is admin file Replace/Remove from the dashboard (queue item 1).
