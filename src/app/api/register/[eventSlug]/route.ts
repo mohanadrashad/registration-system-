@@ -83,6 +83,7 @@ export async function GET(
       options: field.options,
       order: field.order,
       width: field.width,
+      optionColumns: field.optionColumns,
       section: field.section,
       conditional: field.conditional,
       isSystem: field.isSystem,

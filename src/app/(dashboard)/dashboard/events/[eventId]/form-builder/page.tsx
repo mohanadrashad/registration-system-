@@ -62,7 +62,13 @@ import {
   Lock,
   X,
 } from "lucide-react";
-import { FieldType, FieldWidth, FieldMapping, PhaseType } from "@prisma/client";
+import {
+  FieldType,
+  FieldWidth,
+  FieldMapping,
+  PhaseType,
+  OptionColumns,
+} from "@prisma/client";
 import type { PhaseSelectionMode } from "@prisma/client";
 import {
   PhaseOptionsPanel,
@@ -116,6 +122,7 @@ interface FormField {
   required: boolean;
   order: number;
   width: FieldWidth;
+  optionColumns: OptionColumns;
   isSystem: boolean;
   isActive: boolean;
   // `options` is the option array for SELECT/RADIO/MULTISELECT only. The
@@ -735,6 +742,7 @@ export default function FormBuilderPage() {
     type: "TEXT" as FieldType,
     required: false,
     width: "FULL" as FieldWidth,
+    optionColumns: "AUTO" as OptionColumns,
     options: [] as FieldOption[],
     other: undefined as OtherConfig | undefined,
     maxSelections: undefined as number | undefined,
@@ -982,6 +990,7 @@ export default function FormBuilderPage() {
         type: "TEXT",
         required: false,
         width: "FULL",
+        optionColumns: "AUTO",
         options: [],
         other: undefined,
         maxSelections: undefined,
@@ -1379,6 +1388,34 @@ export default function FormBuilderPage() {
                   </SelectContent>
                 </Select>
               </div>
+              {newField.type === "MULTISELECT" && (
+                <div className="space-y-2">
+                  <Label>Option Columns</Label>
+                  <Select
+                    value={newField.optionColumns}
+                    onValueChange={(v) =>
+                      setNewField({
+                        ...newField,
+                        optionColumns: v as OptionColumns,
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="AUTO">
+                        Auto (1 on mobile, 2 on desktop)
+                      </SelectItem>
+                      <SelectItem value="ONE">1 column</SelectItem>
+                      <SelectItem value="TWO">2 columns (incl. mobile)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Layout of the option cards on the registration page.
+                  </p>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <Switch
                   checked={newField.required}
@@ -1929,6 +1966,34 @@ export default function FormBuilderPage() {
                   </SelectContent>
                 </Select>
               </div>
+              {editingField.type === "MULTISELECT" && (
+                <div className="space-y-2">
+                  <Label>Option Columns</Label>
+                  <Select
+                    value={editingField.optionColumns}
+                    onValueChange={(v) =>
+                      setEditingField({
+                        ...editingField,
+                        optionColumns: v as OptionColumns,
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="AUTO">
+                        Auto (1 on mobile, 2 on desktop)
+                      </SelectItem>
+                      <SelectItem value="ONE">1 column</SelectItem>
+                      <SelectItem value="TWO">2 columns (incl. mobile)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Layout of the option cards on the registration page.
+                  </p>
+                </div>
+              )}
               {(() => {
                 const emailRequiredLocked =
                   portalEnabled && editingField.name === "email";
