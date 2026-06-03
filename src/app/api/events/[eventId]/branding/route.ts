@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { authorize } from "@/lib/api-auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { sanitizeCss } from "@/lib/security/sanitize-css";
+import { brandingUpdateSchema } from "@/lib/validations/branding";
 
 interface RouteParams {
   params: Promise<{ eventId: string }>;
@@ -10,24 +11,19 @@ interface RouteParams {
 // GET - Get branding settings for an event
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize();
-    if (ctx instanceof NextResponse) return ctx;
-
     const { eventId } = await params;
 
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      include: {
-        branding: true,
-      },
+    // authorizeEvent loads the event (404s if missing) and enforces per-event
+    // membership — replaces the old global authorize() + manual findUnique.
+    const ctx = await authorizeEvent(eventId, { role: "authenticated" });
+    if (ctx instanceof NextResponse) return ctx;
+
+    const branding = await prisma.eventBranding.findUnique({
+      where: { eventId },
     });
 
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
-    }
-
     // Return branding or defaults
-    return NextResponse.json(event.branding || {
+    return NextResponse.json(branding || {
       primaryColor: "#7dc242",
       secondaryColor: null,
       backgroundColor: null,
@@ -36,6 +32,9 @@ export async function GET(request: Request, { params }: RouteParams) {
       logoWhiteUrl: null,
       faviconUrl: null,
       headerImageUrl: null,
+      headerColor: null,
+      headerShowLogo: true,
+      logoHeight: null,
       customCss: null,
       welcomeTitle: null,
       welcomeTitleAr: null,
@@ -56,19 +55,22 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Create or update branding settings
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize("editor");
+    const { eventId } = await params;
+
+    // authorizeEvent enforces per-event editor membership AND guarantees the
+    // event exists (404s otherwise) — drops the old global authorize("editor")
+    // plus the redundant event.findUnique existence check.
+    const ctx = await authorizeEvent(eventId, { role: "editor" });
     if (ctx instanceof NextResponse) return ctx;
 
-    const { eventId } = await params;
     const body = await request.json();
 
-    // Check if event exists
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-    });
-
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
+    const parsed = brandingUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid branding settings", details: parsed.error.flatten() },
+        { status: 400 }
+      );
     }
 
     const {
@@ -80,6 +82,9 @@ export async function POST(request: Request, { params }: RouteParams) {
       logoWhiteUrl,
       faviconUrl,
       headerImageUrl,
+      headerColor,
+      headerShowLogo,
+      logoHeight,
       customCss,
       welcomeTitle,
       welcomeTitleAr,
@@ -87,7 +92,12 @@ export async function POST(request: Request, { params }: RouteParams) {
       welcomeMessageAr,
       footerText,
       footerTextAr,
-    } = body;
+    } = parsed.data;
+
+    // headerShowLogo defaults true at the DB; only override when the client
+    // actually sent a boolean (undefined leaves the column / default intact).
+    const showLogoUpdate =
+      headerShowLogo === undefined ? {} : { headerShowLogo };
 
     const branding = await prisma.eventBranding.upsert({
       where: { eventId },
@@ -100,6 +110,9 @@ export async function POST(request: Request, { params }: RouteParams) {
         logoWhiteUrl,
         faviconUrl,
         headerImageUrl,
+        headerColor,
+        ...showLogoUpdate,
+        logoHeight,
         customCss: customCss ? sanitizeCss(customCss) : null,
         welcomeTitle,
         welcomeTitleAr,
@@ -118,6 +131,9 @@ export async function POST(request: Request, { params }: RouteParams) {
         logoWhiteUrl,
         faviconUrl,
         headerImageUrl,
+        headerColor,
+        ...showLogoUpdate,
+        logoHeight,
         customCss: customCss ? sanitizeCss(customCss) : null,
         welcomeTitle,
         welcomeTitleAr,
