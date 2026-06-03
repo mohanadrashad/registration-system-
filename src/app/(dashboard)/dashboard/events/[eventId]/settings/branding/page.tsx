@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { prefersWhiteText, readableTextColor } from "@/lib/color-contrast";
+import { BrandingImageField } from "@/components/admin/branding-image-field";
 import {
   Palette,
   Image,
@@ -609,50 +610,37 @@ export default function BrandingPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-6 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="logoUrl">Logo URL</Label>
-                  <Input
-                    id="logoUrl"
-                    value={branding.logoUrl || ""}
-                    onChange={(e) =>
-                      setBranding({ ...branding, logoUrl: e.target.value })
-                    }
-                    placeholder="https://example.com/logo.png"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Recommended: 200x50px PNG with transparent background
-                  </p>
-                </div>
+                <BrandingImageField
+                  eventId={eventId}
+                  kind="logo"
+                  label="Logo URL"
+                  value={branding.logoUrl || ""}
+                  onChange={(url) => setBranding({ ...branding, logoUrl: url })}
+                  helpText="Recommended: 200×50px PNG with a transparent background. Upload a file or paste a URL."
+                />
 
-                <div className="space-y-2">
-                  <Label htmlFor="logoWhiteUrl">Logo (White/Light version)</Label>
-                  <Input
-                    id="logoWhiteUrl"
-                    value={branding.logoWhiteUrl || ""}
-                    onChange={(e) =>
-                      setBranding({ ...branding, logoWhiteUrl: e.target.value })
-                    }
-                    placeholder="https://example.com/logo-white.png"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    For use on dark backgrounds
-                  </p>
-                </div>
+                <BrandingImageField
+                  eventId={eventId}
+                  kind="logoWhite"
+                  label="Logo (White/Light version)"
+                  value={branding.logoWhiteUrl || ""}
+                  onChange={(url) =>
+                    setBranding({ ...branding, logoWhiteUrl: url })
+                  }
+                  helpText="For use on dark headers."
+                />
 
-                <div className="space-y-2">
-                  <Label htmlFor="faviconUrl">Favicon URL</Label>
-                  <Input
-                    id="faviconUrl"
-                    value={branding.faviconUrl || ""}
-                    onChange={(e) =>
-                      setBranding({ ...branding, faviconUrl: e.target.value })
-                    }
-                    placeholder="https://example.com/favicon.ico"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    32x32px ICO or PNG
-                  </p>
-                </div>
+                <BrandingImageField
+                  eventId={eventId}
+                  kind="favicon"
+                  label="Favicon"
+                  value={branding.faviconUrl || ""}
+                  onChange={(url) =>
+                    setBranding({ ...branding, faviconUrl: url })
+                  }
+                  helpText="32×32px ICO, PNG, or SVG."
+                  accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/svg+xml"
+                />
 
                 <div className="space-y-2 opacity-80">
                   <Label
@@ -681,21 +669,6 @@ export default function BrandingPage() {
                   </p>
                 </div>
               </div>
-
-              {/* Logo Preview */}
-              {branding.logoUrl && (
-                <div className="rounded-lg border p-6">
-                  <p className="text-sm font-medium text-muted-foreground mb-4">Logo Preview</p>
-                  <img
-                    src={branding.logoUrl}
-                    alt="Logo preview"
-                    className="max-h-20 object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
-                  />
-                </div>
-              )}
             </CardContent>
           </Card>
 
