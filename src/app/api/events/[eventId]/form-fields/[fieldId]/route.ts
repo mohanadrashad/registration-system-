@@ -3,7 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { authorizeEvent } from "@/lib/api-auth";
 import { FieldType, FieldWidth } from "@prisma/client";
 import { FIELD_TYPES } from "@/lib/form-builder/field-types";
-import { fieldOptionsInputSchema } from "@/lib/validations/form-field";
+import {
+  fieldOptionsInputSchema,
+  optionColumnsSchema,
+} from "@/lib/validations/form-field";
 import { validateFileFieldMetadataInput } from "@/lib/validations/file-field-metadata";
 import {
   checkMappingConflict,
@@ -173,6 +176,16 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         return NextResponse.json({ error: "Invalid field width" }, { status: 400 });
       }
       updateData.width = body.width;
+    }
+    if (body.optionColumns !== undefined) {
+      const parsed = optionColumnsSchema.safeParse(body.optionColumns);
+      if (!parsed.success) {
+        return NextResponse.json(
+          { error: "Invalid option columns" },
+          { status: 400 }
+        );
+      }
+      updateData.optionColumns = parsed.data;
     }
     if (body.section !== undefined) updateData.section = body.section;
     if (body.conditional !== undefined) updateData.conditional = body.conditional;

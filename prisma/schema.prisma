@@ -635,9 +635,10 @@ model FormField {
   options Json? // [{value: "sa", label: "Saudi Arabia", labelAr: "السعودية"}]
 
   // Layout
-  order   Int        @default(0)
-  width   FieldWidth @default(FULL)
-  section String? // Group fields: "Personal Info", "Work Details"
+  order         Int           @default(0)
+  width         FieldWidth    @default(FULL)
+  optionColumns OptionColumns @default(AUTO) // MULTISELECT card-grid columns (Feature B). AUTO = today's responsive 1→2.
+  section       String? // Group fields: "Personal Info", "Work Details"
 
   // Conditional Logic
   conditional Json? // {showIf: {field: "attendeeType", operator: "equals", value: "VIP"}}
@@ -713,6 +714,13 @@ enum FieldWidth {
   FULL // 100% width
   HALF // 50% width (2 columns)
   THIRD // 33% width (3 columns)
+}
+
+// Per-field MULTISELECT card-grid column count (Feature B).
+enum OptionColumns {
+  AUTO // 1 col on mobile, 2 on desktop (today's responsive default)
+  ONE // 1 col on all screens
+  TWO // 2 cols on all screens, including mobile (the long-list fix)
 }
 
 // ─── Phase → Step → FormField (multi-page forms + post-reg phases) ───

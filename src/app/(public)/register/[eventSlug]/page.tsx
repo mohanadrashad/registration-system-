@@ -59,6 +59,7 @@ interface FormField {
   options?: { value: string; label: string; labelAr?: string }[];
   order: number;
   width: string;
+  optionColumns?: "AUTO" | "ONE" | "TWO";
   section?: string;
   conditional?: Record<string, unknown>;
   isSystem: boolean;
@@ -232,6 +233,15 @@ const translations = {
     maxReachedTooltip: (max: number) =>
       `Maximum ${max} selections reached. Uncheck one to choose a different option.`,
   },
+};
+
+// MULTISELECT card-grid column classes per FormField.optionColumns (Feature B).
+// Static literal strings (no interpolation) so Tailwind's JIT scanner emits
+// every class — especially the bare `grid-cols-2` used only here.
+const OPTION_COLS: Record<"AUTO" | "ONE" | "TWO", string> = {
+  AUTO: "grid-cols-1 sm:grid-cols-2",
+  ONE: "grid-cols-1",
+  TWO: "grid-cols-2",
 };
 
 export default function RegisterPage() {
@@ -859,7 +869,7 @@ export default function RegisterPage() {
                 aria-pressed={selected}
                 aria-disabled={disabled}
                 onClick={handleClick}
-                className={`flex w-full items-start gap-3 rounded-[11px] border px-3.5 py-3 text-sm transition-colors ${
+                className={`flex h-full w-full items-start gap-3 rounded-[11px] border px-3.5 py-3 text-sm transition-colors ${
                   selected
                     ? "font-medium"
                     : disabled
@@ -889,14 +899,16 @@ export default function RegisterPage() {
                     />
                   )}
                 </span>
-                <span className="min-w-0 break-words">{labelText}</span>
+                <span className="min-w-0 [overflow-wrap:anywhere]">{labelText}</span>
               </button>
             );
             if (!disabled || typeof max !== "number") return card;
             return (
               <Tooltip key={optionValue}>
                 <TooltipTrigger asChild>
-                  <span>{card}</span>
+                  {/* block h-full so the h-full card inside fills the
+                      stretched grid cell — keeps at-max cards equal-height. */}
+                  <span className="block h-full">{card}</span>
                 </TooltipTrigger>
                 <TooltipContent>{t.maxReachedTooltip(max)}</TooltipContent>
               </Tooltip>
@@ -905,7 +917,11 @@ export default function RegisterPage() {
 
           return (
             <TooltipProvider delayDuration={150}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div
+                className={`grid gap-2 ${
+                  OPTION_COLS[field.optionColumns ?? "AUTO"]
+                }`}
+              >
                 {parsed.options.map((option) =>
                   renderCard(option.value, getOptionLabel(option))
                 )}

@@ -3,7 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { authorize } from "@/lib/api-auth";
 import { getOrCreateDefaultRegistrationStep } from "@/lib/services/phase.service";
 import { FieldType, FieldWidth } from "@prisma/client";
-import { fieldOptionsInputSchema } from "@/lib/validations/form-field";
+import {
+  fieldOptionsInputSchema,
+  optionColumnsSchema,
+} from "@/lib/validations/form-field";
 import { validateFileFieldMetadataInput } from "@/lib/validations/file-field-metadata";
 import {
   parseFormFieldOptions,
@@ -148,6 +151,10 @@ export async function POST(request: Request, { params }: RouteParams) {
         options: validatedOptions as never,
         order: body.order ?? newOrder,
         width: (body.width as FieldWidth) ?? "FULL",
+        // Defaults to AUTO when absent/invalid so no field regresses.
+        optionColumns: optionColumnsSchema.catch("AUTO").parse(
+          body.optionColumns ?? "AUTO"
+        ),
         section: body.section,
         conditional: body.conditional,
         isActive: body.isActive ?? true,

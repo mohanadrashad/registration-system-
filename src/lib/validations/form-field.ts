@@ -1,5 +1,12 @@
 import { z } from "zod";
+import { OptionColumns } from "@prisma/client";
 import { OTHER_VALUE } from "@/lib/form-builder/options-parse";
+
+/**
+ * Per-field MULTISELECT card-grid column setting (Feature B). Bound to the
+ * Prisma enum so the three values stay in lockstep with the schema.
+ */
+export const optionColumnsSchema = z.nativeEnum(OptionColumns);
 
 /**
  * Shape of a single FormField option as stored in FormField.options (Json).
