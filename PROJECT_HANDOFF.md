@@ -1,13 +1,13 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-06-03 (Registration customization Feature A — header & logo controls + logo upload — COMPLETE and live on production)
+**Last updated:** 2026-06-04 (Registration customization Feature B — per-field option columns — COMPLETE and live; the customization spec is now fully shipped)
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
 **Storage — TWO Vercel Blob stores:** (1) **private** store (id `Q7RjwvBaaLwKE6eR`, env `BLOB_READ_WRITE_TOKEN`) — visitor FILE uploads + phase receipts, served via stream-through. (2) **`branding-public`** store (PUBLIC, id `store_O0LBuk4rM0qMcAYL`, env `BLOB_PUBLIC_READ_WRITE_TOKEN` — set in **Preview + Production**) — admin-uploaded logos/favicons, served as direct CDN URLs on the public registration page. A logo isn't secret; the private store rejects `access:"public"` (store-level), which forced the second store.
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
-**Branch in progress:** none — between projects (next queued: Feature B — per-field option columns, specced not started)
-**Production branch:** `main`, HEAD at `5ab3977` (Feature A merge, PR #42)
+**Branch in progress:** none — between projects (REGISTRATION_CUSTOMIZATION spec fully shipped; next priority is FILE Stage 3 UI retry, queue #1)
+**Production branch:** `main`, HEAD at `46a99eb` (Feature B merge, PR #43)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
@@ -30,6 +30,16 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-04 — Registration customization Feature B — COMPLETE, live on prod (spec fully shipped)
+
+Per-field control over the MULTISELECT card-grid column count. Squash-merged `46a99eb` (PR #43). Spec `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` §6 — **with this, Feature A + B are both done and the customization spec is fully realized.**
+
+- **Schema:** `enum OptionColumns { AUTO ONE TWO }` + `FormField.optionColumns @default(AUTO)` in the Layout group (additive, defaulted — no backfill; existing fields stay AUTO = today's responsive 1→2). Pushed to staging (Preview `vercel-build`) + production (maintainer credential step).
+- **Renderer:** static `OPTION_COLS` literal map at the MULTISELECT grid (no interpolation, so Tailwind JIT emits the bare `grid-cols-2`) — AUTO → `grid-cols-1 sm:grid-cols-2`, ONE → `grid-cols-1`, TWO → `grid-cols-2` (incl. mobile). Guardrails: `minmax(0,1fr)` + 640px shell cap already existed; **added** `h-full` on the card button + the at-max Tooltip wrapper span (equal-height) and `break-words` → `[overflow-wrap:anywhere]` on the label.
+- **Plumbing:** register GET DTO, public `FormField` interface, `form-fields` POST (default AUTO) + PATCH (validate) + `optionColumnsSchema` Zod, and an Option Columns select in the form-builder add + edit dialogs (MULTISELECT-only, after Field Width).
+- **`overflow-wrap:anywhere` is the one change touching existing fields** (all MULTISELECT grids, not just new TWO) — smoke-tested on Preview against Productive Families' 20-category `business_activity` field; wrapping is clean. Verified post-deploy: prod register API returns `optionColumns` (no schema-mismatch).
+- **Per-field VALUE is data, not code:** the Preview-set `business_activity` columns choice wrote to **staging**, not prod. The feature is live on prod but `business_activity` is still `AUTO` there — the launch layout must be re-set on the **production** form-builder. (See the lesson below.)
 
 ### 2026-06-03 — Registration customization Feature A — COMPLETE (Stages 1+2+3), live on prod
 
@@ -451,7 +461,7 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 2. **Admin-upload-from-empty.** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
 
-3. **Registration customization Feature B — per-field option columns** — `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` §6. **Feature A is done and live** (header & logo controls + upload, PR #42). Feature B remains: a per-field `OptionColumns` enum (AUTO/ONE/TWO) on `FormField` with renderer mapping + no-break guardrails + a form-builder select, scoped to the MULTISELECT card grid only (Stage 0 confirmed only MULTISELECT uses `renderCard`). Schema change (one enum + nullable-defaulted column). The broader template system remains deferred as a separate future project.
+_The registration customization spec (Feature A + B) is fully shipped — no longer in the queue. The broader per-event template/layout system remains deferred as a separate future project with its own spec._
 
 ---
 
@@ -482,6 +492,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. The only rem
 ---
 
 ## Recent decisions and lessons (newest)
+
+- **Per-field settings are DATA and are per-environment — schema crosses environments, config doesn't.** `prisma db push` carries *structure* (a new column/enum) to whichever DB it targets, and we push to both staging and prod. But a per-field *value* (e.g. `business_activity.optionColumns = TWO`) is row data written by whichever DB the app was hitting. **Preview deployments write to the staging Neon branch**, so config you set while testing on a Preview URL lands in *staging*, not production. After Feature B merged, the feature was live on prod but `business_activity` was still `AUTO` there — the launch layout had to be re-set on the **production** form-builder. Rule: treat "set it up on Preview" as a rehearsal; any per-field/per-event config that matters for launch must be redone on production (or migrated deliberately). Verify via the public API (`optionColumns=…`), not by memory of what Preview looked like.
 
 - **Vercel Blob token identity = the embedded store id, NOT the env-var name.** Both Blob stores expose their read-write token in the dashboard under the *same* name `BLOB_READ_WRITE_TOKEN`; the custom name `BLOB_PUBLIC_READ_WRITE_TOKEN` exists only in our code/env. The store id is embedded in the token value — `vercel_blob_rw_<storeId>_…` — so verify which token you have by that, not the variable name. Public store = `O0LBuk4rM0qMcAYL`, private = `Q7RjwvBaaLwKE6eR`. This bit us: the private token was pasted into `BLOB_PUBLIC_READ_WRITE_TOKEN` on Vercel, and `put({access:"public"})` failed with *"Cannot use public access on a private store"* (a *valid* token for the *wrong* store — not an auth error). Confirm before deploying with: `vercel_blob_rw_` + store id.
 - **Blob `access` is a STORE-level setting, not per-blob.** A private store rejects `put({access:"public"})` outright — public and private blobs cannot coexist in one store. Public-serving branding assets needed a *separate* public store. The one-time `public-put-smoke-test.ts` gate caught this before any upload code was built.
@@ -525,7 +537,7 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. The only rem
 - `specs/ADMIN_EDIT_FIX_SPEC.md` — ARC COMPLETE on production (Stages 1, 2, 4); Stage 3 backend live, Stage 3 UI deferred per `[[radix-dialog-post-refetch-race]]`
 - `specs/FIELD_MAPPING_SPEC.md` — FEATURE COMPLETE (all 5 PRs shipped: #24, #25, #26, #27, #28)
 - `specs/REGISTRATION_REDESIGN_SPEC.md` — FEATURE COMPLETE (Stages 1+2 shipped: PRs #40, #41)
-- `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` — **Feature A COMPLETE** (header & logo controls + upload; Stages 1+2+3 merged PR #42, `5ab3977`); **Feature B NOT STARTED** (per-field option columns, §6 — next queued). Template system deferred separately.
+- `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` — **Feature A + B both COMPLETE — spec fully shipped.** A: header & logo controls + upload (PR #42, `5ab3977`). B: per-field option columns (PR #43, `46a99eb`). Template system deferred separately.
 - `CLAUDE.md` — project conventions
 - `prisma/schema.prisma` — current schema
 - `PROJECT_HANDOFF.md` — this document
@@ -548,4 +560,4 @@ Claude will read this handoff + the specs + memory and pick up from here without
 
 ---
 
-*Updated 2026-06-03. **Registration customization Feature A is COMPLETE and live on production** (header color + auto-contrast, logo/event-name hard switch, logo size, logo/favicon upload — Stages 1+2+3, PR #42 `5ab3977`). New **`branding-public` public Blob store** + `BLOB_PUBLIC_READ_WRITE_TOKEN` (Preview+Prod) — there are now TWO blob stores; identify a token by its embedded store id, not the var name. **Feature B (per-field option columns)** is the next queued work; template system still deferred. Open gaps: FILE Stage 3 UI retry (queue #1); rotate the credentials surfaced during setup.*
+*Updated 2026-06-04. **Registration customization spec FULLY SHIPPED** — Feature A (header/logo controls + upload, PR #42 `5ab3977`) and Feature B (per-field option columns, PR #43 `46a99eb`) both complete and live on production. Two Blob stores now (private + `branding-public`); identify a token by its embedded store id, not the var name. Per-field config is per-environment data — Preview writes hit staging, so Productive Families' `business_activity` column choice must be re-set on the production form-builder (still `AUTO` on prod). Next priority: FILE Stage 3 UI retry (queue #1). Open hygiene: rotate the DB passwords + blob token surfaced during setup.*
