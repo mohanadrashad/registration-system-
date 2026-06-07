@@ -20,6 +20,7 @@ import {
   OTHER_VALUE,
 } from "@/lib/form-builder/options-parse";
 import type { FormFieldDef } from "./field-display";
+import { FileFieldEditCell } from "./file-field-edit-cell";
 
 /**
  * Edit input for a single form field. Behaviour is a 1:1 port of the
@@ -39,12 +40,22 @@ export function FieldEditInput({
   onChange,
   otherText,
   onChangeOtherText,
+  eventId,
+  contactId,
+  onFileChanged,
 }: {
   field: FormFieldDef;
   value: unknown;
   onChange: (v: unknown) => void;
   otherText?: string;
   onChangeOtherText?: (v: string) => void;
+  // FILE-only admin plumbing. When all three are supplied the FILE
+  // branch renders the rich View/Replace/Remove cell; otherwise it
+  // falls back to a read-only filename label. Non-FILE surfaces
+  // (IdentityCard) simply never reach the FILE branch.
+  eventId?: string;
+  contactId?: string;
+  onFileChanged?: () => void | Promise<void>;
 }) {
   const parsed = parseFormFieldOptions(field.options);
   const otherEnabled = !!parsed.other;
@@ -234,20 +245,28 @@ export function FieldEditInput({
     );
   }
   if (field.type === "FILE") {
-    // Read-only. Admin Replace/Remove UI was attempted in Stage 3 of
-    // ADMIN_EDIT_FIX_SPEC but ran into a DOMException race in Radix
-    // FocusScope's close-time focus restoration that we couldn't
-    // resolve without deeper investigation. Backend is shipped (the
-    // /files/[fileId]/replace POST, DELETE /files/[fileId], and
-    // /files/[fileId]/meta GET endpoints all exist and work in
-    // production). Future UI revival should start by reproducing
-    // the race locally with sourcemaps enabled, OR by lifting the
-    // confirm dialogs to a page-level scope that doesn't unmount on
-    // parent refetch.
-    //
-    // No editable <input> here because the formData[fieldName] value
-    // for type=FILE is a `{ fileId, filename, mimeType, sizeBytes }`
-    // object: an editable input would coerce it to "[object Object]"
+    // Admin View / Replace / Remove + provenance. Wired when the caller
+    // supplies eventId + contactId + onFileChanged (the attendee detail
+    // page, via RegistrationAnswersCard). The cell commits Replace/
+    // Remove immediately against the Stage 3 backend endpoints and calls
+    // onFileChanged() to resync. Every conditional placement inside the
+    // cell is CSS-hidden so the post-action refetch can't race React's
+    // commit phase — see file-field-edit-cell.tsx.
+    if (eventId && contactId && onFileChanged) {
+      return (
+        <FileFieldEditCell
+          field={field}
+          value={value}
+          eventId={eventId}
+          contactId={contactId}
+          onFileChanged={onFileChanged}
+        />
+      );
+    }
+    // Fallback for surfaces without the admin plumbing: a read-only
+    // filename label. No editable <input> because the formData[fieldName]
+    // value for type=FILE is a `{ fileId, filename, mimeType, sizeBytes }`
+    // object — an editable input would coerce it to "[object Object]"
     // and a stray keystroke would silently clobber the file ref in
     // editValues.
     const file =
@@ -298,7 +317,8 @@ export function FieldEditInput({
           </p>
         )}
         <p className="text-xs text-muted-foreground">
-          Visitor-uploaded — admin replace/remove deferred to future stage.
+          Read-only — Replace/Remove are available on the attendee detail
+          page.
         </p>
       </div>
     );
