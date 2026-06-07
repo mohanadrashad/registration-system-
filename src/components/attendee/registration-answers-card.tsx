@@ -27,6 +27,7 @@ export function RegistrationAnswersCard({
   eventId,
   contactId,
   onFileChanged,
+  hasRegistration,
 }: {
   contact: ContactDetail;
   fields: FormFieldDef[];
@@ -35,13 +36,13 @@ export function RegistrationAnswersCard({
   onChangeValue: (name: string, v: unknown) => void;
   // eventId builds the FILE stream-through URL in view mode
   // (FileViewerInline). contactId + onFileChanged add the edit-mode
-  // admin Replace/Remove cell (Stage 3 UI revival — backend shipped in
-  // PR #23, UI wired here after the commit-phase race was fixed via
-  // CSS-hide stabilization). onFileChanged resyncs the parent after an
-  // immediate Replace/Remove commit.
+  // admin Replace/Remove/Upload cell. onFileChanged resyncs the parent
+  // after an immediate file commit. hasRegistration gates the
+  // upload-into-empty affordance (formData lives on Registration).
   eventId: string;
   contactId: string;
   onFileChanged: () => void | Promise<void>;
+  hasRegistration: boolean;
 }) {
   return (
     <Card>
@@ -74,6 +75,7 @@ export function RegistrationAnswersCard({
                   eventId={eventId}
                   contactId={contactId}
                   onFileChanged={onFileChanged}
+                  hasRegistration={hasRegistration}
                 />
               </div>
             ))}

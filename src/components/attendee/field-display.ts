@@ -14,6 +14,10 @@ export { isSyntheticEmail };
 export type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
 
 export interface FormFieldDef {
+  // FormField cuid — needed to address the field in admin file routes
+  // (e.g. the upload-into-empty endpoint keyed on formFieldId). Other
+  // surfaces key on `name` (the formData/metadata key).
+  id: string;
   name: string;
   label: string;
   labelAr: string | null;

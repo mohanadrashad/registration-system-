@@ -43,6 +43,7 @@ export function FieldEditInput({
   eventId,
   contactId,
   onFileChanged,
+  hasRegistration,
 }: {
   field: FormFieldDef;
   value: unknown;
@@ -56,6 +57,9 @@ export function FieldEditInput({
   eventId?: string;
   contactId?: string;
   onFileChanged?: () => void | Promise<void>;
+  // Whether the contact has a registration — gates the upload-into-empty
+  // affordance in the FILE cell (formData lives on Registration).
+  hasRegistration?: boolean;
 }) {
   const parsed = parseFormFieldOptions(field.options);
   const otherEnabled = !!parsed.other;
@@ -260,6 +264,7 @@ export function FieldEditInput({
           eventId={eventId}
           contactId={contactId}
           onFileChanged={onFileChanged}
+          hasRegistration={hasRegistration ?? false}
         />
       );
     }
