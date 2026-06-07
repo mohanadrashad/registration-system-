@@ -1,13 +1,13 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-06-04 (Registration customization Feature B — per-field option columns — COMPLETE and live; the customization spec is now fully shipped)
+**Last updated:** 2026-06-07 (FILE admin file-ops arc COMPLETE and live — Stage 3 UI Replace/Remove/provenance + admin upload-into-empty + the Upload/Replace webhook-timing read-back poll fix; queue #1 and #2 both DONE)
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
 **Storage — TWO Vercel Blob stores:** (1) **private** store (id `Q7RjwvBaaLwKE6eR`, env `BLOB_READ_WRITE_TOKEN`) — visitor FILE uploads + phase receipts, served via stream-through. (2) **`branding-public`** store (PUBLIC, id `store_O0LBuk4rM0qMcAYL`, env `BLOB_PUBLIC_READ_WRITE_TOKEN` — set in **Preview + Production**) — admin-uploaded logos/favicons, served as direct CDN URLs on the public registration page. A logo isn't secret; the private store rejects `access:"public"` (store-level), which forced the second store.
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
-**Branch in progress:** none — between projects (REGISTRATION_CUSTOMIZATION spec fully shipped; next priority is FILE Stage 3 UI retry, queue #1)
-**Production branch:** `main`, HEAD at `46a99eb` (Feature B merge, PR #43)
+**Branch in progress:** none — between projects (FILE admin file-ops arc fully shipped; queue #1 and #2 both done — no queued substantive feature)
+**Production branch:** `main`, HEAD at `9275958` (admin upload-into-empty + read-back poll, PR #45)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
@@ -30,6 +30,32 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-07 — FILE admin file-ops arc — COMPLETE, live on prod (queue #1 + #2 closed)
+
+The whole dashboard file-management story for FILE fields is now real: admins can **View / Replace / Remove** a visitor's uploaded file, **upload a new file into an empty field**, and see **provenance** (who uploaded, when, replaced-or-not) — all from the attendee detail page. Two merges this session, plus a production-race fix found on Preview.
+
+**FILE Stage 3 UI — Replace/Remove + provenance** — `76527aa` (PR #44, squash merge). The UI reverted from admin-edit Stage 3 (PR #23) over the "Radix race," rebuilt clean. Closes the last outstanding item of the admin-edit-fix arc.
+
+- Backend (services + replace/remove/meta endpoints) was already live from PR #23; this wired the UI into `FieldEditInput`'s FILE branch via a new `FileFieldEditCell`.
+- **Applied the PR #39 stable-DOM template verbatim:** every conditional placement always-mounted + CSS-`hidden`-toggled (the `file?…:<p>No file>` ternary, size/mime spans, in-button Loader2s, dialog "current file" + required lines, provenance as one always-mounted `<p>`). The post-action refetch flips the cell value (object→null on Remove, object→object on Replace) with nothing unmounting, so the closing Dialog's Presence exit + toast portal have no sibling teardown to race. The discredited 250ms `setTimeout` buffer is gone.
+- Plumbing: page → `RegistrationAnswersCard` → `FieldEditInput` now forwards `contactId` + `onFileChanged` (= the page's `fetchContact`). The orphaned `/meta` endpoint now backs the provenance line.
+- **Diagnostic discipline that finally worked:** smoke-tested headlessly with Playwright against `npm run dev` (Turbopack sourcemaps) + `pageerror`/`console.error` capture — Remove (object→null, with-sibling AND last-and-only), Replace (object→object). Zero commit-phase DOMExceptions. Memory `[[file-stage3-ui-complete]]`.
+
+**admin upload-into-empty** — `9275958` (PR #45, squash merge; feature `d3a79e8` + race fix `0764def`). Lets an admin upload a NEW file into a FILE field that's currently empty (after a Remove, or a visitor who never uploaded) — closes the operational dead-end the Stage 3 work surfaced. No schema change.
+
+- **New `POST /api/events/[eventId]/contacts/[contactId]/fields/[formFieldId]/upload`** — keyed on `formFieldId` (an empty field has no fileId), mirrors the replace route's `handleUpload` webhook pattern (auth INSIDE `onBeforeGenerateToken`).
+- **`validateAdminUploadTarget`** — walks contact → registration (1:1) + formField; rejects registration-less contacts (v1 hides the Upload button; auto-create is a v2 non-goal) and enforces the **empty-field guard**: a non-empty field rejects with "This field already has a file — use Replace instead." (keeps Upload/Replace disjoint, blocks double-write).
+- **`completeAdminCreateFile`** — insert-only sibling of `completeAdminReplaceFile` (no old row/blob). Shared dual-store write (`Registration.formData` + `Contact.metadata` + `updater` stamp) factored into **`writeFileRefDualStore`**, now used by create / replace / remove.
+- **Distinct `admin-new:<id>` provenance sentinel** (vs replace's `admin:<id>`) → `getAdminFileProvenance` returns `wasReplaced:false` → the provenance line reads "Uploaded by &lt;admin&gt; on &lt;date&gt;" WITHOUT the "(replaced visitor upload)" clause for admin-created-into-empty files.
+- Frontend: Upload button in the cell's always-mounted no-file block, `Pending` union += `"upload"`, a second always-mounted hidden `<input>`, all CSS-hide discipline, no Dialog (upload-into-empty is non-destructive). `FormFieldDef` gained `id` (the URL key; added to the contact GET select). Memory `[[admin-upload-empty-complete]]`.
+
+**Webhook-timing race fix (the important one)** — `0764def`, bundled into PR #45. **Found on Preview, was live-in-prod-silent for Replace:** `@vercel/blob` `upload()` resolves when bytes hit storage, BEFORE the `onUploadCompleted` webhook persists the RegistrationFile row + dual-store refs — so the single immediate `onFileChanged()` refetch read **stale/empty** data. Upload showed "No file uploaded" until a manual refresh; **Replace silently showed the OLD file, looking like success.** (Remove is unaffected — synchronous DELETE handler, no webhook.)
+
+- Fix mirrors the visitor-side `waitForUploadedFile` (`file-upload-control.tsx`): after `await upload()`, **poll** a new read-back endpoint until the field reflects the new file, THEN settle — not one immediate refetch, not blanket auto-refresh.
+- New `GET .../fields/[formFieldId]/file` + `getAdminCurrentFile`. `waitForFieldFile` polls 12×800ms (~10s); Upload waits for any ref, Replace for a *different* fileId (the webhook swaps old→new atomically). Spinner stays up through the poll.
+- **Timeout state:** if the window elapses, a persistent always-mounted (CSS-hidden) amber "your file was sent but is taking longer than usual — refresh to check" — so a lost race never reads as success.
+- Verified clean on **Preview against the real webhook** (Upload + Replace show the file, no manual refresh, no stale flash) before merge. See the lesson below.
 
 ### 2026-06-04 — Registration customization Feature B — COMPLETE, live on prod (spec fully shipped)
 
@@ -457,11 +483,16 @@ Category-Based Phase Logic, Vercel Prisma client regen fix, Attendee Detail Rede
 
 ## Queue (in priority order)
 
-1. **Stage 3 UI retry — Replace/Remove buttons + provenance.** Deferred from FILE-field admin-edit Stage 3 backend merge. Backend (services + endpoints + meta endpoint) is live. The race that blocked the original UI is now fully diagnosed and has a reusable fix template from PR #39 — see updated `[[radix-dialog-post-refetch-race]]` memory. Four-step template: (1) silent refetch with `opts.silent` on parent's refetch; (2) audit ALL action paths, not just one; (3) stabilize every conditional placement with CSS-hide; (4) smoke last-row + multi-row + dialog paths. The hard part (diagnosis) is done; UI rebuild expected to be mechanical now.
+_Queue is empty — no queued substantive feature. The broader per-event template/layout system remains deferred as a separate future project with its own spec._
 
-2. **Admin-upload-from-empty.** Admin can upload a NEW file (not just replace) when FILE field has no value. Mostly a duplicate of Replace logic. Half-day of work once Stage 3 UI retry is resolved. Critical for Productive Families if visitor's commercial registration is missing.
+### DONE
 
-_The registration customization spec (Feature A + B) is fully shipped — no longer in the queue. The broader per-event template/layout system remains deferred as a separate future project with its own spec._
+- ✅ **Stage 3 UI retry — Replace/Remove buttons + provenance** (was queue #1) — shipped 2026-06-07, PR #44 (`76527aa`). The reusable PR #39 stable-DOM template applied cleanly; UI rebuild was mechanical as predicted. `[[file-stage3-ui-complete]]`.
+- ✅ **Admin-upload-from-empty** (was queue #2) — shipped 2026-06-07, PR #45 (`9275958`). New upload-into-empty endpoint + empty-field guard + `admin-new:` provenance sentinel + the Upload/Replace read-back poll race fix. `[[admin-upload-empty-complete]]`.
+
+### Open follow-up tickets (small, not blocking)
+
+- **Friendlier admin file-op error surfacing.** `@vercel/blob` `upload()` swallows the body of an `onBeforeGenerateToken` 400, so real Replace/Upload failures surface a generic SDK message ("Vercel Blob: Failed to retrieve the client token") instead of our specific reason (e.g. the empty-field guard's "use Replace instead"). User-reachable on genuine failures; pre-existing (also affects Replace). Would need a pre-flight check before `upload()`, or surfacing the reason another way. Low priority.
 
 ---
 
@@ -471,7 +502,7 @@ _The registration customization spec (Feature A + B) is fully shipped — no lon
 
 **Status:** The original 2026-05-23 diagnosis was wrong (vendor-chunk obscured production stacks made React's reconciler look like a Radix internal). Real cause + three-phase fix shipped in PR #39 (`80c3523`). Full diagnosis + reusable fix template in `[[radix-dialog-post-refetch-race]]` memory.
 
-**Still outstanding:** the FILE Stage 3 UI retry (queue item 1) hasn't been re-attempted yet. The race that originally blocked it has a known fix template now (silent refetch + audit all action paths + CSS-hide every conditional placement + smoke last-row/multi-row/dialog paths). UI rebuild expected to be mechanical when picked up.
+**Resolved 2026-06-07:** the FILE Stage 3 UI retry (PR #44) applied the template and shipped clean — Replace/Remove/provenance, zero DOMExceptions across all action paths. Nothing outstanding from this race.
 
 ---
 
@@ -485,13 +516,17 @@ _The registration customization spec (Feature A + B) is fully shipped — no lon
 - ✅ New centered-card registration page in production (Stages 1+2 of the redesign)
 - ✅ **Name display resolved** — field-mapping is complete (PRs #24–#28) and PF's fields are tagged (First Name → FIRST_NAME; Middel Name + Third Name → LAST_NAME). Dashboard verified: **4/4** existing rows show real names, zero `Reg #...` fallbacks. No longer blocked.
 - ✅ **`secondaryColor = #CB1681` set** in the Colors tab — submit-button green→magenta gradient now active.
-- ⚠️ **Admin can't fix wrong/missing visitor uploads from dashboard** — Stage 3 UI still deferred (queue item 1). Workaround: ask visitor to re-register or fix via Prisma Studio.
+- ✅ **Admin can fix wrong/missing visitor uploads from the dashboard** — resolved 2026-06-07. View/Replace/Remove (PR #44) + upload-into-empty (PR #45) all live on the attendee detail page; no Prisma Studio workaround needed.
 
-Launched 2026-06-03 on the redesigned page with field-mapping live. The only remaining functional gap is admin file Replace/Remove from the dashboard (queue item 1).
+Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-06-07 there are no remaining functional gaps — admin file Replace/Remove/Upload-into-empty all work from the dashboard.
 
 ---
 
 ## Recent decisions and lessons (newest)
+
+- **Client-upload flows have a webhook-timing race — and localhost mocks HIDE it. Verify against the real webhook on Preview, never a localhost mock.** `@vercel/blob` `upload()` resolves when bytes hit storage, BEFORE the `onUploadCompleted` webhook persists the DB row. So a refetch fired immediately after `await upload()` reads stale/empty data. Admin Upload AND Replace both had this; **Replace's was SILENT** — a lost race showed the OLD file, which reads as success — and it was **live in prod from the Stage 3 UI merge until the 2026-06-07 fix**. The bug survived earlier testing because the webhook *cannot reach localhost*, so a mocked refetch never exercised the real ordering. **Fix:** read-back poll mirroring the visitor `waitForUploadedFile` (`file-upload-control.tsx`) — after `await upload()`, poll until the field reflects the new file (12×800ms ≈ 10s), then settle; on timeout show an honest "taking longer — refresh to check" state, never silently empty/stale. **Process rule: any file-upload flow (anything using `@vercel/blob` client `upload()` + an `onUploadCompleted` webhook) MUST be verified against the real webhook on a Preview deployment. A green localhost smoke proves nothing about webhook timing** — locally the webhook is effectively mocked away. For local smoking, substitute the webhook with a poll-synchronized real DB write, but treat Preview as the gate. `[[admin-upload-empty-complete]]`.
+
+- **`@vercel/blob` `upload()` swallows `onBeforeGenerateToken` 400 bodies.** A reason thrown inside `onBeforeGenerateToken` (e.g. the empty-field guard, an auth failure) comes back to the client as a generic "Vercel Blob: Failed to retrieve the client token" — our specific message is lost. Server-side rejection is still correct (400, no row). Filed as the "friendlier admin file-op error surfacing" follow-up ticket. Affects every `handleUpload`-based admin route (Replace too), so most error paths are unreachable via normal UI but the message fidelity is poor when they are hit.
 
 - **Per-field settings are DATA and are per-environment — schema crosses environments, config doesn't.** `prisma db push` carries *structure* (a new column/enum) to whichever DB it targets, and we push to both staging and prod. But a per-field *value* (e.g. `business_activity.optionColumns = TWO`) is row data written by whichever DB the app was hitting. **Preview deployments write to the staging Neon branch**, so config you set while testing on a Preview URL lands in *staging*, not production. After Feature B merged, the feature was live on prod but `business_activity` was still `AUTO` there — the launch layout had to be re-set on the **production** form-builder. Rule: treat "set it up on Preview" as a rehearsal; any per-field/per-event config that matters for launch must be redone on production (or migrated deliberately). Verify via the public API (`optionColumns=…`), not by memory of what Preview looked like.
 
@@ -521,6 +556,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. The only rem
 - `register-redesign-complete.md` — Stages 1+2 shipped 2026-06-02; centered-card shell + MULTISELECT card grid; 5 locked spec deviations including primaryColor-themed MULTISELECT over hardcoded green
 - `spec-literal-vs-event-theming.md` — when a spec writes literal hex for visual states on controls themed off EventBranding, flag as deviation question; user prefers `primaryColor + alpha-derived tint` over hardcoded brand color
 - `branch-cleanup-gh-api-delete.md` — PR-merge cleanup uses `gh api -X DELETE refs/heads/<branch>`, NOT `--delete-branch`; required by the worktree setup. Codifies the squash → API-delete → detach → local-delete → watch-prod-deploy sequence.
+- `file-stage3-ui-complete.md` — FILE Stage 3 UI (Replace/Remove/provenance) shipped via the CSS-hide stable-DOM template; reusable Playwright network-interception smoke for the remote-DB/local-webhook env; stale-dev-server auth-500 footgun
+- `admin-upload-empty-complete.md` — upload-into-empty endpoint + empty-field guard + `admin-new:` provenance sentinel + shared `writeFileRefDualStore`; the webhook-timing race + read-back poll fix; webhook-can't-fire-on-localhost verification reality (real timeout test vs poll-synchronized DB-write success test); tsx `@/`-alias service-test technique
 
 ---
 
@@ -532,9 +569,9 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. The only rem
 - `specs/CATEGORY_PHASES_SPEC.md` — completed feature
 - `specs/TRANSLATION_AND_BULK_OPTIONS_SPEC.md` — completed feature
 - `specs/OTHER_AND_MAX_SELECTIONS_SPEC.md` — completed feature
-- `specs/FILE_FIELD_SPEC.md` — completed feature
+- `specs/FILE_FIELD_SPEC.md` — completed feature; admin file-ops fully realized 2026-06-07 (View/Replace/Remove/provenance PR #44 + upload-into-empty PR #45)
 - `specs/EMAIL_OPTIONAL_EVENTS_SPEC.md` — completed feature
-- `specs/ADMIN_EDIT_FIX_SPEC.md` — ARC COMPLETE on production (Stages 1, 2, 4); Stage 3 backend live, Stage 3 UI deferred per `[[radix-dialog-post-refetch-race]]`
+- `specs/ADMIN_EDIT_FIX_SPEC.md` — ARC FULLY COMPLETE on production. Stages 1, 2, 4 + Stage 3 backend AND Stage 3 UI (Replace/Remove/provenance, PR #44, `76527aa`) all live. Nothing deferred.
 - `specs/FIELD_MAPPING_SPEC.md` — FEATURE COMPLETE (all 5 PRs shipped: #24, #25, #26, #27, #28)
 - `specs/REGISTRATION_REDESIGN_SPEC.md` — FEATURE COMPLETE (Stages 1+2 shipped: PRs #40, #41)
 - `specs/REGISTRATION_CUSTOMIZATION_SPEC.md` — **Feature A + B both COMPLETE — spec fully shipped.** A: header & logo controls + upload (PR #42, `5ab3977`). B: per-field option columns (PR #43, `46a99eb`). Template system deferred separately.
@@ -548,16 +585,13 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. The only rem
 
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
-3. State what you want to work on:
-   - "Let's build Feature B (per-field option columns)" → Feature A is done; spec §6 ready, MULTISELECT-scoped, one small schema change (queue #3)
-   - "I want to retry Stage 3 UI (FILE Replace/Remove)" → has diagnosis ready, requires sourcemap setup first (the last outstanding item from the admin-edit-fix arc)
-   - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
-   - "Let's do the auth posture sweep" → ~25 legacy-`auth()` handlers across events API, each needs its own audit + role decision; one larger PR
-   - "I want to retry Stage 3 UI" → has diagnosis ready, requires sourcemap setup first
-   - "Let's spec admin-upload-from-empty" → smaller feature, requires Stage 3 UI to be working first
+3. State what you want to work on. The queue is empty — recent arcs (registration customization, FILE admin file-ops) are all shipped. Possible next directions:
+   - **Friendlier admin file-op error surfacing** → small follow-up ticket (see "Open follow-up tickets"); make the empty-field-guard / auth reasons reach the admin instead of the generic SDK token message.
+   - **The per-event template / layout system** → the larger deferred project; needs its own spec.
+   - Or bring a new feature request — Claude will spec → audit → mockup → chunk → PR as usual.
 
-Claude will read this handoff + the specs + memory and pick up from here without re-asking.
+Whatever you pick, Claude will read this handoff + the specs + memory and pick up from here without re-asking.
 
 ---
 
-*Updated 2026-06-04. **Registration customization spec FULLY SHIPPED** — Feature A (header/logo controls + upload, PR #42 `5ab3977`) and Feature B (per-field option columns, PR #43 `46a99eb`) both complete and live on production. Two Blob stores now (private + `branding-public`); identify a token by its embedded store id, not the var name. Per-field config is per-environment data — Preview writes hit staging (general lesson retained below); Productive Families' `business_activity` is set to 2 columns on production and verified live. Next priority: FILE Stage 3 UI retry (queue #1). Open hygiene: rotate the DB passwords + blob token surfaced during setup.*
+*Updated 2026-06-07. **FILE admin file-ops arc FULLY SHIPPED** — Stage 3 UI Replace/Remove/provenance (PR #44 `76527aa`) + admin upload-into-empty (PR #45 `9275958`), both live on production. The webhook-timing read-back poll fix (`0764def`, bundled in PR #45) closed a silent Replace race that was live in prod. Queue #1 and #2 both DONE; queue now empty. **Process rule added: verify any `@vercel/blob` client-upload flow against the REAL webhook on Preview — localhost mocks the webhook away and hides timing races.** Open follow-up: friendlier admin file-op error surfacing (SDK swallows 400 bodies). Open hygiene (still pending from 2026-06-03): rotate the DB passwords + `branding-public` blob token surfaced during setup.*
