@@ -1062,3 +1062,72 @@ export async function getAdminFileProvenance(input: {
     wasReplaced: false,
   };
 }
+
+// ─── Admin file read-back (post-upload poll) ─────────────────────────
+//
+// Backs the cell's poll after an admin Upload/Replace. The @vercel/blob
+// `upload()` resolves when bytes hit storage, BEFORE the onUploadCompleted
+// webhook writes the RegistrationFile row + dual-store refs. A single
+// immediate refetch therefore races the webhook (see the visitor-side
+// waitForUploadedFile in file-upload-control.tsx). The cell polls this
+// until the field reflects the new file, then settles.
+//
+// Returns the current denormalized ref for (contact's registration,
+// formField), or null when no file is present yet — null is a NORMAL
+// transient state during the webhook window, NOT an error, so callers
+// keep polling rather than 404ing. Cross-event / cross-contact / non-FILE
+// mismatches also return null (a probe can't distinguish "empty" from
+// "not yours", so existence doesn't leak).
+
+export interface AdminCurrentFile {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export async function getAdminCurrentFile(input: {
+  eventId: string;
+  contactId: string;
+  formFieldId: string;
+}): Promise<AdminCurrentFile | null> {
+  const contact = await prisma.contact.findUnique({
+    where: { id: input.contactId },
+    select: { eventId: true, registration: { select: { id: true } } },
+  });
+  if (!contact || contact.eventId !== input.eventId || !contact.registration) {
+    return null;
+  }
+
+  const formField = await prisma.formField.findUnique({
+    where: { id: input.formFieldId },
+    select: { eventId: true, type: true },
+  });
+  if (
+    !formField ||
+    formField.eventId !== input.eventId ||
+    formField.type !== FieldType.FILE
+  ) {
+    return null;
+  }
+
+  // Defensive desc + first: post-submission there is exactly one row per
+  // (registration, formField), but a Replace's old/new swap is atomic so
+  // the poll only ever sees one committed row at a time.
+  const row = await prisma.registrationFile.findFirst({
+    where: {
+      registrationId: contact.registration.id,
+      formFieldId: input.formFieldId,
+    },
+    orderBy: { uploadedAt: "desc" },
+    select: { id: true, originalName: true, mimeType: true, sizeBytes: true },
+  });
+  if (!row) return null;
+
+  return {
+    fileId: row.id,
+    filename: row.originalName,
+    mimeType: row.mimeType,
+    sizeBytes: row.sizeBytes,
+  };
+}

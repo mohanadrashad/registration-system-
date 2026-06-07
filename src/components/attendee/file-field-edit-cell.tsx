@@ -100,6 +100,11 @@ export function FileFieldEditCell({
   const [meta, setMeta] = useState<MetaState>({ state: "idle" });
   const [pending, setPending] = useState<Pending>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
+  // Set when an Upload/Replace's post-upload poll exhausts its ~10s window
+  // without the webhook landing. Surfaces a persistent "refresh to check"
+  // line so a lost race never reads as success (empty for Upload, stale
+  // for Replace). Cleared at the start of the next file action.
+  const [timedOut, setTimedOut] = useState(false);
 
   // Lazy provenance fetch. Re-fires when fileId changes (after a Replace
   // the parent refetch hands us a new file id). Cancellation guards
@@ -137,6 +142,44 @@ export function FileFieldEditCell({
     fileInputRef.current?.click();
   }
 
+  /**
+   * Polls the read-back endpoint after an Upload/Replace until the field
+   * reflects the new file, then resolves with it. Returns null if the
+   * ~10s window elapses without the webhook landing.
+   *
+   * The @vercel/blob `upload()` resolves when bytes hit storage, BEFORE
+   * the onUploadCompleted webhook writes the RegistrationFile row — so a
+   * single immediate refetch races the webhook. Mirrors the visitor-side
+   * waitForUploadedFile loop (file-upload-control.tsx): 12 attempts at
+   * 800ms ≈ 10s. For Upload pass oldFileId=null (any ref is new); for
+   * Replace pass the old fileId (wait until a DIFFERENT row appears, since
+   * the webhook swaps old→new atomically).
+   */
+  async function waitForFieldFile(
+    oldFileId: string | null
+  ): Promise<FileRef | null> {
+    const MAX_ATTEMPTS = 12; // ~10s at 800ms intervals
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      try {
+        const res = await fetch(
+          `/api/events/${eventId}/contacts/${contactId}/fields/${field.id}/file`
+        );
+        if (res.ok) {
+          const body = (await res.json()) as { file: FileRef | null };
+          if (body.file && body.file.fileId !== oldFileId) {
+            return body.file;
+          }
+        }
+      } catch {
+        // network blip — keep polling
+      }
+      if (i < MAX_ATTEMPTS - 1) {
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    }
+    return null;
+  }
+
   async function handleReplaceFilePicked(
     e: React.ChangeEvent<HTMLInputElement>
   ) {
@@ -147,6 +190,7 @@ export function FileFieldEditCell({
 
     const targetFileId = file.fileId;
     setConfirm(null);
+    setTimedOut(false);
     setPending("replace");
     try {
       await upload(picked.name, picked, {
@@ -155,8 +199,20 @@ export function FileFieldEditCell({
         handleUploadUrl: `/api/events/${eventId}/contacts/${contactId}/files/${targetFileId}/replace`,
         contentType: picked.type,
       });
-      toast.success("File replaced");
-      await onFileChanged();
+      // Wait for the webhook to swap old→new before refetching — a single
+      // immediate refetch would read the OLD ref (the most dangerous race:
+      // a stale file that looks like success). Poll until a DIFFERENT
+      // fileId appears.
+      const ready = await waitForFieldFile(targetFileId);
+      if (ready) {
+        toast.success("File replaced");
+        await onFileChanged();
+      } else {
+        toast.error(
+          "Replace is taking longer than expected. Refresh the page to check."
+        );
+        setTimedOut(true);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Replace failed";
       toast.error(msg);
@@ -179,6 +235,7 @@ export function FileFieldEditCell({
     // is the null→object value flip (refetch) toggling the two always-
     // mounted blocks' `hidden` + the toast portal. Phase-2 shape, fully
     // CSS-hidden, no new mounts.
+    setTimedOut(false);
     setPending("upload");
     try {
       await upload(picked.name, picked, {
@@ -186,8 +243,20 @@ export function FileFieldEditCell({
         handleUploadUrl: `/api/events/${eventId}/contacts/${contactId}/fields/${field.id}/upload`,
         contentType: picked.type,
       });
-      toast.success("File uploaded");
-      await onFileChanged();
+      // Wait for the webhook to write the row before refetching — a single
+      // immediate refetch would read the still-empty field and render
+      // "No file uploaded" until a manual refresh. Poll until any ref
+      // appears (oldFileId=null).
+      const ready = await waitForFieldFile(null);
+      if (ready) {
+        toast.success("File uploaded");
+        await onFileChanged();
+      } else {
+        toast.error(
+          "Upload is taking longer than expected. Refresh the page to check."
+        );
+        setTimedOut(true);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Upload failed";
       toast.error(msg);
@@ -237,6 +306,20 @@ export function FileFieldEditCell({
 
   return (
     <div className="space-y-2">
+      {/* Poll-timeout notice — ALWAYS mounted, CSS-hidden unless an
+          Upload/Replace poll exhausted its window. Shows above both the
+          file and no-file blocks so a lost race is never silent: Upload
+          would otherwise look empty, Replace would show the stale old
+          file. Stable-DOM: className toggle only, no mount/unmount. */}
+      <p
+        className={`text-xs text-amber-600 dark:text-amber-500 ${
+          timedOut ? "" : "hidden"
+        }`}
+      >
+        ⏳ Your file was sent but is taking longer than usual to appear.
+        Refresh the page to check.
+      </p>
+
       {/* File present view — ALWAYS mounted, CSS-hidden when no file.
           Every deref is null-guarded so the hidden tree never throws. */}
       <div className={hasFile ? "space-y-2" : "hidden"}>
