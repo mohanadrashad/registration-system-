@@ -1,0 +1,472 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { upload } from "@vercel/blob/client";
+import {
+  ExternalLink,
+  Loader2,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { isFileRef } from "./file-viewer-inline";
+import type { FormFieldDef } from "./field-display";
+
+/**
+ * Edit-dialog FILE cell — admin View / Replace / Remove + provenance.
+ * Used by FieldEditInput's FILE branch when the caller supplies
+ * eventId / contactId / onFileChanged (the attendee detail page).
+ *
+ * Stage 3 of ADMIN_EDIT_FIX_SPEC. Backend endpoints (replace POST,
+ * remove DELETE, meta GET) shipped in PR #23; this is the UI revival
+ * that the original Stage 3 reverted after a Radix commit-phase race.
+ *
+ * ── Stability contract (the whole reason the first attempt failed) ──
+ * Every conditional placement here is ALWAYS-MOUNTED and toggled with a
+ * `hidden` className — NOT a `{cond ? <A/> : <B/>}` swap and NOT a
+ * `{cond && <Node/>}` mount. After a successful Replace/Remove the
+ * parent refetches the contact, which flips this cell's `value` from a
+ * file ref to null (Remove) or to a new ref (Replace). If any subtree
+ * unmounted on that transition it would race React's commit phase
+ * against the closing confirm Dialog's Radix Presence exit + the sonner
+ * toast portal mount, surfacing as
+ * `DOMException: Node.removeChild ... is not a child of this node`
+ * (commitDeletionEffectsOnFiber). Keeping the DOM stable removes the
+ * sibling teardown, so the only Radix Presence exit left has nothing to
+ * race against. See [[radix-dialog-post-refetch-race]].
+ *
+ * Consequence of stable mounting: the file subtree renders even when
+ * `file` is null (just `hidden`), so EVERY file deref below is
+ * null-guarded. Never assume `file` is non-null inside the render tree.
+ */
+
+interface FileRef {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+interface ProvenanceMeta {
+  uploadedBy: "visitor" | "admin";
+  uploadedByName: string | null;
+  uploadedAt: string;
+  wasReplaced: boolean;
+}
+
+type MetaState =
+  | { state: "idle" }
+  | { state: "loading" }
+  | { state: "loaded"; data: ProvenanceMeta }
+  | { state: "error" };
+
+type Pending = "replace" | "remove" | null;
+type Confirm = "replace" | "remove" | null;
+
+export function FileFieldEditCell({
+  field,
+  value,
+  eventId,
+  contactId,
+  onFileChanged,
+}: {
+  field: FormFieldDef;
+  value: unknown;
+  eventId: string;
+  contactId: string;
+  onFileChanged: () => void | Promise<void>;
+}) {
+  const file = isFileRef(value) ? (value as FileRef) : null;
+  const hasFile = !!file;
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [meta, setMeta] = useState<MetaState>({ state: "idle" });
+  const [pending, setPending] = useState<Pending>(null);
+  const [confirm, setConfirm] = useState<Confirm>(null);
+
+  // Lazy provenance fetch. Re-fires when fileId changes (after a Replace
+  // the parent refetch hands us a new file id). Cancellation guards
+  // against a late response clobbering a newer state.
+  useEffect(() => {
+    if (!file) {
+      setMeta({ state: "idle" });
+      return;
+    }
+    const fileId = file.fileId;
+    let cancelled = false;
+    setMeta({ state: "loading" });
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/events/${eventId}/files/${fileId}/meta`
+        );
+        if (!res.ok) {
+          if (!cancelled) setMeta({ state: "error" });
+          return;
+        }
+        const data = (await res.json()) as ProvenanceMeta;
+        if (!cancelled) setMeta({ state: "loaded", data });
+      } catch {
+        if (!cancelled) setMeta({ state: "error" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId, file?.fileId]); // eslint-disable-line react-hooks/exhaustive-deps -- keyed on the stable fileId
+
+  function handlePickFile() {
+    // Two-step (Mockup 3a): confirm first, then open the hidden picker.
+    fileInputRef.current?.click();
+  }
+
+  async function handleReplaceFilePicked(
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const picked = e.target.files?.[0];
+    // Reset so re-picking the same file still fires onChange.
+    e.target.value = "";
+    if (!picked || !file) return;
+
+    const targetFileId = file.fileId;
+    setConfirm(null);
+    setPending("replace");
+    try {
+      await upload(picked.name, picked, {
+        // Project-level store is Private; the SDK literal is "private".
+        access: "private",
+        handleUploadUrl: `/api/events/${eventId}/contacts/${contactId}/files/${targetFileId}/replace`,
+        contentType: picked.type,
+      });
+      toast.success("File replaced");
+      await onFileChanged();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Replace failed";
+      toast.error(msg);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleRemoveConfirm() {
+    if (!file) return;
+    const targetFileId = file.fileId;
+    setPending("remove");
+    try {
+      const res = await fetch(
+        `/api/events/${eventId}/contacts/${contactId}/files/${targetFileId}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error(body?.error ?? "Remove failed");
+        return;
+      }
+      toast.success("File removed");
+      // Close the dialog and refetch immediately — NO setTimeout buffer.
+      // The discredited Stage-3 attempt #2 added a 250ms delay to dodge
+      // the Radix race; it didn't work because the race was a sibling
+      // SUBTREE teardown, not a timing gap. With every placement here
+      // CSS-hidden, the refetch's value→null transition unmounts
+      // nothing; the dialog's Presence exit (driven by `open` flipping
+      // false) has no concurrent deletion to race. Stable DOM is the
+      // antidote, not a delay.
+      setConfirm(null);
+      await onFileChanged();
+    } catch {
+      toast.error("Network error. Please try again.");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  // ── Derived, null-safe display values (subtree stays mounted when
+  //    file is null, so nothing below may deref `file` directly). ──
+  const streamHref = file
+    ? `/api/events/${eventId}/files/${file.fileId}/stream`
+    : "#";
+  const prov = computeProvenanceLine(meta, pending);
+
+  return (
+    <div className="space-y-2">
+      {/* File present view — ALWAYS mounted, CSS-hidden when no file.
+          Every deref is null-guarded so the hidden tree never throws. */}
+      <div className={hasFile ? "space-y-2" : "hidden"}>
+        <p className="text-sm">
+          <span aria-hidden="true">📄</span>{" "}
+          <span className="font-medium break-words">
+            {file?.filename ?? ""}
+          </span>
+          <span className="text-muted-foreground">
+            {" · "}
+            {file ? formatBytes(file.sizeBytes) : ""}
+          </span>
+          <span className="text-muted-foreground">
+            {" · "}
+            {file ? mimeLabel(file.mimeType) : ""}
+          </span>
+        </p>
+
+        {/* Provenance — ONE always-mounted <p>; spinner + text driven by
+            state, never a {data && <line>} mount. Hidden only when there
+            is nothing at all to say (idle with no file). */}
+        <p
+          className={`text-xs italic flex items-center gap-1 ${
+            prov.text ? "text-muted-foreground" : "hidden"
+          }`}
+        >
+          <Loader2
+            className={`h-3 w-3 animate-spin ${
+              prov.spinner ? "" : "hidden"
+            }`}
+          />
+          <span>{prov.text}</span>
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* View — plain link, no portal, never races. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7"
+            asChild
+          >
+            <a href={streamHref} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="mr-1 h-3 w-3" />
+              View
+            </a>
+          </Button>
+
+          {/* Replace — Loader2 + icon both always mounted, CSS-toggled. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7"
+            disabled={pending !== null || !hasFile}
+            onClick={() => setConfirm("replace")}
+          >
+            <Loader2
+              className={`mr-1 h-3 w-3 animate-spin ${
+                pending === "replace" ? "" : "hidden"
+              }`}
+            />
+            <RotateCcw
+              className={`mr-1 h-3 w-3 ${
+                pending === "replace" ? "hidden" : ""
+              }`}
+            />
+            <span>{pending === "replace" ? "Replacing…" : "Replace"}</span>
+          </Button>
+
+          {/* Remove — same always-mounted icon pair. */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 text-destructive hover:text-destructive"
+            disabled={pending !== null || !hasFile}
+            onClick={() => setConfirm("remove")}
+          >
+            <Loader2
+              className={`mr-1 h-3 w-3 animate-spin ${
+                pending === "remove" ? "" : "hidden"
+              }`}
+            />
+            <Trash2
+              className={`mr-1 h-3 w-3 ${
+                pending === "remove" ? "hidden" : ""
+              }`}
+            />
+            <span>Remove</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* No-file state — ALWAYS mounted, CSS-hidden when a file exists. */}
+      <p
+        className={`text-sm text-muted-foreground italic ${
+          hasFile ? "hidden" : ""
+        }`}
+      >
+        No file uploaded
+      </p>
+
+      {/* Hidden picker — opened via fileInputRef from the Replace
+          confirm "Pick file…" button. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleReplaceFilePicked}
+      />
+
+      {/* Replace confirm dialog (Mockup 3a). The <Dialog> wrapper is
+          always mounted; only `open` flips. Gated on hasFile so a
+          value→null refetch auto-closes it. All content is null-guarded
+          for the exit frame. */}
+      <Dialog
+        open={hasFile && confirm === "replace"}
+        onOpenChange={(open) => !open && pending === null && setConfirm(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Replace this file?</DialogTitle>
+            <DialogDescription>
+              Replace the visitor&apos;s uploaded file? The original file will
+              be deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <p className={`text-sm text-muted-foreground ${file ? "" : "hidden"}`}>
+            Current: {file?.filename ?? ""} (
+            {file ? formatBytes(file.sizeBytes) : ""})
+          </p>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirm(null)}
+              disabled={pending !== null}
+            >
+              Keep as is
+            </Button>
+            <Button onClick={handlePickFile} disabled={pending !== null}>
+              Pick file…
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove confirm dialog (Mockup 3b). Same always-mounted wrapper +
+          hasFile-gated open. The in-button Loader2 is always mounted and
+          CSS-hidden so it never unmounts inside the Dialog as Presence
+          exits (the #10 race from the approvals fix). */}
+      <Dialog
+        open={hasFile && confirm === "remove"}
+        onOpenChange={(open) => !open && pending === null && setConfirm(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove this file?</DialogTitle>
+            <DialogDescription>
+              Remove the visitor&apos;s uploaded file? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <p className={`text-sm text-muted-foreground ${file ? "" : "hidden"}`}>
+            Will remove: {file?.filename ?? ""} (
+            {file ? formatBytes(file.sizeBytes) : ""})
+          </p>
+          <p
+            className={`text-xs text-amber-600 dark:text-amber-500 ${
+              field.required ? "" : "hidden"
+            }`}
+          >
+            ⚠ This field is required. The registration will be flagged as
+            missing required data until a new file is uploaded.
+          </p>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirm(null)}
+              disabled={pending !== null}
+            >
+              Keep as is
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleRemoveConfirm}
+              disabled={pending !== null}
+            >
+              <Loader2
+                className={`mr-2 h-3.5 w-3.5 animate-spin ${
+                  pending === "remove" ? "" : "hidden"
+                }`}
+              />
+              <span>Remove file</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/**
+ * Collapses (pending, meta) into a single { text, spinner } for the
+ * always-mounted provenance line. Returning a value object — never JSX —
+ * keeps the element identity stable at the call site.
+ */
+function computeProvenanceLine(
+  meta: MetaState,
+  pending: Pending
+): { text: string; spinner: boolean } {
+  if (pending === "replace") {
+    return { text: "Uploading new file…", spinner: true };
+  }
+  if (pending === "remove") {
+    return { text: "Removing…", spinner: true };
+  }
+  if (meta.state === "loading") {
+    return { text: "Loading provenance…", spinner: false };
+  }
+  if (meta.state === "error") {
+    return { text: "Could not load provenance.", spinner: false };
+  }
+  if (meta.state === "idle") {
+    return { text: "", spinner: false };
+  }
+  const { data } = meta;
+  const dateStr = formatDate(data.uploadedAt);
+  if (data.uploadedBy === "visitor") {
+    return { text: `Uploaded by visitor on ${dateStr}`, spinner: false };
+  }
+  const name = data.uploadedByName ?? "a former admin";
+  return {
+    text: `Uploaded by ${name} on ${dateStr} (replaced visitor upload)`,
+    spinner: false,
+  };
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function mimeLabel(mime: string | undefined): string {
+  if (!mime) return "";
+  if (mime === "application/pdf") return "PDF";
+  if (mime === "image/jpeg") return "JPEG";
+  if (mime === "image/png") return "PNG";
+  if (
+    mime ===
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
+    return "DOCX";
+  }
+  if (
+    mime ===
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  ) {
+    return "XLSX";
+  }
+  return mime;
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-CA"); // YYYY-MM-DD
+  } catch {
+    return iso;
+  }
+}

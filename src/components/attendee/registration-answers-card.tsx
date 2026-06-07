@@ -25,18 +25,23 @@ export function RegistrationAnswersCard({
   editValues,
   onChangeValue,
   eventId,
+  contactId,
+  onFileChanged,
 }: {
   contact: ContactDetail;
   fields: FormFieldDef[];
   editing: boolean;
   editValues: Record<string, unknown>;
   onChangeValue: (name: string, v: unknown) => void;
-  // Used to build the FILE stream-through URL on view-mode rendering
-  // (FileViewerInline). The Stage 3 attempt also forwarded contactId
-  // + onFileChanged here for admin Replace/Remove UI, but that UI was
-  // reverted pending Radix focus-restoration race investigation —
-  // backend endpoints still exist but no UI consumer.
+  // eventId builds the FILE stream-through URL in view mode
+  // (FileViewerInline). contactId + onFileChanged add the edit-mode
+  // admin Replace/Remove cell (Stage 3 UI revival — backend shipped in
+  // PR #23, UI wired here after the commit-phase race was fixed via
+  // CSS-hide stabilization). onFileChanged resyncs the parent after an
+  // immediate Replace/Remove commit.
   eventId: string;
+  contactId: string;
+  onFileChanged: () => void | Promise<void>;
 }) {
   return (
     <Card>
@@ -66,6 +71,9 @@ export function RegistrationAnswersCard({
                   onChangeOtherText={(v) =>
                     onChangeValue(`${field.name}_other`, v)
                   }
+                  eventId={eventId}
+                  contactId={contactId}
+                  onFileChanged={onFileChanged}
                 />
               </div>
             ))}
