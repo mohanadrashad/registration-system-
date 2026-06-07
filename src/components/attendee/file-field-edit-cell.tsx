@@ -7,6 +7,7 @@ import {
   Loader2,
   RotateCcw,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -69,7 +70,7 @@ type MetaState =
   | { state: "loaded"; data: ProvenanceMeta }
   | { state: "error" };
 
-type Pending = "replace" | "remove" | null;
+type Pending = "replace" | "remove" | "upload" | null;
 type Confirm = "replace" | "remove" | null;
 
 export function FileFieldEditCell({
@@ -78,16 +79,23 @@ export function FileFieldEditCell({
   eventId,
   contactId,
   onFileChanged,
+  hasRegistration,
 }: {
   field: FormFieldDef;
   value: unknown;
   eventId: string;
   contactId: string;
   onFileChanged: () => void | Promise<void>;
+  // v1 of admin-upload-into-empty: Upload writes into Registration.formData,
+  // so it only makes sense when the contact has a registration. When false
+  // the Upload affordance is hidden (the field still shows "No file
+  // uploaded"). Registration-less contacts are a v2 (auto-create) non-goal.
+  hasRegistration: boolean;
 }) {
   const file = isFileRef(value) ? (value as FileRef) : null;
   const hasFile = !!file;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const [meta, setMeta] = useState<MetaState>({ state: "idle" });
   const [pending, setPending] = useState<Pending>(null);
@@ -151,6 +159,37 @@ export function FileFieldEditCell({
       await onFileChanged();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Replace failed";
+      toast.error(msg);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleUploadPicked(
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const picked = e.target.files?.[0];
+    // Reset so re-picking the same file still fires onChange.
+    e.target.value = "";
+    if (!picked) return;
+
+    // No confirm dialog — uploading into an EMPTY field is non-
+    // destructive (nothing to lose), unlike Replace/Remove. So there is
+    // no Radix Presence in this path at all; the only commit-phase event
+    // is the null→object value flip (refetch) toggling the two always-
+    // mounted blocks' `hidden` + the toast portal. Phase-2 shape, fully
+    // CSS-hidden, no new mounts.
+    setPending("upload");
+    try {
+      await upload(picked.name, picked, {
+        access: "private",
+        handleUploadUrl: `/api/events/${eventId}/contacts/${contactId}/fields/${field.id}/upload`,
+        contentType: picked.type,
+      });
+      toast.success("File uploaded");
+      await onFileChanged();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
       toast.error(msg);
     } finally {
       setPending(null);
@@ -293,14 +332,34 @@ export function FileFieldEditCell({
         </div>
       </div>
 
-      {/* No-file state — ALWAYS mounted, CSS-hidden when a file exists. */}
-      <p
-        className={`text-sm text-muted-foreground italic ${
-          hasFile ? "hidden" : ""
-        }`}
-      >
-        No file uploaded
-      </p>
+      {/* No-file state — ALWAYS mounted, CSS-hidden when a file exists.
+          The Upload button adds a NEW file into the empty field. Always
+          mounted (the null→object transition after a successful upload is
+          just className flips between this block and the file block — no
+          mount/unmount, no Dialog, Phase-2 shape). The button is hidden
+          when the contact has no registration (v1 non-goal — formData
+          lives on Registration). */}
+      <div className={`space-y-2 ${hasFile ? "hidden" : ""}`}>
+        <p className="text-sm text-muted-foreground italic">No file uploaded</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={`h-7 ${hasRegistration ? "" : "hidden"}`}
+          disabled={pending !== null}
+          onClick={() => uploadInputRef.current?.click()}
+        >
+          <Loader2
+            className={`mr-1 h-3 w-3 animate-spin ${
+              pending === "upload" ? "" : "hidden"
+            }`}
+          />
+          <Upload
+            className={`mr-1 h-3 w-3 ${pending === "upload" ? "hidden" : ""}`}
+          />
+          <span>{pending === "upload" ? "Uploading…" : "Upload file"}</span>
+        </Button>
+      </div>
 
       {/* Hidden picker — opened via fileInputRef from the Replace
           confirm "Pick file…" button. */}
@@ -309,6 +368,17 @@ export function FileFieldEditCell({
         type="file"
         className="hidden"
         onChange={handleReplaceFilePicked}
+      />
+
+      {/* Hidden picker for upload-into-empty — opened from the Upload
+          button. Separate input/handler from Replace so the two flows'
+          endpoints + payloads stay distinct. Always mounted (display:none,
+          zero layout cost). */}
+      <input
+        ref={uploadInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleUploadPicked}
       />
 
       {/* Replace confirm dialog (Mockup 3a). The <Dialog> wrapper is
@@ -429,9 +499,19 @@ function computeProvenanceLine(
   if (data.uploadedBy === "visitor") {
     return { text: `Uploaded by visitor on ${dateStr}`, spinner: false };
   }
+  // Admin upload. wasReplaced distinguishes a replace (there WAS a prior
+  // visitor file — sentinel "admin:<id>") from an upload-into-empty
+  // (no prior file — sentinel "admin-new:<id>"). Only the former gets
+  // the "(replaced visitor upload)" clause.
   const name = data.uploadedByName ?? "a former admin";
+  if (data.wasReplaced) {
+    return {
+      text: `Uploaded by ${name} on ${dateStr} (replaced visitor upload)`,
+      spinner: false,
+    };
+  }
   return {
-    text: `Uploaded by ${name} on ${dateStr} (replaced visitor upload)`,
+    text: `Uploaded by ${name} on ${dateStr}`,
     spinner: false,
   };
 }

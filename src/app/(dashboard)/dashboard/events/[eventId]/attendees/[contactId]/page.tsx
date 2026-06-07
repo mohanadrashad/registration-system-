@@ -288,6 +288,7 @@ export default function AttendeeDetailPage() {
             eventId={eventId}
             contactId={contactId}
             onFileChanged={fetchContact}
+            hasRegistration={!!contact.registration}
           />
           <AdminCard
             contact={contact}

@@ -161,9 +161,11 @@ function SubmissionRow({ phase }: { phase: MergedPhase }) {
         fields.push({
           label: f.label,
           value: formatFieldValue(
-            // formatFieldValue ignores isSystem + required; satisfy
-            // FormFieldDef shape only for the type check.
-            { ...f, isSystem: false, required: false },
+            // formatFieldValue ignores id + isSystem + required; satisfy
+            // FormFieldDef shape only for the type check. (PhaseSubmission
+            // fields carry no FormField id — admin file routes don't reach
+            // this read-only post-registration view.)
+            { ...f, id: "", isSystem: false, required: false },
             sub.data[f.name],
             sub.data
           ),

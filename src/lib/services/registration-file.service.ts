@@ -518,6 +518,72 @@ export async function validateAdminReplaceTarget(input: {
   };
 }
 
+/**
+ * The denormalized FILE ref written into both stores, or null to clear
+ * the field (admin Remove). Shape matches what the public registration
+ * POST writes and what isFileRef() on the client expects.
+ */
+type DualStoreFileRef =
+  | { fileId: string; filename: string; mimeType: string; sizeBytes: number }
+  | null;
+
+/**
+ * Shared dual-store write used by every admin FILE mutation (replace,
+ * create-into-empty, remove). Stage 1's invariant: the FILE ref lives in
+ * BOTH `Registration.formData[fieldName]` (canonical for CSV/badge/email)
+ * AND `Contact.metadata[fieldName]` (what the view-mode dashboard reads),
+ * and every admin write stamps `updater` on both rows (Stage 1 audit).
+ *
+ * Read-merge-write rather than a jsonb path update so we don't depend on
+ * Postgres-specific jsonb_set semantics. Must run inside the caller's
+ * transaction so the row insert/delete and these writes commit atomically.
+ * Pass `ref: null` to clear the field (Remove).
+ */
+async function writeFileRefDualStore(
+  tx: Prisma.TransactionClient,
+  args: {
+    registrationId: string;
+    contactId: string;
+    fieldName: string;
+    ref: DualStoreFileRef;
+    actorId: string;
+  }
+): Promise<void> {
+  const registration = await tx.registration.findUnique({
+    where: { id: args.registrationId },
+    select: { formData: true },
+  });
+  const baseForm =
+    (registration?.formData as Record<string, unknown> | null) ?? {};
+  await tx.registration.update({
+    where: { id: args.registrationId },
+    data: {
+      formData: {
+        ...baseForm,
+        [args.fieldName]: args.ref,
+      } as Prisma.InputJsonValue,
+      updater: { connect: { id: args.actorId } },
+    },
+  });
+
+  const contact = await tx.contact.findUnique({
+    where: { id: args.contactId },
+    select: { metadata: true },
+  });
+  const baseMeta =
+    (contact?.metadata as Record<string, unknown> | null) ?? {};
+  await tx.contact.update({
+    where: { id: args.contactId },
+    data: {
+      metadata: {
+        ...baseMeta,
+        [args.fieldName]: args.ref,
+      } as Prisma.InputJsonValue,
+      updater: { connect: { id: args.actorId } },
+    },
+  });
+}
+
 export interface CompleteAdminReplaceInput {
   registrationId: string;
   contactId: string;
@@ -595,37 +661,15 @@ export async function completeAdminReplaceFile(
     });
     newFileRef.fileId = created.id;
 
-    // 3. Merge the new ref into Registration.formData under the field
-    //    name. formData is the canonical source for CSV/badge/email.
-    const registration = await tx.registration.findUnique({
-      where: { id: input.registrationId },
-      select: { formData: true },
-    });
-    const baseForm =
-      (registration?.formData as Record<string, unknown> | null) ?? {};
-    await tx.registration.update({
-      where: { id: input.registrationId },
-      data: {
-        formData: { ...baseForm, [input.formField.name]: newFileRef } as Prisma.InputJsonValue,
-        updater: { connect: { id: input.actorId } },
-      },
-    });
-
-    // 4. Mirror into Contact.metadata so the view-mode dashboard reads
-    //    (IdentityCard, RegistrationAnswersCard) see the new file
-    //    without a refetch race. Stage 1's invariant.
-    const contact = await tx.contact.findUnique({
-      where: { id: input.contactId },
-      select: { metadata: true },
-    });
-    const baseMeta =
-      (contact?.metadata as Record<string, unknown> | null) ?? {};
-    await tx.contact.update({
-      where: { id: input.contactId },
-      data: {
-        metadata: { ...baseMeta, [input.formField.name]: newFileRef } as Prisma.InputJsonValue,
-        updater: { connect: { id: input.actorId } },
-      },
+    // 3+4. Mirror the new ref into Registration.formData (canonical for
+    //      CSV/badge/email) AND Contact.metadata (view-mode dashboard),
+    //      stamping updater on both. Stage 1's dual-store invariant.
+    await writeFileRefDualStore(tx, {
+      registrationId: input.registrationId,
+      contactId: input.contactId,
+      fieldName: input.formField.name,
+      ref: newFileRef,
+      actorId: input.actorId,
     });
 
     return { newFileId: created.id };
@@ -643,6 +687,185 @@ export async function completeAdminReplaceFile(
       err
     );
   }
+
+  return { newFileId };
+}
+
+// ─── Admin upload-into-empty (queue item #2) ─────────────────────────
+//
+// Lets an admin upload a NEW file into a FILE field that is currently
+// empty (after a Remove, or a visitor who never uploaded). Distinct from
+// replace because there is no existing fileId to key on — the URL keys
+// on formFieldId, and validation walks contact → registration (1:1) +
+// formField instead of fileId → row.
+//
+// The new row uses uploadedBy = "admin-new:<actorId>" (a distinct
+// sentinel from replace's "admin:<actorId>") so getAdminFileProvenance
+// can render "Uploaded by <admin>" WITHOUT the "(replaced visitor
+// upload)" clause — there was no prior file to replace.
+
+export interface ValidatedAdminUploadTarget {
+  registrationId: string;
+  formField: {
+    id: string;
+    name: string;
+    type: FieldType;
+    metadata: unknown;
+  };
+}
+
+/**
+ * Used in the admin-upload endpoint's `onBeforeGenerateToken`. The URL
+ * identifies the operation by (contactId, formFieldId). The target must:
+ *   - resolve to a contact on the URL's event,
+ *   - whose contact HAS a registration (1:1) — v1 hides Upload for
+ *     registration-less contacts, but we guard server-side too because
+ *     formData lives on Registration,
+ *   - link to a FormField that is a FILE type on the URL's event,
+ *   - AND the field must be currently EMPTY (no RegistrationFile row for
+ *     that registration+formField). A non-empty field rejects with a
+ *     message steering the admin to Replace — keeps the two flows
+ *     disjoint and prevents two concurrent uploads creating two rows.
+ *
+ * Throws AdminFileNotReplaceableError on any failure; the route surfaces
+ * `.message` as the client toast. Cross-event mismatches use a uniform
+ * "not found" so existence doesn't leak; the empty-field guard uses an
+ * informative message by design (it's actionable, not a probe vector).
+ */
+export async function validateAdminUploadTarget(input: {
+  eventId: string;
+  contactId: string;
+  formFieldId: string;
+}): Promise<ValidatedAdminUploadTarget> {
+  const contact = await prisma.contact.findUnique({
+    where: { id: input.contactId },
+    select: {
+      id: true,
+      eventId: true,
+      registration: { select: { id: true } },
+    },
+  });
+  if (!contact || contact.eventId !== input.eventId) {
+    throw new AdminFileNotReplaceableError("Contact not found");
+  }
+  if (!contact.registration) {
+    // No registration → nowhere to write formData. v1 non-goal.
+    throw new AdminFileNotReplaceableError(
+      "This contact has not registered yet, so a file can't be added."
+    );
+  }
+  const registrationId = contact.registration.id;
+
+  const formField = await prisma.formField.findUnique({
+    where: { id: input.formFieldId },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      eventId: true,
+      metadata: true,
+    },
+  });
+  if (!formField || formField.eventId !== input.eventId) {
+    throw new AdminFileNotReplaceableError("Form field not found");
+  }
+  if (formField.type !== FieldType.FILE) {
+    throw new AdminFileNotReplaceableError("Form field is not a FILE field");
+  }
+
+  // Empty-field guard. The RegistrationFile row is the source of truth
+  // (a Remove deletes it); formData mirrors it. If a row exists the admin
+  // must use Replace.
+  const existing = await prisma.registrationFile.findFirst({
+    where: { registrationId, formFieldId: formField.id },
+    select: { id: true },
+  });
+  if (existing) {
+    throw new AdminFileNotReplaceableError(
+      "This field already has a file — use Replace instead."
+    );
+  }
+
+  return {
+    registrationId,
+    formField: {
+      id: formField.id,
+      name: formField.name,
+      type: formField.type,
+      metadata: formField.metadata,
+    },
+  };
+}
+
+export interface CompleteAdminCreateInput {
+  registrationId: string;
+  contactId: string;
+  formField: { id: string; name: string };
+  newBlob: {
+    pathname: string;
+    url: string;
+    mimeType: string;
+    sizeBytes: number;
+    originalName: string;
+  };
+  actorId: string;
+}
+
+export interface CompleteAdminCreateResult {
+  newFileId: string;
+}
+
+/**
+ * Used in the admin-upload endpoint's `onUploadCompleted`. Insert-only
+ * sibling of completeAdminReplaceFile — no old row to delete, no old blob
+ * to clean up. Atomically:
+ *   1. Inserts a new RegistrationFile row with uploadedBy=
+ *      "admin-new:<actorId>" + registrationId set.
+ *   2. Writes the denormalized ref into both stores + stamps updater
+ *      (shared writeFileRefDualStore helper).
+ *
+ * NOT merged into completeAdminReplaceFile because the validate paths and
+ * the delete-old semantics differ; the shared part is the dual-store
+ * write, which both call.
+ */
+export async function completeAdminCreateFile(
+  input: CompleteAdminCreateInput
+): Promise<CompleteAdminCreateResult> {
+  const newFileRef = {
+    fileId: "", // filled in after the create
+    filename: input.newBlob.originalName,
+    mimeType: input.newBlob.mimeType,
+    sizeBytes: input.newBlob.sizeBytes,
+  };
+  const actorSentinel = `admin-new:${input.actorId}`;
+
+  const { newFileId } = await prisma.$transaction(async (tx) => {
+    const created = await tx.registrationFile.create({
+      data: {
+        registrationId: input.registrationId,
+        formFieldId: input.formField.id,
+        uploadSessionId: actorSentinel,
+        blobPath: input.newBlob.pathname,
+        blobUrl: input.newBlob.url,
+        mimeType: input.newBlob.mimeType,
+        sizeBytes: input.newBlob.sizeBytes,
+        originalName: input.newBlob.originalName,
+        uploadedBy: actorSentinel,
+      },
+      select: { id: true },
+    });
+    newFileRef.fileId = created.id;
+
+    await writeFileRefDualStore(tx, {
+      registrationId: input.registrationId,
+      contactId: input.contactId,
+      fieldName: input.formField.name,
+      ref: newFileRef,
+      actorId: input.actorId,
+    });
+
+    return { newFileId: created.id };
+  });
 
   return { newFileId };
 }
@@ -724,36 +947,14 @@ export async function adminRemoveFile(
     // 1. Delete the row.
     await tx.registrationFile.delete({ where: { id: file.id } });
 
-    // 2. Null out the formData key. Read-merge-write rather than a
-    //    JSON path update so we don't have to depend on the Postgres-
-    //    specific jsonb_set semantics.
-    const registration = await tx.registration.findUnique({
-      where: { id: registrationId },
-      select: { formData: true },
-    });
-    const baseForm =
-      (registration?.formData as Record<string, unknown> | null) ?? {};
-    await tx.registration.update({
-      where: { id: registrationId },
-      data: {
-        formData: { ...baseForm, [fieldName]: null } as Prisma.InputJsonValue,
-        updater: { connect: { id: input.actorId } },
-      },
-    });
-
-    // 3. Mirror into Contact.metadata so view-mode reads stay aligned.
-    const contact = await tx.contact.findUnique({
-      where: { id: contactId },
-      select: { metadata: true },
-    });
-    const baseMeta =
-      (contact?.metadata as Record<string, unknown> | null) ?? {};
-    await tx.contact.update({
-      where: { id: contactId },
-      data: {
-        metadata: { ...baseMeta, [fieldName]: null } as Prisma.InputJsonValue,
-        updater: { connect: { id: input.actorId } },
-      },
+    // 2+3. Null out the field in BOTH stores + stamp updater. Same
+    //      dual-store invariant as replace/create; ref=null clears it.
+    await writeFileRefDualStore(tx, {
+      registrationId,
+      contactId,
+      fieldName,
+      ref: null,
+      actorId: input.actorId,
     });
   });
 
@@ -812,6 +1013,28 @@ export async function getAdminFileProvenance(input: {
     return null;
   }
 
+  // Admin-created-into-empty ("admin-new:<id>") — NO prior file, so
+  // wasReplaced is false and the UI omits the "(replaced visitor upload)"
+  // clause. Checked BEFORE the "admin:" branch because "admin-new:" does
+  // not start with "admin:" (the 6th char is "-", not ":"), but keeping
+  // it first makes the two-sentinel intent explicit.
+  if (row.uploadedBy.startsWith("admin-new:")) {
+    const userId = row.uploadedBy.slice("admin-new:".length);
+    const user = userId
+      ? await prisma.user.findUnique({
+          where: { id: userId },
+          select: { name: true },
+        })
+      : null;
+    return {
+      uploadedBy: "admin",
+      uploadedByName: user?.name ?? null,
+      uploadedAt: row.uploadedAt,
+      wasReplaced: false,
+    };
+  }
+
+  // Admin-replaced ("admin:<id>") — there WAS a prior visitor file.
   if (row.uploadedBy.startsWith("admin:")) {
     const userId = row.uploadedBy.slice("admin:".length);
     const user = userId
@@ -828,7 +1051,7 @@ export async function getAdminFileProvenance(input: {
     };
   }
 
-  // Anything that's NOT "admin:..." we treat as visitor. Covers both
+  // Anything that's NOT "admin..." we treat as visitor. Covers both
   // "registration:<id>" (post-submit claim) and "session:<id>" (pre-
   // submit — shouldn't appear on the attendee detail page in practice
   // but we render it the same way if it does).
