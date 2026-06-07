@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorize } from "@/lib/api-auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { getOrCreateDefaultRegistrationStep } from "@/lib/services/phase.service";
 import { FieldType, FieldWidth } from "@prisma/client";
 import {
@@ -20,10 +20,9 @@ interface RouteParams {
 // GET - List all form fields for an event
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize();
-    if (ctx instanceof NextResponse) return ctx;
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId);
+    if (ctx instanceof NextResponse) return ctx;
 
     const fields = await prisma.formField.findMany({
       where: { eventId },
@@ -43,10 +42,10 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Create a new form field
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize("editor");
+    const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor" });
     if (ctx instanceof NextResponse) return ctx;
 
-    const { eventId } = await params;
     const body = await request.json();
 
     // Get the highest order value for this event

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorize } from "@/lib/api-auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { eventBaseUrlFromDomain } from "@/lib/urls";
 import {
@@ -12,10 +12,9 @@ export async function POST(
   _req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const ctx = await authorize("editor");
-  if (ctx instanceof NextResponse) return ctx;
-
   const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "editor" });
+  if (ctx instanceof NextResponse) return ctx;
 
   const event = await prisma.event.findUnique({
     where: { id: eventId },

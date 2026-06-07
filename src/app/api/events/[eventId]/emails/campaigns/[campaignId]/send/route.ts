@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorize } from "@/lib/api-auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { sendEventEmail } from "@/lib/services/email-provider.service";
 import { renderEmailTemplate, renderSubject } from "@/lib/email-renderer";
 import { eventBaseUrlFromDomain } from "@/lib/urls";
@@ -18,10 +18,9 @@ export async function POST(
   _req: Request,
   { params }: { params: Promise<{ eventId: string; campaignId: string }> }
 ) {
-  const ctx = await authorize("editor");
-  if (ctx instanceof NextResponse) return ctx;
-
   const { eventId, campaignId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "editor" });
+  if (ctx instanceof NextResponse) return ctx;
 
   // Atomically transition status from DRAFT/SCHEDULED/FAILED → SENDING to prevent
   // concurrent sends racing past the status check.

@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorize } from "@/lib/api-auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { updateEventSchema } from "@/lib/validations/event";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const ctx = await authorize();
+  const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId);
   if (ctx instanceof NextResponse) return ctx;
 
-  const { eventId } = await params;
+  // authorizeEvent already loaded + existence-checked the event, but its
+  // context has no `_count` include — re-query for the payload.
   const event = await prisma.event.findUnique({
     where: { id: eventId },
     include: {
@@ -29,10 +31,10 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const ctx = await authorize("editor");
+  const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "editor" });
   if (ctx instanceof NextResponse) return ctx;
 
-  const { eventId } = await params;
   const body = await req.json();
   const result = updateEventSchema.safeParse(body);
 
@@ -57,10 +59,10 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const ctx = await authorize("manager");
+  const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "manager" });
   if (ctx instanceof NextResponse) return ctx;
 
-  const { eventId } = await params;
   await prisma.event.delete({ where: { id: eventId } });
 
   return NextResponse.json({ success: true });

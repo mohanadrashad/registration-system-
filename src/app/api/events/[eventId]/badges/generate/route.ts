@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorize } from "@/lib/api-auth";
+import { authorizeEvent } from "@/lib/api-auth";
 import { generateQRCode, generateBadgeHtml } from "@/lib/badge-generator";
 import { eventBaseUrlFromDomain } from "@/lib/urls";
 
@@ -8,10 +8,10 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
-  const ctx = await authorize("editor");
+  const { eventId } = await params;
+  const ctx = await authorizeEvent(eventId, { role: "editor" });
   if (ctx instanceof NextResponse) return ctx;
 
-  const { eventId } = await params;
   const body = await req.json();
   const { registrationIds } = body;
 
