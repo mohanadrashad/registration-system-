@@ -11,6 +11,7 @@ import {
   OTHER_SUFFIX,
 } from "@/lib/form-builder/options-parse";
 import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
+import { COUNTRIES } from "@/lib/form-builder/countries";
 
 // FormField names that are also Contact columns — already emitted in the
 // fixed columns above the dynamic block, so we don't duplicate them.
@@ -88,6 +89,14 @@ function formatCell(
     typeof (value as { filename?: unknown }).filename === "string"
   ) {
     return (value as { filename: string }).filename;
+  }
+  // COUNTRY fields store the ISO 2-letter code (e.g. "SA"); the full name
+  // lives only in the COUNTRIES list, not in formData. Resolve to the name
+  // so the export matches what the dashboard shows (field-display.ts) —
+  // otherwise the cell dumps the raw code "SA".
+  if (field.type === FieldType.COUNTRY) {
+    const country = COUNTRIES.find((c) => c.code === value);
+    return country ? country.name : String(value);
   }
   if (value === OTHER_VALUE) return renderOther();
   if (parsed.options.length > 0) {
