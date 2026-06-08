@@ -1,13 +1,13 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-06-07 (FILE admin file-ops arc COMPLETE and live — Stage 3 UI Replace/Remove/provenance + admin upload-into-empty + the Upload/Replace webhook-timing read-back poll fix; queue #1 and #2 both DONE)
+**Last updated:** 2026-06-08 (Auth posture sweep TRULY complete — the 2026-06-01 "ARC COMPLETE" was auth()-only; the global authorize() helper was never enumerated. PR A #46 + PR B #47 migrated the remaining 8 handlers; PR B closed a 🔴 cross-event template read/edit/delete that was live in prod)
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
 **Storage — TWO Vercel Blob stores:** (1) **private** store (id `Q7RjwvBaaLwKE6eR`, env `BLOB_READ_WRITE_TOKEN`) — visitor FILE uploads + phase receipts, served via stream-through. (2) **`branding-public`** store (PUBLIC, id `store_O0LBuk4rM0qMcAYL`, env `BLOB_PUBLIC_READ_WRITE_TOKEN` — set in **Preview + Production**) — admin-uploaded logos/favicons, served as direct CDN URLs on the public registration page. A logo isn't secret; the private store rejects `access:"public"` (store-level), which forced the second store.
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
-**Branch in progress:** none — between projects (FILE admin file-ops arc fully shipped; queue #1 and #2 both done — no queued substantive feature)
-**Production branch:** `main`, HEAD at `9275958` (admin upload-into-empty + read-back poll, PR #45)
+**Branch in progress:** none — between projects (auth posture sweep follow-up fully shipped; no queued substantive feature)
+**Production branch:** `main`, HEAD at `1c95157` (cross-event isolation on email templates + send-email, PR #47)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
@@ -30,6 +30,29 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-08 — Auth posture sweep — TRULY complete (the 2026-06-01 "ARC COMPLETE" was auth()-only)
+
+The 2026-06-01 sweep declared "zero legacy `auth()` call sites remain" — **but that was verified for `auth()` / `@/lib/auth` only.** Its audit grepped for `auth()` and never enumerated the OTHER legacy helper: global **`authorize()`** from `@/lib/api-auth`, which checks **global role only, NO per-event `EventMember`** (its signature takes no `eventId`). **8 `[eventId]` handlers (~15 handlers) were still on it** — including one with a live cross-event data-isolation bug. Surfaced when asked to "do the auth sweep" off the handoff's stale how-to-start line. Two PRs closed it; with these, `authorizeEvent` is *genuinely* canonical across `/api/events/[eventId]/*` (only the correctly-global `events/route.ts` collection — list/create events — still uses `authorize()`).
+
+**Inventory:** 65 `[eventId]` route files, **zero unguarded**, exactly 8 on global `authorize()`.
+
+**PR A — mechanical migration** — `c45d3e8` (PR #46, squash merge). The 6 files with NO data-layer gap, `authorize(...)` → `authorizeEvent(eventId, {role})`, **roles preserved exactly**, params extracted before the auth call:
+- `[eventId]/route.ts` (GET authenticated · PUT editor · DELETE manager)
+- `modules/route.ts` (GET authenticated · POST editor · PATCH manager)
+- `form-fields/route.ts` (GET authenticated · POST editor) — **the collection route PR #32 missed** right beside the `[fieldId]` route it fixed
+- `badges/generate` (POST editor), `badges/send` (POST editor), `emails/campaigns/[campaignId]/send` (POST editor, orphan)
+- Dropped one genuinely-redundant bare-existence `findUnique` (modules POST → reuse the event `authorizeEvent` already loads/404s). The `[eventId]` GET keeps its own query — it needs the `_count` include `authorizeEvent` doesn't load (so it was 1 cleanup, not 2).
+
+**PR B — cross-event DATA isolation (the security half)** — `1c95157` (PR #47, squash merge). The 2 files with the **dual-gap** (auth-helper AND data-layer, the PR #32/#36 class):
+- 🔴 **`emails/templates/[templateId]` GET/PUT/DELETE** — were keyed on `templateId` with **no `eventId`** (`findUnique`/`update`/`delete where:{id}`). **Any global editor (member of any event) could read, edit, or delete ANY event's email template by id — live in production until this PR.** Now: `authorizeEvent` + `findFirst`/guarded-`update`/`deleteMany` all scoped to `{id, eventId}` (404 on cross-event; `update`'s pre-check is TOCTOU-free because a template's `eventId` never changes).
+- 🟠 **`attendees/send-email`** — the template lookup (`templateId` from the request body) was unscoped, letting an editor on this event render+send ANOTHER event's template content. Now `findFirst({id: templateId, eventId})`. **Stays at editor.**
+
+**Pre-flight (gated PR B):** re-ran `prisma/scripts/preflight-event-auth-sweep.ts` (new, committed in PR A; mirrors `preflight-branding-auth.ts`) against **production** (host `ep-wandering-union`): **1 SUPER_ADMIN, 2 VIEWER, 0 non-SUPER_ADMIN global EDITOR/MANAGER → PASS** (the migration removes nobody's access; the 1 SUPER_ADMIN bypasses `authorizeEvent`, VIEWERs can't write). PR A is mechanical/low-risk and shipped ahead of the pre-flight per the human decision; the access-change math is identical so the script covers both.
+
+**Email-send routes stay at `editor`.** `badges/send`, `attendees/send-email`, and `emails/campaigns/[campaignId]/send` all send real email at `editor` — a distinct (external, can't-be-unsent) threat model. Deliberately NOT bumped to manager here: that's a separate, deliberate permissions decision, not part of this auth-tightening.
+
+**Smoke (Playwright, real dev server).** PR A: SUPER_ADMIN still 200 on migrated GETs + 400 no-op on a manager-gated PATCH; a non-member global EDITOR now gets 403 `NOT_EVENT_MEMBER` on reads AND the mutation (was 200) — gap closed, no member-caller regression. PR B (dual-gap, per `[[auth-migration-audit-pattern]]` — verify the gate AND the row scoping): an EDITOR member of Event A only, vs Event B's template — GET A/own 200 + PUT A/own 200 (no regression); GET/PUT/DELETE A with **B's template id** → 404 with DB checks confirming B's template was **neither mutated nor deleted**; GET B/<B template> → 403 (auth gate); send-email on A with B's template → 400 "not found", no send. Memory `[[auth-sweep-followup]]`.
 
 ### 2026-06-07 — FILE admin file-ops arc — COMPLETE, live on prod (queue #1 + #2 closed)
 
@@ -166,6 +189,8 @@ Test Event 2026 drift surfaced during pre-flight (1 `PENDING_APPROVAL` row on an
 
 ### 2026-06-01 — Auth posture sweep — ARC COMPLETE (6 of 6 PRs shipped)
 
+> **⚠️ Correction (2026-06-08):** "ARC COMPLETE" / "zero legacy `auth()` call sites" below was scoped to **`auth()` / `@/lib/auth` only** — the audit grepped for `auth()` and never enumerated the OTHER legacy helper, global `authorize()` from `@/lib/api-auth` (global role, no per-event membership). 8 `[eventId]` handlers were still on it, incl. a live cross-event template read/edit/delete. Closed 2026-06-08 by PR #46 + #47 (see the top entry). Lesson: when verifying a migration is "done," grep for ALL legacy patterns, not just the one the sweep is named after.
+
 The auth posture sweep is closed. Six PRs migrated **34 handlers** across `/api/events/[eventId]/*` from legacy `auth()` to `authorizeEvent`, closed **2 cross-event isolation bugs** (one auth-helper layer, one data layer), and introduced or normalized **4 module gates**. Zero legacy `auth()` call sites remain in the surface — verified by grep on the final merge commit (`7c5ebfe`).
 
 **Final PR — Domain + email-settings auth migration** — `7c5ebfe` (PR #37, squash merge). 9 handlers, 5 files, +29/−87 (−58 net). Biggest cleanup of the sweep. Introduces `customEmail` module gate (all 5 email-settings handlers, new enforcement) and normalizes `customDomain` (2 handlers via inline-check collapse, 2 via new gate addition). Drops 2 redundant `prisma.event.findUnique` lookups in `domain` GET + POST per the PR #34 precedent. Pre-flight cleared both gates (0 affected events on prod).
@@ -189,7 +214,7 @@ The auth posture sweep is closed. Six PRs migrated **34 handlers** across `/api/
   - PR #36 — data layer: `emails/campaigns/[campaignId]` GET + DELETE had correct `authorizeEvent` gates but unscoped data ops — a MANAGER on Event A could delete any campaign by CUID.
 - **4 module gates introduced or normalized:** `whatsApp` + `checkIn` (PR #35), `customEmail` + `customDomain` (PR #37).
 - **~80 lines net reduction across the sweep.** Categories: dead `event.findUnique` lookups (PR #34, PR #37), redundant inline checks superseded by module gates (PR #37), multi-step auth collapsed to single `authorizeEvent` calls (every PR).
-- **`authorizeEvent` is now canonical** across `/api/events/[eventId]/*`. Verified by three independent greps on the final merge commit: zero `await auth()`, zero `auth()` calls of any shape, zero `from "@/lib/auth"` imports in the surface.
+- **`authorizeEvent` is now canonical** across `/api/events/[eventId]/*`. Verified by three independent greps on the final merge commit: zero `await auth()`, zero `auth()` calls of any shape, zero `from "@/lib/auth"` imports in the surface. *(2026-06-08: those greps were `auth()`-only — global `authorize()` remained on 8 handlers until PR #46/#47. "Canonical" is true as of those, not as of 2026-06-01.)*
 - **One latent UX gap surfaced** during PR #35 smoke (module-gated pages remain visible in sidebar when module off; sub-endpoints correctly 403 but the console fills with errors). Pre-existing — the sweep made it visible, didn't cause it. Documented under "Known unresolved bugs" and added to the queue.
 
 **Durable artifacts from the sweep:**
@@ -524,6 +549,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 
 ## Recent decisions and lessons (newest)
 
+- **"Migration complete" must be verified against ALL legacy patterns, not just the one the effort is named after.** The 2026-06-01 auth sweep was called "ARC COMPLETE — zero legacy `auth()`," and that grep was correct — but there were TWO global-auth helpers (`auth()` from `@/lib/auth` AND `authorize()` from `@/lib/api-auth`), and the sweep only enumerated the first. 8 `[eventId]` handlers sat on `authorize()` for a week, one with a live cross-event read/edit/delete bug. When you declare a migration done, grep for every shape of the old pattern (here: BOTH `auth(` and `[^E]authorize(`), and spot-check that the "canonical" replacement is actually the only thing left.
+- **Cross-event isolation is a DUAL gate — the auth helper AND the data op.** `emails/templates/[templateId]` had `authorizeEvent`-shaped intent but `findUnique({where:{id}})` — a row op keyed on id with no `eventId` lets a member of event A reach event B's row. Same class as PR #32 (form-fields) and #36 (campaigns). Fix BOTH: `authorizeEvent(eventId,{role})` + scope every data op to `{id, eventId}` (`findFirst`/`updateMany`/`deleteMany` + null/count → 404). Smoke must prove both independently: cross-event URL → 403 (gate), own-event URL + other-event row id → 404 with a DB check that nothing leaked/mutated (scoping). Codified in `[[auth-migration-audit-pattern]]`.
 - **Client-upload flows have a webhook-timing race — and localhost mocks HIDE it. Verify against the real webhook on Preview, never a localhost mock.** `@vercel/blob` `upload()` resolves when bytes hit storage, BEFORE the `onUploadCompleted` webhook persists the DB row. So a refetch fired immediately after `await upload()` reads stale/empty data. Admin Upload AND Replace both had this; **Replace's was SILENT** — a lost race showed the OLD file, which reads as success — and it was **live in prod from the Stage 3 UI merge until the 2026-06-07 fix**. The bug survived earlier testing because the webhook *cannot reach localhost*, so a mocked refetch never exercised the real ordering. **Fix:** read-back poll mirroring the visitor `waitForUploadedFile` (`file-upload-control.tsx`) — after `await upload()`, poll until the field reflects the new file (12×800ms ≈ 10s), then settle; on timeout show an honest "taking longer — refresh to check" state, never silently empty/stale. **Process rule: any file-upload flow (anything using `@vercel/blob` client `upload()` + an `onUploadCompleted` webhook) MUST be verified against the real webhook on a Preview deployment. A green localhost smoke proves nothing about webhook timing** — locally the webhook is effectively mocked away. For local smoking, substitute the webhook with a poll-synchronized real DB write, but treat Preview as the gate. `[[admin-upload-empty-complete]]`.
 
 - **`@vercel/blob` `upload()` swallows `onBeforeGenerateToken` 400 bodies.** A reason thrown inside `onBeforeGenerateToken` (e.g. the empty-field guard, an auth failure) comes back to the client as a generic "Vercel Blob: Failed to retrieve the client token" — our specific message is lost. Server-side rejection is still correct (400, no row). Filed as the "friendlier admin file-op error surfacing" follow-up ticket. Affects every `handleUpload`-based admin route (Replace too), so most error paths are unreachable via normal UI but the message fidelity is poor when they are hit.
@@ -594,4 +621,4 @@ Whatever you pick, Claude will read this handoff + the specs + memory and pick u
 
 ---
 
-*Updated 2026-06-07. **FILE admin file-ops arc FULLY SHIPPED** — Stage 3 UI Replace/Remove/provenance (PR #44 `76527aa`) + admin upload-into-empty (PR #45 `9275958`), both live on production. The webhook-timing read-back poll fix (`0764def`, bundled in PR #45) closed a silent Replace race that was live in prod. Queue #1 and #2 both DONE; queue now empty. **Process rule added: verify any `@vercel/blob` client-upload flow against the REAL webhook on Preview — localhost mocks the webhook away and hides timing races.** Open follow-up: friendlier admin file-op error surfacing (SDK swallows 400 bodies). Open hygiene (still pending from 2026-06-03): rotate the DB passwords + `branding-public` blob token surfaced during setup.*
+*Updated 2026-06-08. **Auth posture sweep TRULY complete** — the 2026-06-01 "ARC COMPLETE" was `auth()`-scoped only; global `authorize()` (no per-event membership) sat on 8 `[eventId]` handlers, one with a 🔴 live cross-event template read/edit/delete. PR A #46 (`c45d3e8`, 6 mechanical files, roles preserved) + PR B #47 (`1c95157`, cross-event data isolation on `emails/templates/[templateId]` + `attendees/send-email`, scoped to `{id,eventId}`) closed it; both live on prod. Prod pre-flight = 0 affected. Email-send routes kept at `editor` (a manager bump is a separate decision). `authorizeEvent` is now genuinely canonical in `/api/events/[eventId]/*` (only the global `events/route.ts` collection still uses `authorize()`, correctly). **Process rules added: grep ALL legacy auth shapes when declaring a migration done; cross-event isolation needs BOTH the gate and `{id,eventId}` row scoping.** Open follow-up: friendlier admin file-op error surfacing (SDK swallows 400 bodies). Open hygiene (pending from 2026-06-03): rotate the DB passwords + `branding-public` blob token surfaced during setup.*
