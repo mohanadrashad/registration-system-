@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorizeEvent } from "@/lib/api-auth";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import { FieldType } from "@prisma/client";
 import {
   parseFormFieldOptions,
@@ -25,6 +26,36 @@ const CONTACT_COLUMN_NAMES = new Set([
 
 // Field types that produce no usable value in a CSV row.
 const SKIP_TYPES = new Set<string>(["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"]);
+
+// The fixed columns emitted before the dynamic FormField block, in order.
+// Both the CSV (via Papa, which derives columns from row keys) and the
+// xlsx path (which needs an explicit header order to compute cell
+// addresses for hyperlinks) rely on this matching the row keys built below.
+const BASE_COLUMNS = [
+  "First Name",
+  "Last Name",
+  "Email",
+  "Phone",
+  "Organization",
+  "Designation",
+  "Category",
+  "Status",
+  "Registered At",
+  "Confirmation Code",
+] as const;
+
+// A denormalized FILE ref in formData carries at least fileId + filename.
+function isFileRefWithId(
+  v: unknown
+): v is { fileId: string; filename: string } {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    typeof (v as { fileId?: unknown }).fileId === "string" &&
+    typeof (v as { filename?: unknown }).filename === "string"
+  );
+}
 
 function formatCell(
   field: { type: FieldType; options: unknown },
@@ -70,12 +101,14 @@ function formatCell(
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ eventId: string }> }
 ) {
   const { eventId } = await params;
   const ctx = await authorizeEvent(eventId, { role: "authenticated" });
   if (ctx instanceof NextResponse) return ctx;
+
+  const format = new URL(req.url).searchParams.get("format");
 
   // Pull FormFields once, ordered by their form-builder position so the
   // CSV column order matches the form's logical layout.
@@ -132,6 +165,67 @@ export async function GET(
 
     return row;
   });
+
+  // ── xlsx branch: identical rows, but FILE cells become clickable links
+  //    to the admin-auth-gated stream route. The CSV path below is
+  //    unchanged (plain filename text). ──
+  if (format === "xlsx") {
+    // Explicit column order so FILE cells can be addressed by index for
+    // hyperlinks. Mirrors the row keys built above (base block, then each
+    // dynamic field, with its Other sibling immediately after).
+    const columns: string[] = [...BASE_COLUMNS];
+    for (const field of dynamicFields) {
+      columns.push(field.label);
+      const parsed = parseFormFieldOptions(field.options);
+      if (parsed.other) columns.push(`${field.label} (Other)`);
+    }
+
+    const ws = XLSX.utils.json_to_sheet(data, { header: columns });
+
+    // Each FILE field gets its own column (one per dynamic FILE field —
+    // never merged); precompute each FILE column's index once.
+    const fileFields = dynamicFields
+      .filter((f) => f.type === FieldType.FILE)
+      .map((f) => ({ name: f.name, colIndex: columns.indexOf(f.label) }))
+      .filter((f) => f.colIndex >= 0);
+
+    // Attach a hyperlink to each FILE cell that actually has a file. The
+    // cell text stays the filename; Target is an ABSOLUTE URL built from
+    // the request origin so it points back to this same authenticated
+    // dashboard origin. The stream route 401s for anyone without a live
+    // admin session — no public exposure of the private blob.
+    const origin = new URL(req.url).origin;
+    registrations.forEach((r, i) => {
+      const formData = (r.formData as Record<string, unknown> | null) ?? {};
+      for (const f of fileFields) {
+        const ref = formData[f.name];
+        if (!isFileRefWithId(ref)) continue;
+        // Row i sits at sheet row i+1 (row 0 is the header).
+        const addr = XLSX.utils.encode_cell({ r: i + 1, c: f.colIndex });
+        const cell = ws[addr];
+        if (cell) {
+          cell.l = {
+            Target: `${origin}/api/events/${eventId}/files/${ref.fileId}/stream`,
+            Tooltip: "Open file (admin login required)",
+          };
+        }
+      }
+    });
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Registrations");
+    // type:"array" → Uint8Array at runtime, a valid Response body. Wrap in
+    // a Blob so the body type is unambiguous (a bare typed array trips the
+    // strict BodyInit generic under this TS lib config).
+    const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    return new NextResponse(new Blob([buf]), {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="registrations-${eventId}.xlsx"`,
+      },
+    });
+  }
 
   const csv = Papa.unparse(data);
   return new NextResponse(csv, {
