@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authorizeEvent } from "@/lib/api-auth";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
-import { FieldType } from "@prisma/client";
+import { FieldType, FieldMapping } from "@prisma/client";
 import {
   parseFormFieldOptions,
   resolveOtherLabel,
@@ -27,22 +27,19 @@ const CONTACT_COLUMN_NAMES = new Set([
 // Field types that produce no usable value in a CSV row.
 const SKIP_TYPES = new Set<string>(["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"]);
 
-// The fixed columns emitted before the dynamic FormField block, in order.
-// Both the CSV (via Papa, which derives columns from row keys) and the
-// xlsx path (which needs an explicit header order to compute cell
-// addresses for hyperlinks) rely on this matching the row keys built below.
-const BASE_COLUMNS = [
-  "First Name",
-  "Last Name",
-  "Email",
-  "Phone",
-  "Organization",
-  "Designation",
-  "Category",
-  "Status",
-  "Registered At",
-  "Confirmation Code",
-] as const;
+// Optional contact-column base columns and the FieldMapping role that
+// populates each. A column appears only when the form DEFINES it (a field
+// tagged with that role, or a legacy field literally named the column) —
+// not "drop if empty in this batch". firstName/lastName are NOT here: they
+// are always pinned (the identifying column must never vanish, even on an
+// edge-case no-name form). Category/Status/Registered At/Confirmation Code
+// are admin-set/system and also always present.
+const GATED_BASE_COLUMN_ROLE: Record<string, FieldMapping> = {
+  email: FieldMapping.EMAIL,
+  phone: FieldMapping.PHONE,
+  organization: FieldMapping.ORGANIZATION,
+  designation: FieldMapping.DESIGNATION,
+};
 
 // A denormalized FILE ref in formData carries at least fileId + filename.
 function isFileRefWithId(
@@ -120,6 +117,7 @@ export async function GET(
       label: true,
       type: true,
       options: true,
+      mapsTo: true,
     },
   });
 
@@ -136,20 +134,50 @@ export async function GET(
     (f) => !SKIP_TYPES.has(f.type) && !CONTACT_COLUMN_NAMES.has(f.name)
   );
 
+  // A gated base column is "defined" when the form has an active field
+  // tagged with its mapping role OR a legacy field literally named the
+  // column. FULL_NAME feeds firstName/lastName, which are pinned anyway.
+  const formDefinesColumn = (col: string): boolean =>
+    formFields.some(
+      (f) => f.mapsTo === GATED_BASE_COLUMN_ROLE[col] || f.name === col
+    );
+
+  type Reg = (typeof registrations)[number];
+  // Ordered base columns with their value accessor. `include:false` drops
+  // both the header (xlsx) AND the row key (CSV), so the column SET is
+  // identical across formats. First/Last + Category/Status/system pinned;
+  // Email/Phone/Organization/Designation gated on form definition.
+  const baseColumns = (
+    [
+      { header: "First Name", include: true, value: (r: Reg) => r.contact.firstName },
+      { header: "Last Name", include: true, value: (r: Reg) => r.contact.lastName },
+      {
+        header: "Email",
+        include: formDefinesColumn("email"),
+        value: (r: Reg) => (isSyntheticEmail(r.contact.email) ? "" : r.contact.email),
+      },
+      { header: "Phone", include: formDefinesColumn("phone"), value: (r: Reg) => r.contact.phone || "" },
+      {
+        header: "Organization",
+        include: formDefinesColumn("organization"),
+        value: (r: Reg) => r.contact.organization || "",
+      },
+      {
+        header: "Designation",
+        include: formDefinesColumn("designation"),
+        value: (r: Reg) => r.contact.designation || "",
+      },
+      { header: "Category", include: true, value: (r: Reg) => r.contact.category || "" },
+      { header: "Status", include: true, value: (r: Reg) => r.status },
+      { header: "Registered At", include: true, value: (r: Reg) => r.registeredAt?.toISOString() || "" },
+      { header: "Confirmation Code", include: true, value: (r: Reg) => r.confirmationCode },
+    ] as const
+  ).filter((c) => c.include);
+
   const data = registrations.map((r) => {
     const formData = (r.formData as Record<string, unknown> | null) ?? {};
-    const row: Record<string, string> = {
-      "First Name": r.contact.firstName,
-      "Last Name": r.contact.lastName,
-      Email: isSyntheticEmail(r.contact.email) ? "" : r.contact.email,
-      Phone: r.contact.phone || "",
-      Organization: r.contact.organization || "",
-      Designation: r.contact.designation || "",
-      Category: r.contact.category || "",
-      Status: r.status,
-      "Registered At": r.registeredAt?.toISOString() || "",
-      "Confirmation Code": r.confirmationCode,
-    };
+    const row: Record<string, string> = {};
+    for (const col of baseColumns) row[col.header] = col.value(r);
 
     for (const field of dynamicFields) {
       row[field.label] = formatCell(field, formData[field.name], formData);
@@ -171,9 +199,9 @@ export async function GET(
   //    unchanged (plain filename text). ──
   if (format === "xlsx") {
     // Explicit column order so FILE cells can be addressed by index for
-    // hyperlinks. Mirrors the row keys built above (base block, then each
-    // dynamic field, with its Other sibling immediately after).
-    const columns: string[] = [...BASE_COLUMNS];
+    // hyperlinks. Mirrors the row keys built above (the form-aware base
+    // block, then each dynamic field with its Other sibling after).
+    const columns: string[] = baseColumns.map((c) => c.header);
     for (const field of dynamicFields) {
       columns.push(field.label);
       const parsed = parseFormFieldOptions(field.options);
