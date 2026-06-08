@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorize } from "@/lib/api-auth";
+import { authorizeEvent } from "@/lib/api-auth";
 
 interface RouteParams {
   params: Promise<{ eventId: string }>;
@@ -9,10 +9,9 @@ interface RouteParams {
 // GET - Get event modules
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize();
-    if (ctx instanceof NextResponse) return ctx;
-
     const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId);
+    if (ctx instanceof NextResponse) return ctx;
 
     const modules = await prisma.eventModules.findUnique({
       where: { eventId },
@@ -35,19 +34,12 @@ export async function GET(request: Request, { params }: RouteParams) {
 // POST - Create default modules for an event
 export async function POST(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize("editor");
+    const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "editor" });
     if (ctx instanceof NextResponse) return ctx;
 
-    const { eventId } = await params;
-
-    // Check if event exists
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-    });
-
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
-    }
+    // authorizeEvent already loaded + 404'd a missing event, so the
+    // standalone existence findUnique here was redundant — dropped.
 
     // Check if modules already exist
     const existing = await prisma.eventModules.findUnique({
@@ -76,10 +68,10 @@ export async function POST(request: Request, { params }: RouteParams) {
 // PATCH - Update module states
 export async function PATCH(request: Request, { params }: RouteParams) {
   try {
-    const ctx = await authorize("manager");
+    const { eventId } = await params;
+    const ctx = await authorizeEvent(eventId, { role: "manager" });
     if (ctx instanceof NextResponse) return ctx;
 
-    const { eventId } = await params;
     const body = await request.json();
 
     // Validate that only allowed fields are being updated
