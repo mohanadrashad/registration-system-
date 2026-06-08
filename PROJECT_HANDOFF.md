@@ -1,13 +1,13 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-06-08 (Auth posture sweep TRULY complete — the 2026-06-01 "ARC COMPLETE" was auth()-only; the global authorize() helper was never enumerated. PR A #46 + PR B #47 migrated the remaining 8 handlers; PR B closed a 🔴 cross-event template read/edit/delete that was live in prod)
+**Last updated:** 2026-06-08 (Excel attendee export COMPLETE + live — "Export as Excel" with clickable FILE-stream hyperlinks + form-aware base columns, PR #48. Also today: auth posture sweep TRULY complete — PR A #46 + PR B #47 migrated the 8 handlers the 2026-06-01 auth()-only sweep had missed)
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
 **Storage — TWO Vercel Blob stores:** (1) **private** store (id `Q7RjwvBaaLwKE6eR`, env `BLOB_READ_WRITE_TOKEN`) — visitor FILE uploads + phase receipts, served via stream-through. (2) **`branding-public`** store (PUBLIC, id `store_O0LBuk4rM0qMcAYL`, env `BLOB_PUBLIC_READ_WRITE_TOKEN` — set in **Preview + Production**) — admin-uploaded logos/favicons, served as direct CDN URLs on the public registration page. A logo isn't secret; the private store rejects `access:"public"` (store-level), which forced the second store.
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
 **Branch in progress:** none — between projects (auth posture sweep follow-up fully shipped; no queued substantive feature)
-**Production branch:** `main`, HEAD at `1c95157` (cross-event isolation on email templates + send-email, PR #47)
+**Production branch:** `main`, HEAD at `6218bed` (Excel attendee export + form-aware columns, PR #48)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
@@ -30,6 +30,26 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-08 — Excel attendee export — clickable FILE links + form-aware columns — COMPLETE, live on prod
+
+The Attendees page now has an **"Export as Excel"** button **alongside** the existing CSV "Export" button (CSV unchanged — byte-identical). The xlsx renders each attendee-submitted FILE field as a **clickable cell** linking to the file. Squash-merged `6218bed` (PR #48). One route + the button changed; rides entirely on existing infra.
+
+**Excel export with FILE hyperlinks** (`registrations/export` gains a `format=xlsx` branch; the route already accepted `?format=`):
+- Built with **SheetJS** (`xlsx`, already a dep — previously only used for *import*). Same rows as CSV (reuses `formatCell`), explicit column order.
+- Each FILE field cell is a real hyperlink (`ws[addr].l = { Target, Tooltip }`): the cell text stays the filename, the Target is the **absolute** url `${origin}/api/events/${eventId}/files/${fileId}/stream` (origin from `new URL(req.url).origin`), tooltip "Open file (admin login required)". `fileId` was always present in `formData` (`{fileId,filename,mimeType,sizeBytes}`) — just unused before.
+- One column/link **per FILE field**, never merged.
+- **Admin-only, no public exposure:** the link points at the existing admin-auth-gated stream route (`authorizeEvent`), which streams the **private** blob. Opens cleanly for a logged-in admin; **401 without a live session** (verified). So: **NO new public Blob store, NO new endpoint, NO schema change, NO new env.**
+- **SheetJS gotchas (for the next binary export):** `XLSX.write(..., {type:"array"})` then `new NextResponse(new Blob([buf]))` — a bare Buffer/Uint8Array trips the strict `BodyInit` generic under this TS lib config. Hyperlink writing is community-version (not Pro).
+
+**Form-aware base columns** (folded into the same PR — was hardcoded; empty Organization/Designation etc. cluttered forms that don't collect them):
+- **First Name + Last Name** always pinned (identifying column never vanishes); **Category / Status / Registered At / Confirmation Code** always (admin-set/system).
+- **Email / Phone / Organization / Designation** appear only when the form **DEFINES** the field — an active FormField with `mapsTo` = that role **OR** a legacy field literally named the column (`FULL_NAME` feeds First+Last). Gated on form-*definition*, never on batch data, so a **defined-but-unanswered** field still gets its column. Added `mapsTo` to the export's `select`.
+- One `baseColumns` source feeds **both** CSV and xlsx → the column **set is identical across formats**.
+
+**Smoke (Playwright + SheetJS/Papa parse, real forms + a controlled throwaway event):** 6/6 FILE cells linked to correct per-file stream URLs (incl. an Arabic filename), two FILE fields land in two distinct linked columns, CSV still `text/csv` with plain filenames and no links, unauth stream → 401; Event A (no org/designation mapping) drops both columns, an email-optional form drops Email, a defined-but-unanswered ORGANIZATION field keeps its column, First/Last/Category/Status/Confirmation always present, CSV header set === xlsx header set. Memory `[[csv-export-routes]]`.
+
+**⚠️ Known item — NOT addressed (out of scope, pre-existing, logged):** a FormField mapped to a contact role but **named differently** (e.g. `company` → `mapsTo:ORGANIZATION`) shows as **two columns** — the base "Organization" column (resolved value) AND its own dynamic "Company" column (raw answer), same value duplicated. Cause: the dynamic-field exclusion (`CONTACT_COLUMN_NAMES`) is **name-based**, not mapping-based. Forms that name the field literally (`organization`) don't hit it. **Fix sketch for a future ticket:** exclude dynamic fields whose `mapsTo` targets a base column, not just those whose `name` matches.
 
 ### 2026-06-08 — Auth posture sweep — TRULY complete (the 2026-06-01 "ARC COMPLETE" was auth()-only)
 
@@ -620,5 +640,7 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 Whatever you pick, Claude will read this handoff + the specs + memory and pick up from here without re-asking.
 
 ---
+
+*Updated 2026-06-08 (later). **Excel attendee export shipped** — PR #48 (`6218bed`): "Export as Excel" alongside the unchanged CSV button; xlsx renders each FILE field as a clickable cell → the admin-auth-gated `…/files/[fileId]/stream` (logged-in admins only, 401 otherwise — no public exposure); base columns now form-aware (Email/Phone/Org/Designation gated on `mapsTo`-or-legacy-name, First/Last + Category/Status/system always-on); CSV and xlsx column sets identical. Rides on existing infra (no new store/endpoint/schema). Known out-of-scope item logged in `[[csv-export-routes]]`: a role-mapped-but-differently-named field (e.g. `company`→ORGANIZATION) shows as both the base column AND its own dynamic column; future-ticket fix = exclude dynamic fields by `mapsTo`, not just `name`.*
 
 *Updated 2026-06-08. **Auth posture sweep TRULY complete** — the 2026-06-01 "ARC COMPLETE" was `auth()`-scoped only; global `authorize()` (no per-event membership) sat on 8 `[eventId]` handlers, one with a 🔴 live cross-event template read/edit/delete. PR A #46 (`c45d3e8`, 6 mechanical files, roles preserved) + PR B #47 (`1c95157`, cross-event data isolation on `emails/templates/[templateId]` + `attendees/send-email`, scoped to `{id,eventId}`) closed it; both live on prod. Prod pre-flight = 0 affected. Email-send routes kept at `editor` (a manager bump is a separate decision). `authorizeEvent` is now genuinely canonical in `/api/events/[eventId]/*` (only the global `events/route.ts` collection still uses `authorize()`, correctly). **Process rules added: grep ALL legacy auth shapes when declaring a migration done; cross-event isolation needs BOTH the gate and `{id,eventId}` row scoping.** Open follow-up: friendlier admin file-op error surfacing (SDK swallows 400 bodies). Open hygiene (pending from 2026-06-03): rotate the DB passwords + `branding-public` blob token surfaced during setup.*
