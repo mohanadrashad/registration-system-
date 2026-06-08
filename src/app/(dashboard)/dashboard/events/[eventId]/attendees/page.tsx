@@ -44,6 +44,7 @@ import {
   Award,
   Filter,
   X,
+  FileSpreadsheet,
 } from "lucide-react";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
@@ -454,6 +455,13 @@ export default function AttendeesPage() {
     window.open(`/api/events/${eventId}/registrations/export?format=csv`, "_blank");
   }
 
+  function handleExportExcel() {
+    // Same data as the CSV export, but as a real .xlsx where each FILE
+    // field's cell is a clickable link to the admin-auth-gated stream
+    // route (opens only for a logged-in admin; not publicly reachable).
+    window.open(`/api/events/${eventId}/registrations/export?format=xlsx`, "_blank");
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center py-12">Loading...</div>;
   }
@@ -487,6 +495,11 @@ export default function AttendeesPage() {
         <Button variant="outline" onClick={handleExport}>
           <Download className="mr-2 h-4 w-4" />
           Export
+        </Button>
+
+        <Button variant="outline" onClick={handleExportExcel}>
+          <FileSpreadsheet className="mr-2 h-4 w-4" />
+          Export as Excel
         </Button>
 
         {userCanEdit && <Dialog open={importOpen} onOpenChange={setImportOpen}>
