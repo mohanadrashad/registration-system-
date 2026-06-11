@@ -360,13 +360,32 @@ export function FileUploadControl({
     const oldFileId = valueRef.current?.fileId ?? null;
 
     try {
-      await upload(file.name, file, {
+      // Shrink large photos / ID scans in the browser before they leave
+      // the device. A phone photo or ID arrives at 2–5 MB; downscaling
+      // to a sane dimension + JPEG re-encode cuts that to a few hundred
+      // KB with no visible quality loss, keeping the private Blob store
+      // from filling with multi-MB originals. No-op for PDFs (CVs) and
+      // formats the browser can't decode (HEIC) — those upload as-is.
+      const uploadFile = await maybeCompressImage(
+        file,
+        metadata.allowedMimeTypes as readonly string[]
+      );
+      // The picked file may now be smaller — reflect that in the UI.
+      if (uploadFile !== file) {
+        setState((cur) =>
+          cur.kind === "uploading"
+            ? { ...cur, fileName: uploadFile.name, sizeBytes: uploadFile.size }
+            : cur
+        );
+      }
+
+      await upload(uploadFile.name, uploadFile, {
         // Mirrors receipt-upload-control. The Vercel Blob store is
         // configured Private at the project level; this literal pairs
         // with that store configuration.
         access: "private",
         handleUploadUrl: `/api/register/${eventSlug}/upload`,
-        contentType: file.type,
+        contentType: uploadFile.type,
         clientPayload: JSON.stringify({ formFieldId }),
         abortSignal: controller.signal,
         onUploadProgress: (event) => {
@@ -713,6 +732,85 @@ export function FileUploadControl({
       </Dialog>
     </div>
   );
+}
+
+// ─── Client-side image compression ───────────────────────────────────
+//
+// The private Blob store fills up with attendee photos and ID scans —
+// phones produce 2–5 MB JPEG/HEIC originals, far larger than needed for
+// a registration record or badge. We downscale + re-encode in the
+// browser before upload. Defaults chosen so an ID-card's small print
+// stays legible: 1800px on the long edge at q0.82 keeps text readable
+// while typically cutting a 4 MB photo to ~300 KB.
+const IMAGE_MAX_DIMENSION = 1800;
+const IMAGE_JPEG_QUALITY = 0.82;
+// Below this, the re-encode round-trip isn't worth it.
+const COMPRESS_MIN_BYTES = 400 * 1024;
+// Raster formats the browser can reliably decode onto a canvas. HEIC/
+// HEIF is deliberately excluded — most browsers can't decode it, so we
+// pass those through unchanged rather than risk a failed re-encode.
+const COMPRESSIBLE_MIME = /^image\/(jpe?g|png|webp)$/i;
+
+/**
+ * Downscale + re-encode an image File before upload. Returns the
+ * original File unchanged when compression doesn't apply or wouldn't
+ * help (non-raster type, already small, decode failure, or the result
+ * isn't actually smaller). Never throws — any failure falls back to the
+ * original so a quirky file still uploads.
+ *
+ * Targets JPEG when the field allows it (best photo compression);
+ * otherwise keeps the source format so the server's upload token still
+ * accepts the content type.
+ */
+async function maybeCompressImage(
+  file: File,
+  allowedMimeTypes: readonly string[]
+): Promise<File> {
+  if (!COMPRESSIBLE_MIME.test(file.type)) return file;
+  if (file.size < COMPRESS_MIN_BYTES) return file;
+  if (typeof createImageBitmap !== "function") return file;
+
+  try {
+    const bitmap = await createImageBitmap(file, {
+      imageOrientation: "from-image",
+    });
+    const longEdge = Math.max(bitmap.width, bitmap.height);
+    const scale = Math.min(1, IMAGE_MAX_DIMENSION / longEdge);
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      return file;
+    }
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+
+    const outType = allowedMimeTypes.includes("image/jpeg")
+      ? "image/jpeg"
+      : file.type;
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, outType, IMAGE_JPEG_QUALITY)
+    );
+    // Bail if the encode failed or didn't shrink the file (e.g. an
+    // already-optimised image, or a tiny PNG that grows as JPEG).
+    if (!blob || blob.size >= file.size) return file;
+
+    const renamed =
+      outType === "image/jpeg" && !/\.jpe?g$/i.test(file.name)
+        ? `${file.name.replace(/\.[^.]+$/, "")}.jpg`
+        : file.name;
+    return new File([blob], renamed, {
+      type: outType,
+      lastModified: file.lastModified,
+    });
+  } catch {
+    return file;
+  }
 }
 
 /**
