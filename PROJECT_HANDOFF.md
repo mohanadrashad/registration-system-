@@ -1,13 +1,13 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-06-08 (Excel attendee export COMPLETE + live — "Export as Excel" with clickable FILE-stream hyperlinks + form-aware base columns, PR #48. Also today: auth posture sweep TRULY complete — PR A #46 + PR B #47 migrated the 8 handlers the 2026-06-01 auth()-only sweep had missed)
+**Last updated:** 2026-06-13 (Attendees-page arc COMPLETE + live — dynamic form-answer filters + filter-aware exports + server-side pagination + bulk delete (PR #53) and URL view-state persistence + scroll memory + numbered pager (PR #54). Also this window: full-codebase review hardening shipped (PR #52 — capacity-race lock, OTP throttle, validation gaps), client-side image compression (PR #50), orphan-blob reconciliation script (PR #51), COUNTRY export fix (PR #49))
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
 **Storage — TWO Vercel Blob stores:** (1) **private** store (id `Q7RjwvBaaLwKE6eR`, env `BLOB_READ_WRITE_TOKEN`) — visitor FILE uploads + phase receipts, served via stream-through. (2) **`branding-public`** store (PUBLIC, id `store_O0LBuk4rM0qMcAYL`, env `BLOB_PUBLIC_READ_WRITE_TOKEN` — set in **Preview + Production**) — admin-uploaded logos/favicons, served as direct CDN URLs on the public registration page. A logo isn't secret; the private store rejects `access:"public"` (store-level), which forced the second store.
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
-**Branch in progress:** none — between projects (auth posture sweep follow-up fully shipped; no queued substantive feature)
-**Production branch:** `main`, HEAD at `6218bed` (Excel attendee export + form-aware columns, PR #48)
+**Branch in progress:** none — between projects (attendees-page arc fully shipped; no queued substantive feature)
+**Production branch:** `main`, HEAD at `83cc2c6` (attendees view persistence, PR #54)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
@@ -30,6 +30,67 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-13 — Attendees view persistence — URL state + scroll memory + numbered pager — live on prod
+
+Closes three navigation papercuts the maintainer hit using the new filters on the 2,794-attendee event: filters vanished after clicking into an attendee and coming back; scroll position was lost on the round trip; no way to jump straight to page 5 of 20.
+
+**Attendees view persistence** — `83cc2c6` (PR #54, squash merge). 2 files, +192/−22.
+
+- **All view state mirrors into the URL** (filters, form-answer `ff` JSON, search, page, pageSize, sort) via `history.replaceState` — NOT router navigation, so no history spam and no re-render churn. State initializers read `useSearchParams` on mount. Browser back, refresh, and **shared/bookmarked links** all restore the exact view. The page-reset-on-filter-change effect gained a **mount guard** so a URL-restored page number isn't clobbered on load.
+- **Scroll + return-URL memory:** row click saves `window.scrollY` + the full list URL to sessionStorage (`attendees:scroll:<eventId>` / `attendees:return:<eventId>`); the list restores scroll once after first data load (key cleared after use); the detail page's **Back button** consumes the return URL instead of the bare `/attendees` default (state+effect read, not render-time sessionStorage — avoids hydration mismatch).
+- **Numbered pagination with ellipsis** (`Previous 1 … 4 [5] 6 … 20 Next`) via a small `pageNumbers()` helper; numbers hidden on small screens where Previous/Next remain.
+- The statistics deep-link chip's manual URL-strip was deleted — the URL-sync effect now owns the query string.
+
+### 2026-06-12 — Attendees dynamic filters + filter-aware exports + server-side pagination — COMPLETE, live on prod
+
+The big one this window: the Attendees page went from "weak filtering, loads all rows" to professional at 7k+ attendees. Driven by the maintainer's report on the 2,794-organizer event ("can't filter by city/gender/nationality; every event has different fields"). Squash-merged `198f77c` (PR #53, two commits: filters `d0b9df4` + pagination `44f98d9`).
+
+**Commit 1 — dynamic form-answer filters + filter-aware exports:**
+
+- **Filter set is DERIVED from each event's own form** — never hardcoded columns. New shared module `src/lib/attendees/attendee-filters.ts`: `getFilterableFields` (active REGISTRATION-phase `SELECT/RADIO/MULTISELECT/COUNTRY/CHECKBOX` fields), `parseFieldFilters` (client sends one `fieldFilters` JSON param `{fieldName: value}`; unknown keys dropped server-side — no arbitrary JSON-path probing), and `buildContactWhere` — **the single where-builder shared by the attendees list route AND `registrations/export`**. That sharing is the load-bearing invariant: **"what you see is what you export"** holds by construction. Any new attendee filter must be added in the module, not inline in either route.
+- Predicates run server-side against `Registration.formData` JSON paths: string `equals` (SELECT/RADIO/COUNTRY), `array_contains` scalar (MULTISELECT), boolean equals (CHECKBOX, sent as `"true"/"false"`). All three **verified live against the dev DB** before ship.
+- UI: **Filters** popover (one Select per field; Radix typeahead makes the 195-country list searchable by typing), active-count badge, removable chips + Clear all. COUNTRY/CHECKBOX options resolve client-side (server sends empty options for them); option-bearing fields include the `__other` entry.
+- Export (CSV + Excel) accepts the same params — filter to "women from Riyadh", hit Export, get exactly those rows. No params = full dump, unchanged. Export reuses the contact-where as `{eventId, contact: {is: contactWhere}}`.
+
+**Commit 2 — server-side pagination + bulk ops (the 7k-attendees performance ask):**
+
+- Previously the API returned **every** matching contact on each filter change (multi-MB per keystroke at 7k) and the client paginated. Now: `page`/`pageSize` (capped 100) with `skip`/`take`; status counts via `groupBy` aggregates; "Emailed" sort server-side (`emailLogs: {_count}` ordering); meta (event/templates/phases) fetched **once** via `includeMeta=1`; "Select all N" fetches just ids via `idsOnly=1`.
+- **New `POST contacts/bulk-delete`** — the old loop fired **one DELETE per contact** (7k selected = 7k sequential requests). Now one transaction: manager role, eventId-scoped `deleteMany` (eventId in every where doubles as the cross-event guard), same cleanup order as single DELETE (emailLogs → registration → contact), zod-validated ids (max 10k).
+- **Stale-response guard** — fetch sequence counter; a slow earlier response can never overwrite a newer one (latent race in the old code, now impossible). Table dims + paging buttons disable while loading; failed loads toast.
+- The attendees API has exactly ONE consumer (the page) — response-shape change verified safe by grep.
+- **Prisma `groupBy` gotchas (for the next aggregate):** it REQUIRES `orderBy` when used in the `$transaction` array form, and its `_count` payload types as a wide union (`true | {…} | undefined`) — normalize defensively.
+- Verified live against dev DB: page slicing with zero overlap between pages, groupBy counts, email-count ordering. Memory `[[attendee-field-filters]]`.
+
+### 2026-06-12 — Full-codebase review hardening — 15 fixes across 14 files — live on prod
+
+First exercise of the new model ("try the Fable capability"): 5 parallel subsystem reviews (registration flow, portal, admin API, services, dashboard UI), **every finding hand-verified against the code before fixing** — two agent claims were rejected as false positives. Squash-merged `2d93b0d` (PR #52). Memory `[[full-codebase-review-2026-06]]`.
+
+**The big one — capacity oversell race.** `determineRegistrationStatus` ran BEFORE the registration transaction; two concurrent submits could both read "one spot left" and both confirm past capacity. Same race in admin approve and waitlist promote. **New `approvalService.lockEventRow(tx, eventId)`** (`SELECT … FOR UPDATE` on the Event row) + capacity decisions moved inside the locked transaction in all three paths; `reject()` wrapped in a tx too (its two writes could half-apply); `getCapacityInfo`/`determineRegistrationStatus` accept an optional tx client. **Contract for future work: ANY capacity-deciding write path must take the lock.** `getCapacityInfo` also collapsed 4 queries → 2 (groupBy).
+
+**Other correctness:**
+- Required CHECKBOX `false` passed validation client + server (and `[]` for required MULTISELECT server-side) — both rejected now.
+- Register POST stored the **entire client JSON body** into `Registration.formData`/`Contact.metadata` — now filtered to real form keys (+ `__other` siblings + legacy keys); malformed JSON → 400 not 500.
+- **Portal OTP email bombing closed:** successful code requests were never rate-limited (anyone knowing a registered email could flood the inbox, invalidating the victim's codes each time). New per-(event,email) throttle — 30s cooldown, 5/15min, **recorded for every request so the 429 carries no enumeration signal**. Also: synthetic emails never generate codes or hit SMTP; `timingSafeEqual` hash compare; transport failure no longer 500s.
+- users routes: zod validation (email/role enum/password min 8), P2025→404, P2002→409, **self-role-change guard** (mirrors the self-delete guard — prevents the last SUPER_ADMIN locking everyone out). form-fields/reorder validates shape + duplicate ids/orders.
+
+**UX:** public register form got try/catch around submit (network drop = bilingual error instead of infinite spinner; non-JSON error bodies no longer mask outcomes); badges/templates/checkin-search silent failures now toast; approvals approve/reject/promote `await` the silent refetch (closes a fast-double-click double-fire window).
+
+**Rejected findings (do NOT re-fix):** form-fields `[fieldId]` PATCH cross-event claim is FALSE (the handler verifies `{id, eventId}` before updating); the OTP "timing attack" was overstated (HMAC compare — hardened anyway as a one-liner).
+
+**Verified-but-deferred (user decided "skip for now"; triggers documented in the queue below):** raw `confirm()` dialogs (6 files), role-blind action buttons on badges/whatsapp/checkin/form-builder pages, phase-reminder partial-failure retry, smtpPort validation, bare loading states / date-format inconsistencies.
+
+### 2026-06-11 — Blob quota incident response: image compression + orphan-blob script (separate session)
+
+Production uploads started failing — the private Blob store hit the Hobby-plan 1GB cap, masked by `describeUploadError`'s catch-all "connection lost" message (the real `400 Storage quota exceeded` was only visible in the DevTools response body). Resolution: plan upgraded to Pro + two PRs.
+
+- **Client-side image compression** — `a3ac9e4` (PR #50). `maybeCompressImage()` in `file-upload-control.tsx`: images >400KB downscale to 1800px long edge, JPEG q0.82 (~5–10× smaller, national-ID small print stays legible). **Exempt:** PDFs, small images, HEIC/HEIF (canvas can't decode). Only converts format when `allowedMimeTypes` permits; falls back to original on any failure; never throws. Memory `[[upload-image-compression-shipped]]`.
+- **Orphan-blob reconciliation script** — `70c19b5` (PR #51). `prisma/scripts/cleanup-orphan-blobs.ts` (334 lines): lists store blobs vs DB references, dry-run by default, **aborts if the DB references 0 blobs or <50% of a non-empty store** (`--force` to override). That guard exists because of a near-miss: **the local `.env` `DATABASE_URL` is a DEV DB while the local Blob token points at the PROD store** — a naive reconciliation sees prod blobs + dev DB and flags every real attendee file as an orphan. Run ONLY against the production `DATABASE_URL`. Memory `[[blob-stores-and-dev-db-footgun]]`.
+- Open prevention follow-up: confirm `CRON_SECRET` is set in Production so the nightly orphan-receipt cron actually runs.
+
+### 2026-06-08 — COUNTRY export fix (PR #49)
+
+`fix(export): resolve COUNTRY field codes to full names` — `a8d86f4`. COUNTRY fields store the ISO-2 code (e.g. `SA`); the CSV/Excel cell now resolves to the full name via the `COUNTRIES` list (matches what the dashboard shows) instead of dumping the raw code. Lives in the export route's `formatCell`.
 
 ### 2026-06-08 — Excel attendee export — clickable FILE links + form-aware columns — COMPLETE, live on prod
 
@@ -538,6 +599,18 @@ _Queue is empty — no queued substantive feature. The broader per-event templat
 ### Open follow-up tickets (small, not blocking)
 
 - **Friendlier admin file-op error surfacing.** `@vercel/blob` `upload()` swallows the body of an `onBeforeGenerateToken` 400, so real Replace/Upload failures surface a generic SDK message ("Vercel Blob: Failed to retrieve the client token") instead of our specific reason (e.g. the empty-field guard's "use Replace instead"). User-reachable on genuine failures; pre-existing (also affects Replace). Would need a pre-flight check before `upload()`, or surfacing the reason another way. Low priority.
+- **`CRON_SECRET` in Production** — confirm it's set so the nightly orphan-receipt cleanup cron (`/api/cron/cleanup-orphan-receipts`, 03:30 UTC) actually runs (surfaced during the 2026-06-11 Blob quota incident).
+
+### Deferred from the 2026-06-12 review (user decision: "skip for now" — fix on trigger, not proactively)
+
+All verified real but none lose data or breach security. The do-when triggers were agreed explicitly:
+
+| Item | Trigger to pick it up |
+|---|---|
+| Role-blind action buttons (badges / whatsapp / checkin / form-builder pages render edit controls to VIEWERs; API rejects correctly) | The team starts adding **Viewer-role** members. Copy the `userCanEdit` pattern from attendees/page.tsx. |
+| Phase-reminder partial-failure: `reminderSent` latch means a crash mid-batch silently skips the remainder, no retry | Reliance on **automatic phase reminders at scale** (hundreds of attendees). |
+| Raw `confirm()` dialogs in 6 files (unstyled, English-only) | Cosmetic only. ⚠️ If picked up: replacing with shadcn AlertDialog must use the CSS-hide stable-DOM template (`[[radix-dialog-post-refetch-race]]`) — this app has shipped 3 reverts from naive dialog work. |
+| smtpPort accepted unvalidated in email-settings; bare "Loading..." states; inconsistent date formats | Pure polish, batch into any future dashboard pass. |
 
 ---
 
@@ -569,6 +642,11 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 
 ## Recent decisions and lessons (newest)
 
+- **Capacity decisions MUST run under `approvalService.lockEventRow(tx, eventId)` inside the writing transaction.** The check-then-write pattern (read count → decide CONFIRMED/WAITLISTED → insert) oversells under concurrency without the Postgres row lock. Register, approve, and waitlist-promote all follow this now; any NEW write path that consumes capacity (imports? API registrations?) must take the lock or it reintroduces the race PR #52 closed.
+- **Attendee filters live in ONE shared where-builder** (`src/lib/attendees/attendee-filters.ts`), consumed by both the list route and `registrations/export`. That sharing IS the "export matches the screen" guarantee. Adding a filter inline in either route silently breaks it — add to the module.
+- **View state belongs in the URL, synced via `history.replaceState`** (not router navigation — no history spam, no re-render churn): initializers read `useSearchParams`, one effect writes the query string back. Two traps hit and solved on the attendees page: the page-reset-on-filter-change effect needs a **mount guard** or it clobbers the URL-restored page number; a detail page reading sessionStorage for its Back href must do it in state+effect, not at render time (SSR/hydration mismatch).
+- **Subagent review findings need hand-verification before fixing.** The 2026-06-12 five-agent review produced two confident HIGH findings that were false (a "cross-event PATCH" with the guard plainly present at the top of the handler; an "OTP timing attack" against HMAC outputs). Every finding got verified against the actual code before any fix; the false ones are documented in `[[full-codebase-review-2026-06]]` so they don't get "re-fixed" later.
+- **Rate-limit design under an anti-enumeration response:** the OTP request endpoint always returns success (no "is this email registered" signal) — so its throttle must be recorded for EVERY well-formed request, not just successful sends. Throttling only real sends would make the 429 itself the enumeration oracle.
 - **"Migration complete" must be verified against ALL legacy patterns, not just the one the effort is named after.** The 2026-06-01 auth sweep was called "ARC COMPLETE — zero legacy `auth()`," and that grep was correct — but there were TWO global-auth helpers (`auth()` from `@/lib/auth` AND `authorize()` from `@/lib/api-auth`), and the sweep only enumerated the first. 8 `[eventId]` handlers sat on `authorize()` for a week, one with a live cross-event read/edit/delete bug. When you declare a migration done, grep for every shape of the old pattern (here: BOTH `auth(` and `[^E]authorize(`), and spot-check that the "canonical" replacement is actually the only thing left.
 - **Cross-event isolation is a DUAL gate — the auth helper AND the data op.** `emails/templates/[templateId]` had `authorizeEvent`-shaped intent but `findUnique({where:{id}})` — a row op keyed on id with no `eventId` lets a member of event A reach event B's row. Same class as PR #32 (form-fields) and #36 (campaigns). Fix BOTH: `authorizeEvent(eventId,{role})` + scope every data op to `{id, eventId}` (`findFirst`/`updateMany`/`deleteMany` + null/count → 404). Smoke must prove both independently: cross-event URL → 403 (gate), own-event URL + other-event row id → 404 with a DB check that nothing leaked/mutated (scoping). Codified in `[[auth-migration-audit-pattern]]`.
 - **Client-upload flows have a webhook-timing race — and localhost mocks HIDE it. Verify against the real webhook on Preview, never a localhost mock.** `@vercel/blob` `upload()` resolves when bytes hit storage, BEFORE the `onUploadCompleted` webhook persists the DB row. So a refetch fired immediately after `await upload()` reads stale/empty data. Admin Upload AND Replace both had this; **Replace's was SILENT** — a lost race showed the OLD file, which reads as success — and it was **live in prod from the Stage 3 UI merge until the 2026-06-07 fix**. The bug survived earlier testing because the webhook *cannot reach localhost*, so a mocked refetch never exercised the real ordering. **Fix:** read-back poll mirroring the visitor `waitForUploadedFile` (`file-upload-control.tsx`) — after `await upload()`, poll until the field reflects the new file (12×800ms ≈ 10s), then settle; on timeout show an honest "taking longer — refresh to check" state, never silently empty/stale. **Process rule: any file-upload flow (anything using `@vercel/blob` client `upload()` + an `onUploadCompleted` webhook) MUST be verified against the real webhook on a Preview deployment. A green localhost smoke proves nothing about webhook timing** — locally the webhook is effectively mocked away. For local smoking, substitute the webhook with a poll-synchronized real DB write, but treat Preview as the gate. `[[admin-upload-empty-complete]]`.
@@ -605,6 +683,10 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 - `branch-cleanup-gh-api-delete.md` — PR-merge cleanup uses `gh api -X DELETE refs/heads/<branch>`, NOT `--delete-branch`; required by the worktree setup. Codifies the squash → API-delete → detach → local-delete → watch-prod-deploy sequence.
 - `file-stage3-ui-complete.md` — FILE Stage 3 UI (Replace/Remove/provenance) shipped via the CSS-hide stable-DOM template; reusable Playwright network-interception smoke for the remote-DB/local-webhook env; stale-dev-server auth-500 footgun
 - `admin-upload-empty-complete.md` — upload-into-empty endpoint + empty-field guard + `admin-new:` provenance sentinel + shared `writeFileRefDualStore`; the webhook-timing race + read-back poll fix; webhook-can't-fire-on-localhost verification reality (real timeout test vs poll-synchronized DB-write success test); tsx `@/`-alias service-test technique
+- `upload-image-compression-shipped.md` — client-side compression params (1800px / q0.82 / >400KB), what's exempt (PDF, HEIC, small), why those numbers (ID legibility)
+- `blob-stores-and-dev-db-footgun.md` — the two stores + tokens, the DEV-DB-local/PROD-blob-token reconciliation footgun, the "connection lost" catch-all masking quota errors
+- `full-codebase-review-2026-06.md` — review-pass close-out: lockEventRow contract, rejected false-positive findings (don't re-fix), the deferred-items list with triggers
+- `attendee-field-filters.md` — shared where-builder contract, fieldFilters param validation, Prisma groupBy quirks, URL-state + scroll-memory patterns, single-consumer API note
 
 ---
 
@@ -632,7 +714,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
-3. State what you want to work on. The queue is empty — recent arcs (registration customization, FILE admin file-ops) are all shipped. Possible next directions:
+3. State what you want to work on. The queue is empty — recent arcs (registration customization, FILE admin file-ops, the attendees-page rebuild) are all shipped. Possible next directions:
+   - **Deferred review items** → see the trigger table under "Deferred from the 2026-06-12 review" — pick one up only when its trigger fires (Viewer-role members added; reminder volume grows).
    - **Friendlier admin file-op error surfacing** → small follow-up ticket (see "Open follow-up tickets"); make the empty-field-guard / auth reasons reach the admin instead of the generic SDK token message.
    - **The per-event template / layout system** → the larger deferred project; needs its own spec.
    - Or bring a new feature request — Claude will spec → audit → mockup → chunk → PR as usual.
@@ -640,6 +723,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 Whatever you pick, Claude will read this handoff + the specs + memory and pick up from here without re-asking.
 
 ---
+
+*Updated 2026-06-13. **Attendees-page arc complete** — PR #53 (`198f77c`): dynamic form-answer filters derived from each event's own form (city/gender/nationality on PF; whatever fields elsewhere), executed server-side on `Registration.formData` JSON paths via the shared where-builder that also drives `registrations/export` ("export = screen" by construction), PLUS server-side pagination/aggregates for 7k+ events and a one-transaction `contacts/bulk-delete` (was 7k sequential DELETEs). PR #54 (`83cc2c6`): view state persisted in the URL (back/refresh/share restores filters+page), scroll + return-URL memory across the detail round trip, numbered pager with ellipsis. Earlier the same window, PR #52 (`2d93b0d`) shipped the full-codebase review hardening — headline: the capacity-oversell race closed with `approvalService.lockEventRow` (`SELECT … FOR UPDATE`; any future capacity-writing path must take it), plus OTP request throttling (enumeration-safe), required-CHECKBOX/MULTISELECT validation, register-body key filtering, users-route zod validation, and dashboard silent-failure fixes. Two review findings rejected as false positives (documented — don't re-fix). Deferred items + triggers live in the queue section. From the separate 2026-06-11 session: Blob quota incident → image compression (PR #50) + guarded orphan-blob script (PR #51); COUNTRY export fix (PR #49).*
 
 *Updated 2026-06-08 (later). **Excel attendee export shipped** — PR #48 (`6218bed`): "Export as Excel" alongside the unchanged CSV button; xlsx renders each FILE field as a clickable cell → the admin-auth-gated `…/files/[fileId]/stream` (logged-in admins only, 401 otherwise — no public exposure); base columns now form-aware (Email/Phone/Org/Designation gated on `mapsTo`-or-legacy-name, First/Last + Category/Status/system always-on); CSV and xlsx column sets identical. Rides on existing infra (no new store/endpoint/schema). Known out-of-scope item logged in `[[csv-export-routes]]`: a role-mapped-but-differently-named field (e.g. `company`→ORGANIZATION) shows as both the base column AND its own dynamic column; future-ticket fix = exclude dynamic fields by `mapsTo`, not just `name`.*
 
