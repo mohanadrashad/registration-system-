@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
@@ -67,12 +67,6 @@ interface Contact {
   status: ContactStatus;
   registration: { status: string; registeredAt: string; confirmationCode: string; badgeEmailSent: boolean } | null;
   emailLogs: { id: string; status: string; sentAt: string | null }[];
-}
-
-interface CategoryGroup {
-  category: string;
-  count: number;
-  contacts: Contact[];
 }
 
 interface StatusCounts {
@@ -154,7 +148,10 @@ export default function AttendeesPage() {
   const userCanEdit = canEdit(role);
   const userCanDelete = canDelete(role);
 
-  const [groups, setGroups] = useState<CategoryGroup[]>([]);
+  // Server-paginated: `contacts` is only the current page's rows.
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [totalPages, setTotalPages] = useState(1);
+  const [listLoading, setListLoading] = useState(false);
   const [statusCounts, setStatusCounts] = useState<StatusCounts>({ IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
   const [total, setTotal] = useState(0);
   const [overallCounts, setOverallCounts] = useState<StatusCounts>({ IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
@@ -223,6 +220,7 @@ export default function AttendeesPage() {
     optionFilterOptionId,
     debouncedSearch,
     fieldFilters,
+    emailedSort,
   ]);
 
   // Debounce search
@@ -271,31 +269,64 @@ export default function AttendeesPage() {
     fieldFilters,
   ]);
 
+  // Meta (event/templates/phases) is fetched once; filter changes only
+  // refetch the page slice. Guarded by a sequence counter so a slow
+  // earlier response can never overwrite a newer one (filter + page
+  // changes can put two fetches in flight).
+  const metaLoadedRef = useRef(false);
+  const fetchSeqRef = useRef(0);
+
   const fetchData = useCallback(async () => {
+    const seq = ++fetchSeqRef.current;
+    setListLoading(true);
     try {
       const p = buildFilterParams();
+      p.set("page", String(page));
+      p.set("pageSize", String(pageSize));
+      if (emailedSort !== "none") {
+        p.set("sort", emailedSort === "yes" ? "emailed_yes" : "emailed_no");
+      }
+      if (!metaLoadedRef.current) p.set("includeMeta", "1");
       const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
       if (!res.ok) throw new Error("Failed");
       const data = await res.json();
-      setGroups(data.groups || []);
-      setStatusCounts(data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
+      if (seq !== fetchSeqRef.current) return; // stale response — newer fetch in flight
+      setContacts(data.contacts || []);
       setTotal(data.total || 0);
+      setTotalPages(data.totalPages || 1);
+      setStatusCounts(data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
       setOverallCounts(data.overallCounts || data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
       setOverallTotal(data.overallTotal || data.total || 0);
-      setEvent(data.event || null);
-      setTemplates(data.templates || []);
-      setPostRegPhases(data.postRegPhases || []);
       setFilterableFields(data.filterableFields || []);
+      if (data.event) {
+        setEvent(data.event);
+        setTemplates(data.templates || []);
+        setPostRegPhases(data.postRegPhases || []);
+        metaLoadedRef.current = true;
+      }
     } catch {
-      setGroups([]);
+      if (seq !== fetchSeqRef.current) return;
+      setContacts([]);
+      toast.error("Failed to load attendees");
     } finally {
-      setLoading(false);
+      if (seq === fetchSeqRef.current) {
+        setLoading(false);
+        setListLoading(false);
+      }
     }
-  }, [eventId, buildFilterParams]);
+  }, [eventId, buildFilterParams, page, pageSize, emailedSort]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // If a filter change shrank the result set below the current page,
+  // snap back to page 1 (e.g. deleting the last row of the last page).
+  useEffect(() => {
+    if (!listLoading && page > 1 && contacts.length === 0 && total > 0) {
+      setPage(1);
+    }
+  }, [listLoading, page, contacts.length, total]);
 
   function setFieldFilter(name: string, value: string) {
     setFieldFilters((prev) => {
@@ -320,7 +351,7 @@ export default function AttendeesPage() {
   }
 
   function togglePageSelection() {
-    const pageIds = paginatedContacts.map((c) => c.id);
+    const pageIds = contacts.map((c) => c.id);
     const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
     if (allPageSelected) {
       const next = new Set(selectedIds);
@@ -331,9 +362,19 @@ export default function AttendeesPage() {
     }
   }
 
-  function selectAllAttendees() {
-    const allIds = groups.flatMap((g) => g.contacts).map((c) => c.id);
-    setSelectedIds(new Set(allIds));
+  // "Select all N attendees" across every page of the current filter —
+  // the client only holds one page, so fetch just the matching ids.
+  async function selectAllAttendees() {
+    try {
+      const p = buildFilterParams();
+      p.set("idsOnly", "1");
+      const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
+      if (!res.ok) throw new Error("Failed");
+      const data = await res.json();
+      setSelectedIds(new Set<string>(data.ids || []));
+    } catch {
+      toast.error("Failed to select all attendees");
+    }
   }
 
   function clearSelection() {
@@ -449,15 +490,26 @@ export default function AttendeesPage() {
   async function handleBulkDelete() {
     if (!confirm(`Are you sure you want to delete ${selectedIds.size} attendee(s)?`)) return;
 
-    let deleted = 0;
-    for (const id of selectedIds) {
-      const res = await fetch(`/api/events/${eventId}/contacts/${id}`, { method: "DELETE" });
-      if (res.ok) deleted++;
+    // One bulk request — the old per-contact loop meant thousands of
+    // sequential DELETEs on large selections.
+    try {
+      const res = await fetch(`/api/events/${eventId}/contacts/bulk-delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: Array.from(selectedIds) }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error || "Failed to delete attendees");
+        return;
+      }
+      const result = await res.json();
+      toast.success(`Deleted ${result.deletedCount} attendee(s)`);
+      setSelectedIds(new Set());
+      fetchData();
+    } catch {
+      toast.error("Failed to delete attendees");
     }
-
-    toast.success(`Deleted ${deleted} attendee(s)`);
-    setSelectedIds(new Set());
-    fetchData();
   }
 
   async function handleAddContact(e: React.FormEvent<HTMLFormElement>) {
@@ -548,27 +600,17 @@ export default function AttendeesPage() {
     return <div className="flex items-center justify-center py-12">Loading...</div>;
   }
 
-  // When a specific category is selected, flatten all contacts into one list
+  // When a specific category is selected, the Category column is hidden.
   const isSingleCategory = categoryFilter !== "ALL";
-  const rawContacts = groups.flatMap((g) => g.contacts);
 
-  // Sort by emailed status if requested
-  const allContacts = emailedSort === "none" ? rawContacts : [...rawContacts].sort((a, b) => {
-    const aEmailed = a.emailLogs && a.emailLogs.length > 0 ? 1 : 0;
-    const bEmailed = b.emailLogs && b.emailLogs.length > 0 ? 1 : 0;
-    return emailedSort === "yes" ? bEmailed - aEmailed : aEmailed - bEmailed;
-  });
-
-  const visibleCount = groups.reduce((sum, g) => sum + g.count, 0);
-
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(allContacts.length / pageSize));
+  // Server-side pagination: `contacts` is already the sorted page slice,
+  // `total`/`totalPages` come from the DB aggregate.
   const safePage = Math.min(page, totalPages);
   const startIdx = (safePage - 1) * pageSize;
-  const paginatedContacts = allContacts.slice(startIdx, startIdx + pageSize);
+  const paginatedContacts = contacts;
   const pageContactIds = paginatedContacts.map((c) => c.id);
   const allPageSelected = pageContactIds.length > 0 && pageContactIds.every((id) => selectedIds.has(id));
-  const allSelected = allContacts.length > 0 && allContacts.every((c) => selectedIds.has(c.id));
+  const allSelected = total > 0 && selectedIds.size >= total;
 
   return (
     <div className="space-y-6">
@@ -966,16 +1008,13 @@ export default function AttendeesPage() {
             <DialogTitle>Send Email to {selectedIds.size} attendee{selectedIds.size !== 1 ? "s" : ""}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {(() => {
-              const withoutEmail = allContacts.filter(
-                (c) => selectedIds.has(c.id) && isSyntheticEmail(c.email)
-              ).length;
-              return withoutEmail > 0 ? (
-                <p className="text-xs text-amber-600 dark:text-amber-500">
-                  {withoutEmail} of {selectedIds.size} recipient{selectedIds.size !== 1 ? "s" : ""} {withoutEmail === 1 ? "has" : "have"} no email — they will be skipped.
-                </p>
-              ) : null;
-            })()}
+            {/* With server pagination the client only holds one page of
+                contacts, so a precise synthetic-email count isn't known
+                up front — the send endpoint skips them and reports the
+                exact skipped count in the result toast. */}
+            <p className="text-xs text-muted-foreground">
+              Recipients without an email address are skipped automatically.
+            </p>
             <p className="text-sm text-muted-foreground">Choose a template to send:</p>
             {templates.map((t) => (
               <button
@@ -1101,7 +1140,7 @@ export default function AttendeesPage() {
       </Dialog>
 
       {/* Content - always a flat table */}
-      {allContacts.length === 0 ? (
+      {contacts.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             No attendees found. Import contacts or add them manually.
@@ -1141,7 +1180,7 @@ export default function AttendeesPage() {
                   <th className="w-20 px-4 py-3"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y">
+              <tbody className={listLoading ? "divide-y opacity-50 transition-opacity" : "divide-y transition-opacity"}>
                 {paginatedContacts.map((contact) => (
                   <tr key={contact.id} className={`hover:bg-muted/40 transition-colors ${selectedIds.has(contact.id) ? "bg-primary/5" : ""}`}>
                     <td className="px-4 py-3">
@@ -1225,17 +1264,17 @@ export default function AttendeesPage() {
             </table>
           </div>
           {/* Select all banner */}
-          {allPageSelected && !allSelected && allContacts.length > pageSize && (
+          {allPageSelected && !allSelected && total > pageSize && (
             <div className="px-4 py-2 border-t bg-blue-50 dark:bg-blue-950/30 text-sm text-center">
               All {paginatedContacts.length} attendees on this page are selected.{" "}
               <button onClick={selectAllAttendees} className="text-blue-600 dark:text-blue-400 font-medium hover:underline">
-                Select all {allContacts.length} attendees
+                Select all {total} attendees
               </button>
             </div>
           )}
-          {allSelected && allContacts.length > pageSize && (
+          {allSelected && total > pageSize && (
             <div className="px-4 py-2 border-t bg-blue-50 dark:bg-blue-950/30 text-sm text-center">
-              All {allContacts.length} attendees are selected.{" "}
+              All {selectedIds.size} attendees are selected.{" "}
               <button onClick={clearSelection} className="text-blue-600 dark:text-blue-400 font-medium hover:underline">
                 Clear selection
               </button>
@@ -1245,7 +1284,7 @@ export default function AttendeesPage() {
           {/* Pagination footer */}
           <div className="px-4 py-3 border-t bg-muted/20 flex items-center justify-between text-sm">
             <div className="flex items-center gap-2 text-muted-foreground">
-              <span>{visibleCount} attendee{visibleCount !== 1 ? "s" : ""}</span>
+              <span>{total} attendee{total !== 1 ? "s" : ""}</span>
               <span className="text-muted-foreground/50">|</span>
               <span>Rows per page:</span>
               <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
@@ -1256,17 +1295,18 @@ export default function AttendeesPage() {
                   <SelectItem value="10">10</SelectItem>
                   <SelectItem value="25">25</SelectItem>
                   <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">
-                {startIdx + 1}–{Math.min(startIdx + pageSize, allContacts.length)} of {allContacts.length}
+                {total === 0 ? "0" : `${startIdx + 1}–${Math.min(startIdx + paginatedContacts.length, total)}`} of {total}
               </span>
               <Button
                 variant="outline"
                 size="sm"
-                disabled={safePage <= 1}
+                disabled={safePage <= 1 || listLoading}
                 onClick={() => setPage(safePage - 1)}
               >
                 Previous
@@ -1274,7 +1314,7 @@ export default function AttendeesPage() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={safePage >= totalPages}
+                disabled={safePage >= totalPages || listLoading}
                 onClick={() => setPage(safePage + 1)}
               >
                 Next
