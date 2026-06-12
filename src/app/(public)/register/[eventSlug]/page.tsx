@@ -203,6 +203,8 @@ const translations = {
     fillRequired: "يرجى إكمال الحقول المطلوبة قبل المتابعة.",
     pleaseSpecify: "يرجى التحديد",
     pleaseSpecifyError: "يرجى تحديد إجابتك",
+    networkError:
+      "تعذر الاتصال بالخادم. يرجى التحقق من اتصالك بالإنترنت والمحاولة مرة أخرى.",
     counterBelow: (n: number, max: number) => `${n} من ${max} محدد`,
     counterAtLimit: (max: number) =>
       `تم بلوغ الحد الأقصى — ${max} من ${max}`,
@@ -228,6 +230,8 @@ const translations = {
     fillRequired: "Please complete the required fields before continuing.",
     pleaseSpecify: "Please specify",
     pleaseSpecifyError: "Please specify your answer",
+    networkError:
+      "Could not reach the server. Please check your connection and try again.",
     counterBelow: (n: number, max: number) => `${n} of ${max} selected`,
     counterAtLimit: (max: number) => `Maximum reached — ${max} of ${max}`,
     maxReachedTooltip: (max: number) =>
@@ -441,10 +445,12 @@ export default function RegisterPage() {
       const value = formValues[field.name];
 
       if (field.required && visible) {
+        // `false` counts as empty: a required CHECKBOX must be checked.
         const empty =
           value === undefined ||
           value === null ||
           value === "" ||
+          value === false ||
           (Array.isArray(value) && value.length === 0);
         if (empty) {
           setError(t.fillRequired);
@@ -497,27 +503,36 @@ export default function RegisterPage() {
       ? `/api/register/${eventSlug}?token=${token}`
       : `/api/register/${eventSlug}`;
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formValues),
-    });
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formValues),
+      });
 
-    const result = await res.json();
+      // Non-JSON error bodies (gateway/edge failures) must not mask the
+      // real outcome — fall back to null and the generic message below.
+      const result = await res.json().catch(() => null);
 
-    if (res.ok) {
-      clearDraft();
-      setSuccess(true);
-    } else if (result?.code === "OTHER_TEXT_REQUIRED") {
-      // Server caught an empty Other custom text on a required field —
-      // typically a multi-step path where the broken field wasn't on the
-      // current step. Render the localized copy instead of the server's
-      // English fallback.
-      setError(t.pleaseSpecifyError);
-    } else {
-      setError(result.error || "Registration failed");
+      if (res.ok) {
+        clearDraft();
+        setSuccess(true);
+      } else if (result?.code === "OTHER_TEXT_REQUIRED") {
+        // Server caught an empty Other custom text on a required field —
+        // typically a multi-step path where the broken field wasn't on the
+        // current step. Render the localized copy instead of the server's
+        // English fallback.
+        setError(t.pleaseSpecifyError);
+      } else {
+        setError(result?.error || "Registration failed");
+      }
+    } catch {
+      // fetch() itself rejected — offline, DNS, aborted. Without this the
+      // form stayed on the loading spinner forever.
+      setError(t.networkError);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   function onFormSubmit(e: React.FormEvent<HTMLFormElement>) {

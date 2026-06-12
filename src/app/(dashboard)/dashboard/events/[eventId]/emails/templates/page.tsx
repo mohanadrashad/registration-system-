@@ -28,9 +28,13 @@ export default function EmailTemplatesPage() {
   const fetchTemplates = useCallback(async () => {
     try {
       const res = await fetch(`/api/events/${eventId}/emails/templates`);
-      if (res.ok) setTemplates(await res.json());
+      if (res.ok) {
+        setTemplates(await res.json());
+      } else {
+        toast.error("Failed to load templates");
+      }
     } catch {
-      // DB may be temporarily unavailable
+      toast.error("Failed to load templates");
     } finally {
       setLoading(false);
     }
@@ -42,13 +46,20 @@ export default function EmailTemplatesPage() {
 
   async function handleDelete(templateId: string) {
     if (!confirm("Delete this template?")) return;
-    const res = await fetch(
-      `/api/events/${eventId}/emails/templates/${templateId}`,
-      { method: "DELETE" }
-    );
-    if (res.ok) {
-      toast.success("Template deleted");
-      fetchTemplates();
+    try {
+      const res = await fetch(
+        `/api/events/${eventId}/emails/templates/${templateId}`,
+        { method: "DELETE" }
+      );
+      if (res.ok) {
+        toast.success("Template deleted");
+        fetchTemplates();
+      } else {
+        const data = await res.json().catch(() => null);
+        toast.error(data?.error || "Failed to delete template");
+      }
+    } catch {
+      toast.error("Failed to delete template");
     }
   }
 

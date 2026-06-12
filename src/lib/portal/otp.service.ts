@@ -13,9 +13,10 @@
  * verify attempts before being burned. Issuing a fresh code invalidates any
  * existing unconsumed codes for the same registration.
  */
-import { createHmac, randomInt } from "crypto";
+import { createHmac, randomInt, timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { sendEventEmail } from "@/lib/services/email-provider.service";
+import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const OTP_MAX_ATTEMPTS = 5;
@@ -45,6 +46,13 @@ export async function requestOtpForEvent(
 ): Promise<OtpRequestResult> {
   const email = emailRaw.trim().toLowerCase();
 
+  // Synthetic placeholder addresses (email-optional events) can never
+  // receive mail — don't burn codes or hand a real SMTP send a
+  // @noemail.local recipient. Same opaque response as "not registered".
+  if (isSyntheticEmail(email)) {
+    return { generated: false };
+  }
+
   const registration = await prisma.registration.findFirst({
     where: { eventId, contact: { email } },
     select: { id: true, contact: { select: { firstName: true } } },
@@ -71,14 +79,19 @@ export async function requestOtpForEvent(
     },
   });
 
-  // Send the email. We don't await failure-handling beyond logging — if the
-  // email send fails the user can hit "Resend code" and we'll retry.
-  await sendOtpEmail({
-    eventId,
-    toEmail: email,
-    firstName: registration.contact.firstName,
-    code,
-  });
+  // Send the email. A transport failure is logged but doesn't surface to
+  // the caller — the response is intentionally identical either way (no
+  // enumeration signal), and the user can hit "Resend code" to retry.
+  try {
+    await sendOtpEmail({
+      eventId,
+      toEmail: email,
+      firstName: registration.contact.firstName,
+      code,
+    });
+  } catch (err) {
+    console.error("OTP email send failed:", err);
+  }
 
   return { generated: true };
 }
@@ -172,8 +185,13 @@ export async function verifyOtpForEvent(
     return { ok: false, reason: "exhausted" };
   }
 
-  const submittedHash = hashCode(code);
-  if (submittedHash !== otp.codeHash) {
+  // Constant-time comparison — defense in depth against timing probes on
+  // the hash equality check.
+  const submitted = Buffer.from(hashCode(code), "hex");
+  const stored = Buffer.from(otp.codeHash, "hex");
+  const matches =
+    submitted.length === stored.length && timingSafeEqual(submitted, stored);
+  if (!matches) {
     await prisma.portalOtp.update({
       where: { id: otp.id },
       data: { attempts: { increment: 1 } },

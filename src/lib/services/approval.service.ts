@@ -1,6 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { RegistrationStatus } from "@prisma/client";
+import { Prisma, RegistrationStatus } from "@prisma/client";
 import { emailService } from "./email.service";
+
+// Capacity reads accept either the singleton client or an interactive-
+// transaction client, so capacity decisions can run under lockEventRow
+// inside the same transaction that writes the registration.
+type DbClient = Prisma.TransactionClient | typeof prisma;
 
 /**
  * Approval Workflow Service
@@ -8,53 +13,46 @@ import { emailService } from "./email.service";
  */
 export const approvalService = {
   /**
+   * Serialize capacity decisions for one event: take a Postgres row lock
+   * on the Event row for the duration of the surrounding transaction.
+   * Any check-then-write capacity logic (register, approve, promote) that
+   * runs after this call inside the same transaction cannot race another
+   * request for the same event — the second request waits on the lock and
+   * then sees the first one's committed counts.
+   */
+  async lockEventRow(tx: Prisma.TransactionClient, eventId: string) {
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id = ${eventId} FOR UPDATE`;
+  },
+
+  /**
    * Get event capacity info
    */
-  async getCapacityInfo(eventId: string) {
-    const event = await prisma.event.findUnique({
+  async getCapacityInfo(eventId: string, db: DbClient = prisma) {
+    const event = await db.event.findUnique({
       where: { id: eventId },
-      include: {
-        modules: true,
-        _count: {
-          select: {
-            registrations: {
-              where: {
-                status: { in: ["CONFIRMED", "PENDING_APPROVAL"] },
-              },
-            },
-          },
-        },
-      },
+      include: { modules: true },
     });
 
     if (!event) return null;
 
-    const confirmedCount = await prisma.registration.count({
+    const grouped = await db.registration.groupBy({
+      by: ["status"],
       where: {
         eventId,
-        status: "CONFIRMED",
+        status: { in: ["CONFIRMED", "PENDING_APPROVAL", "WAITLISTED"] },
       },
+      _count: { _all: true },
     });
+    const countOf = (status: RegistrationStatus) =>
+      grouped.find((g) => g.status === status)?._count._all ?? 0;
 
-    const pendingApprovalCount = await prisma.registration.count({
-      where: {
-        eventId,
-        status: "PENDING_APPROVAL",
-      },
-    });
-
-    const waitlistedCount = await prisma.registration.count({
-      where: {
-        eventId,
-        status: "WAITLISTED",
-      },
-    });
+    const confirmedCount = countOf("CONFIRMED");
 
     return {
       capacity: event.capacity,
       confirmed: confirmedCount,
-      pendingApproval: pendingApprovalCount,
-      waitlisted: waitlistedCount,
+      pendingApproval: countOf("PENDING_APPROVAL"),
+      waitlisted: countOf("WAITLISTED"),
       available: event.capacity ? Math.max(0, event.capacity - confirmedCount) : null,
       isAtCapacity: event.capacity ? confirmedCount >= event.capacity : false,
       approvalRequired: event.modules?.approvalWorkflow || false,
@@ -65,8 +63,11 @@ export const approvalService = {
   /**
    * Determine registration status based on event settings
    */
-  async determineRegistrationStatus(eventId: string): Promise<RegistrationStatus> {
-    const capacityInfo = await this.getCapacityInfo(eventId);
+  async determineRegistrationStatus(
+    eventId: string,
+    db: DbClient = prisma
+  ): Promise<RegistrationStatus> {
+    const capacityInfo = await this.getCapacityInfo(eventId, db);
     if (!capacityInfo) return "CONFIRMED";
 
     // If at capacity and waitlist enabled
@@ -196,192 +197,222 @@ export const approvalService = {
    * Approve a registration
    */
   async approve(registrationId: string, approvedBy?: string) {
-    const registration = await prisma.registration.findUnique({
-      where: { id: registrationId },
-      include: {
-        contact: true,
-        event: true,
-      },
+    return prisma.$transaction(async (tx) => {
+      // Resolve the event first so the capacity lock can be taken, then
+      // re-read the registration under the lock — a concurrent approve of
+      // the same row (or of a sibling consuming the last spot) waits on
+      // lockEventRow and then sees this transaction's outcome.
+      const target = await tx.registration.findUnique({
+        where: { id: registrationId },
+        select: { eventId: true },
+      });
+      if (!target) {
+        return { success: false as const, error: "Registration not found" };
+      }
+      await this.lockEventRow(tx, target.eventId);
+
+      const registration = await tx.registration.findUnique({
+        where: { id: registrationId },
+        include: {
+          contact: true,
+          event: true,
+        },
+      });
+
+      if (!registration) {
+        return { success: false as const, error: "Registration not found" };
+      }
+
+      if (registration.status !== "PENDING_APPROVAL") {
+        return {
+          success: false as const,
+          error: "Registration is not pending approval",
+        };
+      }
+
+      // Check capacity
+      const capacityInfo = await this.getCapacityInfo(registration.eventId, tx);
+      if (capacityInfo?.isAtCapacity) {
+        return { success: false as const, error: "Event is at capacity" };
+      }
+
+      // Update registration. Persist approval audit columns (Stage 1 of
+      // ADMIN_EDIT_FIX_SPEC): approvedBy, approvedAt, and updatedBy all
+      // point at the actor. Approver-relation form is required by Prisma's
+      // checked-input typing (raw FK column lives on the unchecked variant).
+      const updated = await tx.registration.update({
+        where: { id: registrationId },
+        data: {
+          status: "CONFIRMED",
+          registeredAt: new Date(),
+          ...(approvedBy
+            ? {
+                approvedAt: new Date(),
+                approver: { connect: { id: approvedBy } },
+                updater: { connect: { id: approvedBy } },
+              }
+            : {}),
+        },
+        include: {
+          contact: true,
+          event: true,
+        },
+      });
+
+      // Update contact status
+      await tx.contact.update({
+        where: { id: registration.contactId },
+        data: {
+          status: "REGISTERED",
+          ...(approvedBy
+            ? { updater: { connect: { id: approvedBy } } }
+            : {}),
+        },
+      });
+
+      // TODO: Send approval email
+      // await emailService.sendApprovalEmail(registrationId);
+
+      return { success: true as const, registration: updated };
     });
-
-    if (!registration) {
-      return { success: false, error: "Registration not found" };
-    }
-
-    if (registration.status !== "PENDING_APPROVAL") {
-      return { success: false, error: "Registration is not pending approval" };
-    }
-
-    // Check capacity
-    const capacityInfo = await this.getCapacityInfo(registration.eventId);
-    if (capacityInfo?.isAtCapacity) {
-      return { success: false, error: "Event is at capacity" };
-    }
-
-    // Update registration. Persist approval audit columns (Stage 1 of
-    // ADMIN_EDIT_FIX_SPEC): approvedBy, approvedAt, and updatedBy all
-    // point at the actor. Approver-relation form is required by Prisma's
-    // checked-input typing (raw FK column lives on the unchecked variant).
-    const updated = await prisma.registration.update({
-      where: { id: registrationId },
-      data: {
-        status: "CONFIRMED",
-        registeredAt: new Date(),
-        ...(approvedBy
-          ? {
-              approvedAt: new Date(),
-              approver: { connect: { id: approvedBy } },
-              updater: { connect: { id: approvedBy } },
-            }
-          : {}),
-      },
-      include: {
-        contact: true,
-        event: true,
-      },
-    });
-
-    // Update contact status
-    await prisma.contact.update({
-      where: { id: registration.contactId },
-      data: {
-        status: "REGISTERED",
-        ...(approvedBy
-          ? { updater: { connect: { id: approvedBy } } }
-          : {}),
-      },
-    });
-
-    // TODO: Send approval email
-    // await emailService.sendApprovalEmail(registrationId);
-
-    return { success: true, registration: updated };
   },
 
   /**
    * Reject a registration
    */
   async reject(registrationId: string, reason?: string, rejectedBy?: string) {
-    const registration = await prisma.registration.findUnique({
-      where: { id: registrationId },
-      include: {
-        contact: true,
-        event: true,
-      },
+    return prisma.$transaction(async (tx) => {
+      const registration = await tx.registration.findUnique({
+        where: { id: registrationId },
+        include: {
+          contact: true,
+          event: true,
+        },
+      });
+
+      if (!registration) {
+        return { success: false as const, error: "Registration not found" };
+      }
+
+      if (registration.status !== "PENDING_APPROVAL") {
+        return {
+          success: false as const,
+          error: "Registration is not pending approval",
+        };
+      }
+
+      // Update registration. Persist rejection audit columns: rejectedBy,
+      // rejectedAt, rejectionReason, and updatedBy. The reason is stored
+      // even when empty/null is passed — null is the absence of a reason,
+      // not a value worth normalizing away. Rejecter-relation form per
+      // Prisma checked-input typing.
+      const updated = await tx.registration.update({
+        where: { id: registrationId },
+        data: {
+          status: "CANCELLED",
+          ...(rejectedBy
+            ? {
+                rejectedAt: new Date(),
+                rejectionReason: reason ?? null,
+                rejecter: { connect: { id: rejectedBy } },
+                updater: { connect: { id: rejectedBy } },
+              }
+            : {}),
+        },
+        include: {
+          contact: true,
+          event: true,
+        },
+      });
+
+      // Update contact status
+      await tx.contact.update({
+        where: { id: registration.contactId },
+        data: {
+          status: "CANCELLED",
+          ...(rejectedBy
+            ? { updater: { connect: { id: rejectedBy } } }
+            : {}),
+        },
+      });
+
+      // TODO: Send rejection email with reason
+      // await emailService.sendRejectionEmail(registrationId, reason);
+
+      return { success: true as const, registration: updated };
     });
-
-    if (!registration) {
-      return { success: false, error: "Registration not found" };
-    }
-
-    if (registration.status !== "PENDING_APPROVAL") {
-      return { success: false, error: "Registration is not pending approval" };
-    }
-
-    // Update registration. Persist rejection audit columns: rejectedBy,
-    // rejectedAt, rejectionReason, and updatedBy. The reason is stored
-    // even when empty/null is passed — null is the absence of a reason,
-    // not a value worth normalizing away. Rejecter-relation form per
-    // Prisma checked-input typing.
-    const updated = await prisma.registration.update({
-      where: { id: registrationId },
-      data: {
-        status: "CANCELLED",
-        ...(rejectedBy
-          ? {
-              rejectedAt: new Date(),
-              rejectionReason: reason ?? null,
-              rejecter: { connect: { id: rejectedBy } },
-              updater: { connect: { id: rejectedBy } },
-            }
-          : {}),
-      },
-      include: {
-        contact: true,
-        event: true,
-      },
-    });
-
-    // Update contact status
-    await prisma.contact.update({
-      where: { id: registration.contactId },
-      data: {
-        status: "CANCELLED",
-        ...(rejectedBy
-          ? { updater: { connect: { id: rejectedBy } } }
-          : {}),
-      },
-    });
-
-    // TODO: Send rejection email with reason
-    // await emailService.sendRejectionEmail(registrationId, reason);
-
-    return { success: true, registration: updated };
   },
 
   /**
    * Promote next person from waitlist
    */
   async promoteFromWaitlist(eventId: string, actorId?: string) {
-    // Get first person on waitlist
-    const nextInLine = await prisma.registration.findFirst({
-      where: {
-        eventId,
-        status: "WAITLISTED",
-      },
-      orderBy: { createdAt: "asc" },
-      include: {
-        contact: true,
-        event: {
-          include: { modules: true },
+    return prisma.$transaction(async (tx) => {
+      // Lock first: two concurrent promotes (or a promote racing an
+      // approve) must not both see the same free spot — or the same
+      // next-in-line row.
+      await this.lockEventRow(tx, eventId);
+
+      // Get first person on waitlist
+      const nextInLine = await tx.registration.findFirst({
+        where: {
+          eventId,
+          status: "WAITLISTED",
         },
-      },
-    });
-
-    if (!nextInLine) {
-      return { success: false, error: "No one on waitlist" };
-    }
-
-    // Check capacity
-    const capacityInfo = await this.getCapacityInfo(eventId);
-    if (capacityInfo?.isAtCapacity) {
-      return { success: false, error: "Event is still at capacity" };
-    }
-
-    // Determine new status based on approval workflow
-    const newStatus = capacityInfo?.approvalRequired ? "PENDING_APPROVAL" : "CONFIRMED";
-
-    // Update registration. Stamp updatedBy when the route plumbs an
-    // actorId through (admin-triggered promotion); leave it null on
-    // any future automated promotion path.
-    const updated = await prisma.registration.update({
-      where: { id: nextInLine.id },
-      data: {
-        status: newStatus,
-        registeredAt: newStatus === "CONFIRMED" ? new Date() : null,
-        ...(actorId ? { updater: { connect: { id: actorId } } } : {}),
-      },
-      include: {
-        contact: true,
-        event: true,
-      },
-    });
-
-    // Update contact status if confirmed
-    if (newStatus === "CONFIRMED") {
-      await prisma.contact.update({
-        where: { id: nextInLine.contactId },
-        data: {
-          status: "REGISTERED",
-          ...(actorId ? { updater: { connect: { id: actorId } } } : {}),
+        orderBy: { createdAt: "asc" },
+        include: {
+          contact: true,
+          event: {
+            include: { modules: true },
+          },
         },
       });
-    }
 
-    // TODO: Send notification email
-    // await emailService.sendWaitlistPromotionEmail(nextInLine.id);
+      if (!nextInLine) {
+        return { success: false as const, error: "No one on waitlist" };
+      }
 
-    return { success: true, registration: updated, status: newStatus };
+      // Check capacity
+      const capacityInfo = await this.getCapacityInfo(eventId, tx);
+      if (capacityInfo?.isAtCapacity) {
+        return { success: false as const, error: "Event is still at capacity" };
+      }
+
+      // Determine new status based on approval workflow
+      const newStatus = capacityInfo?.approvalRequired ? "PENDING_APPROVAL" : "CONFIRMED";
+
+      // Update registration. Stamp updatedBy when the route plumbs an
+      // actorId through (admin-triggered promotion); leave it null on
+      // any future automated promotion path.
+      const updated = await tx.registration.update({
+        where: { id: nextInLine.id },
+        data: {
+          status: newStatus,
+          registeredAt: newStatus === "CONFIRMED" ? new Date() : null,
+          ...(actorId ? { updater: { connect: { id: actorId } } } : {}),
+        },
+        include: {
+          contact: true,
+          event: true,
+        },
+      });
+
+      // Update contact status if confirmed
+      if (newStatus === "CONFIRMED") {
+        await tx.contact.update({
+          where: { id: nextInLine.contactId },
+          data: {
+            status: "REGISTERED",
+            ...(actorId ? { updater: { connect: { id: actorId } } } : {}),
+          },
+        });
+      }
+
+      // TODO: Send notification email
+      // await emailService.sendWaitlistPromotionEmail(nextInLine.id);
+
+      return { success: true as const, registration: updated, status: newStatus };
+    });
   },
 
   /**

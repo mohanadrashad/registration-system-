@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   isLoginBlocked,
+  isOtpRequestThrottled,
   recordLoginFailure,
+  recordOtpRequest,
 } from "@/lib/portal/login-rate-limit";
 import { requestOtpForEvent } from "@/lib/portal/otp.service";
 
@@ -43,6 +45,24 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
     );
   }
+
+  // Request throttle — counted for EVERY well-formed request (registered
+  // email or not, so the 429 carries no enumeration signal). Without it,
+  // successful code requests were unmetered: anyone knowing a registered
+  // email could bomb that inbox with OTP emails.
+  const throttle = isOtpRequestThrottled(eventSlug, email);
+  if (throttle.throttled) {
+    return NextResponse.json(
+      {
+        error: `Please wait ${throttle.retryAfterSeconds} seconds before requesting another code.`,
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(throttle.retryAfterSeconds) },
+      }
+    );
+  }
+  recordOtpRequest(eventSlug, email);
 
   // Look up event WITH its modules — but never reveal whether the event
   // exists or whether the email is registered. We always return success.
