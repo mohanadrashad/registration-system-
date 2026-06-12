@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { getRole, canManageUsers } from "@/lib/permissions";
+import { userCreateSchema } from "@/lib/validations/user";
 import bcrypt from "bcryptjs";
 
 export async function GET() {
@@ -22,11 +23,15 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!canManageUsers(getRole(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const { name, email, password, role } = await req.json();
-
-  if (!email || !password || !role) {
-    return NextResponse.json({ error: "Email, password, and role are required" }, { status: 400 });
+  const raw = await req.json().catch(() => null);
+  const parsed = userCreateSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid input" },
+      { status: 400 }
+    );
   }
+  const { name, email, password, role } = parsed.data;
 
   const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
   if (existing) {

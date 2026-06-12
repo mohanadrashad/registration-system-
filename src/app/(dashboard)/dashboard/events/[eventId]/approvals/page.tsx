@@ -145,7 +145,10 @@ export default function ApprovalsPage() {
 
       if (res.ok) {
         toast.success("Registration approved");
-        fetchData({ silent: true });
+        // Await so the row leaves the pending list BEFORE the finally
+        // block re-enables its buttons — otherwise a fast second click
+        // can fire a duplicate approve against the stale row.
+        await fetchData({ silent: true });
       } else {
         const error = await res.json();
         toast.error(error.error || "Failed to approve");
@@ -177,7 +180,7 @@ export default function ApprovalsPage() {
         setRejectDialogOpen(false);
         setSelectedRegistration(null);
         setRejectReason("");
-        fetchData({ silent: true });
+        await fetchData({ silent: true });
       } else {
         const error = await res.json();
         toast.error(error.error || "Failed to reject");
@@ -200,7 +203,7 @@ export default function ApprovalsPage() {
 
       if (res.ok) {
         toast.success("Person promoted from waitlist");
-        fetchData({ silent: true });
+        await fetchData({ silent: true });
       } else {
         const error = await res.json();
         toast.error(error.error || "Failed to promote");
@@ -645,7 +648,7 @@ export default function ApprovalsPage() {
             <DialogTitle>Reject Registration</DialogTitle>
             <DialogDescription>
               Are you sure you want to reject{" "}
-              {selectedRegistration?.contact.firstName} {selectedRegistration?.contact.lastName}'s
+              {selectedRegistration?.contact.firstName} {selectedRegistration?.contact.lastName}&apos;s
               registration?
             </DialogDescription>
           </DialogHeader>

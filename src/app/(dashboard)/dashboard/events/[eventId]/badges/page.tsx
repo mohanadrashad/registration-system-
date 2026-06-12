@@ -96,9 +96,11 @@ export default function BadgesPage() {
       if (res.ok) {
         const data = await res.json();
         setRegistrations(data.filter((r: Registration) => r.status === "CONFIRMED"));
+      } else {
+        toast.error("Failed to load registrations");
       }
     } catch {
-      // DB may be temporarily unavailable
+      toast.error("Failed to load registrations");
     } finally {
       setLoading(false);
     }

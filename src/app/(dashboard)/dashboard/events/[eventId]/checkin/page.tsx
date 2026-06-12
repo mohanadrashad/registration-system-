@@ -120,9 +120,12 @@ export default function CheckInPage() {
       if (res.ok) {
         const data = await res.json();
         setSearchResults(data);
+      } else {
+        toast.error("Search failed — please try again");
       }
     } catch (error) {
       console.error("Failed to search:", error);
+      toast.error("Search failed — please try again");
     } finally {
       setSearching(false);
     }

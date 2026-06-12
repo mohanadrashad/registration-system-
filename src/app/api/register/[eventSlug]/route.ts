@@ -189,7 +189,26 @@ export async function POST(
     (step) => step.fields
   );
 
-  const body = await req.json();
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  // Drop keys that don't correspond to a field on this form (or a known
+  // companion/legacy key). Everything left in `body` is persisted verbatim
+  // into Registration.formData and Contact.metadata below — without this
+  // filter, arbitrary extra JSON keys a client sends are stored forever.
+  const knownKeys = new Set<string>([
+    "fullName",
+    ...Object.values(FIELD_MAPPING_LEGACY_KEYS),
+  ]);
+  for (const field of registrationFields) {
+    knownKeys.add(field.name);
+    knownKeys.add(`${field.name}${OTHER_SUFFIX}`);
+  }
+  for (const key of Object.keys(body)) {
+    if (!knownKeys.has(key)) delete body[key];
+  }
 
   // additionalFields = body minus the legacy literal-key Contact column
   // names. Captured BEFORE the FILE-claim block below mutates body in
@@ -241,7 +260,15 @@ export async function POST(
       }
       continue;
     }
-    if (value === undefined || value === null || value === "") {
+    // A required CHECKBOX must be actually checked — `false` is "empty".
+    // A required MULTISELECT must have at least one selection.
+    if (
+      value === undefined ||
+      value === null ||
+      value === "" ||
+      (field.type === FieldType.CHECKBOX && value !== true) ||
+      (Array.isArray(value) && value.length === 0)
+    ) {
       return NextResponse.json({
         error: `${field.label} is required`
       }, { status: 400 });
@@ -422,10 +449,6 @@ export async function POST(
     }
   }
 
-  // Determine registration status based on event settings (reads only; safe outside tx)
-  const registrationStatus = await approvalService.determineRegistrationStatus(event.id);
-  const isConfirmed = registrationStatus === "CONFIRMED";
-
   // Stage 2 of FIELD_MAPPING_SPEC: resolve Contact column values via
   // per-FormField mapsTo tags, with legacy literal-key + body.fullName
   // fallback rungs preserved. Replaces the old destructure at line 188
@@ -457,7 +480,19 @@ export async function POST(
       : generateSyntheticEmail();
 
   try {
-    const registration = await prisma.$transaction(async (tx) => {
+    const { created: registration, registrationStatus } = await prisma.$transaction(async (tx) => {
+      // Take the per-event capacity lock BEFORE deciding CONFIRMED vs
+      // WAITLISTED/PENDING_APPROVAL. Without it, two concurrent submits
+      // both read "one spot left" and both confirm past capacity. The
+      // lock serializes this decision with concurrent registrations,
+      // approvals, and waitlist promotions for the same event.
+      await approvalService.lockEventRow(tx, event.id);
+      const registrationStatus = await approvalService.determineRegistrationStatus(
+        event.id,
+        tx
+      );
+      const isConfirmed = registrationStatus === "CONFIRMED";
+
       // Look up contact by token first, fall back to email (only if real email provided)
       let contact = token
         ? await tx.contact.findUnique({
@@ -559,7 +594,7 @@ export async function POST(
         data: { status: isConfirmed ? "REGISTERED" : "INVITED" },
       });
 
-      return created;
+      return { created, registrationStatus };
     });
 
     let message = "Registration successful!";
