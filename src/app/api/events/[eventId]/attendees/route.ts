@@ -1,6 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ContactStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { authorizeEvent } from "@/lib/api-auth";
+import {
+  getFilterableFields,
+  readAttendeeFilterParams,
+  buildContactWhere,
+} from "@/lib/attendees/attendee-filters";
+
+function toStatusCounts(
+  groups: Array<{
+    status: ContactStatus;
+    // Prisma's groupBy payload types _count as a wide union; only the
+    // `{ _all }` object shape actually occurs with `_count: { _all: true }`.
+    _count: { _all?: number | null } | true | null | undefined;
+  }>
+): Record<ContactStatus, number> {
+  const counts: Record<ContactStatus, number> = {
+    IMPORTED: 0,
+    INVITED: 0,
+    REGISTERED: 0,
+    CANCELLED: 0,
+  };
+  for (const g of groups) {
+    counts[g.status] =
+      g._count && g._count !== true ? g._count._all ?? 0 : 0;
+  }
+  return counts;
+}
 
 export async function GET(
   req: NextRequest,
@@ -11,165 +38,143 @@ export async function GET(
   if (ctx instanceof NextResponse) return ctx;
 
   const searchParams = req.nextUrl.searchParams;
-  const search = searchParams.get("search") || "";
-  const category = searchParams.get("category") || "";
-  const status = searchParams.get("status") || "";
-  const badgeEmail = searchParams.get("badgeEmail") || "";
-  const phaseId = searchParams.get("phase") || "";
-  const phaseStatus = searchParams.get("phaseStatus") || ""; // submitted | notSubmitted
-  // Stage 5: filter by a specific option pick. Combines with `phase`
-  // — "phase=X&option=Y" means "attendees who picked Y on phase X".
-  const optionId = searchParams.get("option") || "";
 
-  const where: Record<string, unknown> = { eventId };
-  const andConditions: Record<string, unknown>[] = [];
+  // Server-side pagination: events carry thousands of contacts (7k+),
+  // so the client requests one slice and the DB does the counting —
+  // never ship the full list in one response.
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+  const pageSize = Math.min(
+    100,
+    Math.max(1, parseInt(searchParams.get("pageSize") || "25", 10) || 25)
+  );
+  const sort = searchParams.get("sort") || ""; // "" | emailed_yes | emailed_no
+  // idsOnly powers "Select all N attendees": bulk email/delete take
+  // explicit id lists, so the client fetches just the matching ids.
+  const idsOnly = searchParams.get("idsOnly") === "1";
+  // Meta (event, templates, post-reg phases) is stable across filter
+  // changes — the client requests it once on first load, not per fetch.
+  const includeMeta = searchParams.get("includeMeta") === "1";
 
-  if (search) {
-    andConditions.push({
-      OR: [
-        { firstName: { contains: search, mode: "insensitive" } },
-        { lastName: { contains: search, mode: "insensitive" } },
-        { email: { contains: search, mode: "insensitive" } },
-        { organization: { contains: search, mode: "insensitive" } },
-      ],
-    });
-  }
-
-  if (category) {
-    where.category = category;
-  }
-
-  if (status) {
-    where.status = status;
-  }
-
-  if (badgeEmail === "sent") {
-    where.registration = { badgeEmailSent: true };
-  } else if (badgeEmail === "not_sent") {
-    andConditions.push({
-      OR: [
-        { registration: null },
-        { registration: { badgeEmailSent: false } },
-      ],
-    });
-  }
-
-  // Phase status filter: only meaningful for attendees who have a
-  // registration (a Contact without one can't submit a phase). For
-  // "submitted" we require a matching PhaseSubmission row; for
-  // "notSubmitted" we require either no registration or a registration
-  // with no submission for that phase yet.
-  if (phaseId && phaseStatus === "submitted") {
-    andConditions.push({
-      registration: {
-        is: { phaseSubmissions: { some: { phaseId } } },
-      },
-    });
-  } else if (phaseId && phaseStatus === "notSubmitted") {
-    andConditions.push({
-      registration: {
-        is: { phaseSubmissions: { none: { phaseId } } },
-      },
-    });
-  }
-
-  // Stage 5 option filter — independent of phase-status above. Filters
-  // to contacts whose registration has a selection on (phaseId, optionId).
-  if (phaseId && optionId) {
-    andConditions.push({
-      registration: {
-        is: {
-          selections: { some: { phaseId, optionId } },
-        },
-      },
-    });
-  }
-
-  if (andConditions.length > 0) {
-    where.AND = andConditions;
-  }
+  // Filter construction lives in src/lib/attendees/attendee-filters.ts,
+  // shared with the registrations export route so the exported set always
+  // matches what's on screen. filterableFields also feeds the dynamic
+  // form-answer filter UI (one dropdown per option-bearing form field).
+  const filterableFields = await getFilterableFields(eventId);
+  const filterParams = readAttendeeFilterParams(searchParams, filterableFields);
+  const where = buildContactWhere(
+    eventId,
+    filterParams,
+    filterableFields
+  ) as Prisma.ContactWhereInput;
 
   try {
-    // Batch all queries in a single transaction to minimize connection usage
-    const [event, contacts, allContacts, templates, postRegPhases] = await prisma.$transaction([
-      prisma.event.findUnique({
-        where: { id: eventId },
-        select: { id: true, name: true, slug: true, categories: true },
-      }),
-      prisma.contact.findMany({
+    if (idsOnly) {
+      const rows = await prisma.contact.findMany({
         where,
-        include: {
-          registration: { select: { status: true, registeredAt: true, confirmationCode: true, badgeEmailSent: true } },
-          emailLogs: { select: { id: true, status: true, sentAt: true }, orderBy: { sentAt: "desc" }, take: 1 },
-        },
-        orderBy: [{ category: "asc" }, { createdAt: "desc" }],
-      }),
-      // Unfiltered contacts for overall stats bar
-      prisma.contact.findMany({
-        where: { eventId },
-        select: { status: true },
-      }),
-      prisma.emailTemplate.findMany({
-        where: { eventId },
-        select: { id: true, name: true, type: true, subject: true },
-        orderBy: { createdAt: "desc" },
-      }),
-      // Post-registration phases — feeds the "Phase status" filter
-      // dropdown AND the Stage-5 option-filter chip (we include the
-      // option list per phase so the chip can resolve its label
-      // without a second fetch).
-      prisma.phase.findMany({
-        where: { eventId, type: "POST_REGISTRATION", isActive: true },
-        orderBy: { order: "asc" },
-        select: {
-          id: true,
-          title: true,
-          options: {
-            select: { id: true, label: true },
-            orderBy: { order: "asc" },
+        select: { id: true },
+      });
+      return NextResponse.json({
+        ids: rows.map((r) => r.id),
+        total: rows.length,
+      });
+    }
+
+    // "Emailed" column sort is approximated by email-log count: any log
+    // means "sent". Default keeps the long-standing category → newest
+    // ordering so pages show contiguous category blocks.
+    const orderBy: Prisma.ContactOrderByWithRelationInput[] =
+      sort === "emailed_yes"
+        ? [{ emailLogs: { _count: "desc" } }, { createdAt: "desc" }]
+        : sort === "emailed_no"
+        ? [{ emailLogs: { _count: "asc" } }, { createdAt: "desc" }]
+        : [{ category: "asc" }, { createdAt: "desc" }];
+
+    const [contacts, total, filteredGroups, overallGroups] =
+      await prisma.$transaction([
+        prisma.contact.findMany({
+          where,
+          include: {
+            registration: {
+              select: {
+                status: true,
+                registeredAt: true,
+                confirmationCode: true,
+                badgeEmailSent: true,
+              },
+            },
+            emailLogs: {
+              select: { id: true, status: true, sentAt: true },
+              orderBy: { sentAt: "desc" },
+              take: 1,
+            },
           },
-        },
-      }),
-    ]);
+          orderBy,
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        }),
+        prisma.contact.count({ where }),
+        prisma.contact.groupBy({
+          by: ["status"],
+          where,
+          orderBy: { status: "asc" },
+          _count: { _all: true },
+        }),
+        prisma.contact.groupBy({
+          by: ["status"],
+          where: { eventId },
+          orderBy: { status: "asc" },
+          _count: { _all: true },
+        }),
+      ]);
 
-    if (!event) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
-    }
+    const overallCounts = toStatusCounts(overallGroups);
+    const overallTotal = Object.values(overallCounts).reduce((s, n) => s + n, 0);
 
-    // Group by category
-    const groups: Record<string, typeof contacts> = {};
-    for (const contact of contacts) {
-      const key = contact.category || "Uncategorized";
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(contact);
-    }
-
-    // Count statuses from filtered results
-    const statusCounts = { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 };
-    for (const contact of contacts) {
-      statusCounts[contact.status]++;
-    }
-
-    // Overall counts (unfiltered) for the stats bar
-    const overallCounts = { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 };
-    for (const contact of allContacts) {
-      overallCounts[contact.status]++;
-    }
-
-    return NextResponse.json({
-      event,
-      templates,
-      groups: Object.entries(groups).map(([cat, items]) => ({
-        category: cat,
-        count: items.length,
-        contacts: items,
-      })),
-      statusCounts,
-      total: contacts.length,
+    const response: Record<string, unknown> = {
+      contacts,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      statusCounts: toStatusCounts(filteredGroups),
       overallCounts,
-      overallTotal: allContacts.length,
-      postRegPhases,
-    });
+      overallTotal,
+      filterableFields,
+    };
+
+    if (includeMeta) {
+      const [event, templates, postRegPhases] = await prisma.$transaction([
+        prisma.event.findUnique({
+          where: { id: eventId },
+          select: { id: true, name: true, slug: true, categories: true },
+        }),
+        prisma.emailTemplate.findMany({
+          where: { eventId },
+          select: { id: true, name: true, type: true, subject: true },
+          orderBy: { createdAt: "desc" },
+        }),
+        // Post-registration phases — feeds the "Phase status" filter
+        // dropdown AND the option-filter chip (option list included so
+        // the chip resolves its label without a second fetch).
+        prisma.phase.findMany({
+          where: { eventId, type: "POST_REGISTRATION", isActive: true },
+          orderBy: { order: "asc" },
+          select: {
+            id: true,
+            title: true,
+            options: {
+              select: { id: true, label: true },
+              orderBy: { order: "asc" },
+            },
+          },
+        }),
+      ]);
+      response.event = event;
+      response.templates = templates;
+      response.postRegPhases = postRegPhases;
+    }
+
+    return NextResponse.json(response);
   } catch (e) {
     console.error("Failed to fetch attendees data:", e);
     return NextResponse.json({ error: "Database error" }, { status: 500 });

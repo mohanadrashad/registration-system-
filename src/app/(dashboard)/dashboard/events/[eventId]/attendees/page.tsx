@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
@@ -26,8 +26,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { toast } from "sonner";
 import { isSyntheticEmail, fallbackName } from "@/components/attendee/field-display";
+import { COUNTRIES } from "@/lib/form-builder/countries";
 import {
   Upload,
   Plus,
@@ -63,12 +69,6 @@ interface Contact {
   emailLogs: { id: string; status: string; sentAt: string | null }[];
 }
 
-interface CategoryGroup {
-  category: string;
-  count: number;
-  contacts: Contact[];
-}
-
 interface StatusCounts {
   IMPORTED: number;
   INVITED: number;
@@ -96,6 +96,42 @@ interface PostRegPhase {
   options?: { id: string; label: string }[];
 }
 
+interface FilterableFieldOption {
+  value: string;
+  label: string;
+  labelAr: string | null;
+}
+
+// One entry per option-bearing form field on this event's registration
+// form — drives the dynamic "Filters" popover. Comes from the attendees
+// API so the filter set always matches the event's actual form.
+interface FilterableField {
+  name: string;
+  label: string;
+  labelAr: string | null;
+  type: string;
+  options: FilterableFieldOption[];
+}
+
+// COUNTRY and CHECKBOX fields arrive with empty options — their choices
+// are universal, so they're resolved locally instead of shipped per event.
+function fieldFilterOptions(field: FilterableField): FilterableFieldOption[] {
+  if (field.type === "COUNTRY") {
+    return COUNTRIES.map((c) => ({
+      value: c.code,
+      label: c.name,
+      labelAr: c.nameAr,
+    }));
+  }
+  if (field.type === "CHECKBOX") {
+    return [
+      { value: "true", label: "Yes", labelAr: null },
+      { value: "false", label: "No", labelAr: null },
+    ];
+  }
+  return field.options;
+}
+
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; }> = {
   IMPORTED: { label: "Imported", variant: "secondary" },
   INVITED: { label: "Invited", variant: "outline" },
@@ -112,7 +148,10 @@ export default function AttendeesPage() {
   const userCanEdit = canEdit(role);
   const userCanDelete = canDelete(role);
 
-  const [groups, setGroups] = useState<CategoryGroup[]>([]);
+  // Server-paginated: `contacts` is only the current page's rows.
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [totalPages, setTotalPages] = useState(1);
+  const [listLoading, setListLoading] = useState(false);
   const [statusCounts, setStatusCounts] = useState<StatusCounts>({ IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
   const [total, setTotal] = useState(0);
   const [overallCounts, setOverallCounts] = useState<StatusCounts>({ IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
@@ -146,6 +185,11 @@ export default function AttendeesPage() {
   const [optionFilterOptionId, setOptionFilterOptionId] = useState<string | null>(
     () => searchParams.get("option")
   );
+  // Dynamic per-form-field filters: { fieldName: selectedValue }. Only
+  // fields present in filterableFields can appear here — the server
+  // validates the same way, so a stale key is just ignored.
+  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
+  const [filterableFields, setFilterableFields] = useState<FilterableField[]>([]);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -175,6 +219,8 @@ export default function AttendeesPage() {
     optionFilterPhaseId,
     optionFilterOptionId,
     debouncedSearch,
+    fieldFilters,
+    emailedSort,
   ]);
 
   // Debounce search
@@ -183,48 +229,36 @@ export default function AttendeesPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const p = new URLSearchParams();
-      if (statusFilter !== "ALL") p.set("status", statusFilter);
-      if (categoryFilter !== "ALL") p.set("category", categoryFilter);
-      if (badgeEmailFilter !== "ALL") p.set("badgeEmail", badgeEmailFilter);
-      if (debouncedSearch) p.set("search", debouncedSearch);
-      if (phaseFilter !== "ALL") {
-        const [phaseId, phaseStatus] = phaseFilter.split(":");
-        if (phaseId && phaseStatus) {
-          p.set("phase", phaseId);
-          p.set("phaseStatus", phaseStatus);
-        }
+  // Single source for the filter query string — used by the list fetch
+  // AND the export buttons, so the exported file always matches exactly
+  // what's on screen.
+  const buildFilterParams = useCallback(() => {
+    const p = new URLSearchParams();
+    if (statusFilter !== "ALL") p.set("status", statusFilter);
+    if (categoryFilter !== "ALL") p.set("category", categoryFilter);
+    if (badgeEmailFilter !== "ALL") p.set("badgeEmail", badgeEmailFilter);
+    if (debouncedSearch) p.set("search", debouncedSearch);
+    if (phaseFilter !== "ALL") {
+      const [phaseId, phaseStatus] = phaseFilter.split(":");
+      if (phaseId && phaseStatus) {
+        p.set("phase", phaseId);
+        p.set("phaseStatus", phaseStatus);
       }
-      if (optionFilterPhaseId && optionFilterOptionId) {
-        // Option filter shares the `phase` param with the
-        // phase-status filter above. When both are set, the
-        // phase-status filter wins for the phase param value; the
-        // option clause is added by the server as an AND so both
-        // narrow the result set independently.
-        p.set("phase", optionFilterPhaseId);
-        p.set("option", optionFilterOptionId);
-      }
-
-      const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
-      if (!res.ok) throw new Error("Failed");
-      const data = await res.json();
-      setGroups(data.groups || []);
-      setStatusCounts(data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
-      setTotal(data.total || 0);
-      setOverallCounts(data.overallCounts || data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
-      setOverallTotal(data.overallTotal || data.total || 0);
-      setEvent(data.event || null);
-      setTemplates(data.templates || []);
-      setPostRegPhases(data.postRegPhases || []);
-    } catch {
-      setGroups([]);
-    } finally {
-      setLoading(false);
     }
+    if (optionFilterPhaseId && optionFilterOptionId) {
+      // Option filter shares the `phase` param with the
+      // phase-status filter above. When both are set, the
+      // phase-status filter wins for the phase param value; the
+      // option clause is added by the server as an AND so both
+      // narrow the result set independently.
+      p.set("phase", optionFilterPhaseId);
+      p.set("option", optionFilterOptionId);
+    }
+    if (Object.keys(fieldFilters).length > 0) {
+      p.set("fieldFilters", JSON.stringify(fieldFilters));
+    }
+    return p;
   }, [
-    eventId,
     statusFilter,
     categoryFilter,
     badgeEmailFilter,
@@ -232,11 +266,82 @@ export default function AttendeesPage() {
     optionFilterPhaseId,
     optionFilterOptionId,
     debouncedSearch,
+    fieldFilters,
   ]);
+
+  // Meta (event/templates/phases) is fetched once; filter changes only
+  // refetch the page slice. Guarded by a sequence counter so a slow
+  // earlier response can never overwrite a newer one (filter + page
+  // changes can put two fetches in flight).
+  const metaLoadedRef = useRef(false);
+  const fetchSeqRef = useRef(0);
+
+  const fetchData = useCallback(async () => {
+    const seq = ++fetchSeqRef.current;
+    setListLoading(true);
+    try {
+      const p = buildFilterParams();
+      p.set("page", String(page));
+      p.set("pageSize", String(pageSize));
+      if (emailedSort !== "none") {
+        p.set("sort", emailedSort === "yes" ? "emailed_yes" : "emailed_no");
+      }
+      if (!metaLoadedRef.current) p.set("includeMeta", "1");
+      const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
+      if (!res.ok) throw new Error("Failed");
+      const data = await res.json();
+      if (seq !== fetchSeqRef.current) return; // stale response — newer fetch in flight
+      setContacts(data.contacts || []);
+      setTotal(data.total || 0);
+      setTotalPages(data.totalPages || 1);
+      setStatusCounts(data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
+      setOverallCounts(data.overallCounts || data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
+      setOverallTotal(data.overallTotal || data.total || 0);
+      setFilterableFields(data.filterableFields || []);
+      if (data.event) {
+        setEvent(data.event);
+        setTemplates(data.templates || []);
+        setPostRegPhases(data.postRegPhases || []);
+        metaLoadedRef.current = true;
+      }
+    } catch {
+      if (seq !== fetchSeqRef.current) return;
+      setContacts([]);
+      toast.error("Failed to load attendees");
+    } finally {
+      if (seq === fetchSeqRef.current) {
+        setLoading(false);
+        setListLoading(false);
+      }
+    }
+  }, [eventId, buildFilterParams, page, pageSize, emailedSort]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // If a filter change shrank the result set below the current page,
+  // snap back to page 1 (e.g. deleting the last row of the last page).
+  useEffect(() => {
+    if (!listLoading && page > 1 && contacts.length === 0 && total > 0) {
+      setPage(1);
+    }
+  }, [listLoading, page, contacts.length, total]);
+
+  function setFieldFilter(name: string, value: string) {
+    setFieldFilters((prev) => {
+      const next = { ...prev };
+      if (value === "ANY") delete next[name];
+      else next[name] = value;
+      return next;
+    });
+    setSelectedIds(new Set());
+  }
+
+  function clearFieldFilters() {
+    setFieldFilters({});
+    setSelectedIds(new Set());
+  }
 
   function toggleContact(id: string) {
     const next = new Set(selectedIds);
@@ -246,7 +351,7 @@ export default function AttendeesPage() {
   }
 
   function togglePageSelection() {
-    const pageIds = paginatedContacts.map((c) => c.id);
+    const pageIds = contacts.map((c) => c.id);
     const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
     if (allPageSelected) {
       const next = new Set(selectedIds);
@@ -257,9 +362,19 @@ export default function AttendeesPage() {
     }
   }
 
-  function selectAllAttendees() {
-    const allIds = groups.flatMap((g) => g.contacts).map((c) => c.id);
-    setSelectedIds(new Set(allIds));
+  // "Select all N attendees" across every page of the current filter —
+  // the client only holds one page, so fetch just the matching ids.
+  async function selectAllAttendees() {
+    try {
+      const p = buildFilterParams();
+      p.set("idsOnly", "1");
+      const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
+      if (!res.ok) throw new Error("Failed");
+      const data = await res.json();
+      setSelectedIds(new Set<string>(data.ids || []));
+    } catch {
+      toast.error("Failed to select all attendees");
+    }
   }
 
   function clearSelection() {
@@ -375,15 +490,26 @@ export default function AttendeesPage() {
   async function handleBulkDelete() {
     if (!confirm(`Are you sure you want to delete ${selectedIds.size} attendee(s)?`)) return;
 
-    let deleted = 0;
-    for (const id of selectedIds) {
-      const res = await fetch(`/api/events/${eventId}/contacts/${id}`, { method: "DELETE" });
-      if (res.ok) deleted++;
+    // One bulk request — the old per-contact loop meant thousands of
+    // sequential DELETEs on large selections.
+    try {
+      const res = await fetch(`/api/events/${eventId}/contacts/bulk-delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: Array.from(selectedIds) }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error || "Failed to delete attendees");
+        return;
+      }
+      const result = await res.json();
+      toast.success(`Deleted ${result.deletedCount} attendee(s)`);
+      setSelectedIds(new Set());
+      fetchData();
+    } catch {
+      toast.error("Failed to delete attendees");
     }
-
-    toast.success(`Deleted ${deleted} attendee(s)`);
-    setSelectedIds(new Set());
-    fetchData();
   }
 
   async function handleAddContact(e: React.FormEvent<HTMLFormElement>) {
@@ -452,41 +578,39 @@ export default function AttendeesPage() {
     // show up. Reasonable on an "Attendees" page; if the broader list
     // is needed, contacts/export still exists but is no longer wired
     // to any UI button.
-    window.open(`/api/events/${eventId}/registrations/export?format=csv`, "_blank");
+    //
+    // The export carries the page's active filters (status, category,
+    // search, badge, phase, dynamic form-answer filters) so the file
+    // matches what's on screen. No filters → full dump, as before.
+    const p = buildFilterParams();
+    p.set("format", "csv");
+    window.open(`/api/events/${eventId}/registrations/export?${p}`, "_blank");
   }
 
   function handleExportExcel() {
     // Same data as the CSV export, but as a real .xlsx where each FILE
     // field's cell is a clickable link to the admin-auth-gated stream
     // route (opens only for a logged-in admin; not publicly reachable).
-    window.open(`/api/events/${eventId}/registrations/export?format=xlsx`, "_blank");
+    const p = buildFilterParams();
+    p.set("format", "xlsx");
+    window.open(`/api/events/${eventId}/registrations/export?${p}`, "_blank");
   }
 
   if (loading) {
     return <div className="flex items-center justify-center py-12">Loading...</div>;
   }
 
-  // When a specific category is selected, flatten all contacts into one list
+  // When a specific category is selected, the Category column is hidden.
   const isSingleCategory = categoryFilter !== "ALL";
-  const rawContacts = groups.flatMap((g) => g.contacts);
 
-  // Sort by emailed status if requested
-  const allContacts = emailedSort === "none" ? rawContacts : [...rawContacts].sort((a, b) => {
-    const aEmailed = a.emailLogs && a.emailLogs.length > 0 ? 1 : 0;
-    const bEmailed = b.emailLogs && b.emailLogs.length > 0 ? 1 : 0;
-    return emailedSort === "yes" ? bEmailed - aEmailed : aEmailed - bEmailed;
-  });
-
-  const visibleCount = groups.reduce((sum, g) => sum + g.count, 0);
-
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(allContacts.length / pageSize));
+  // Server-side pagination: `contacts` is already the sorted page slice,
+  // `total`/`totalPages` come from the DB aggregate.
   const safePage = Math.min(page, totalPages);
   const startIdx = (safePage - 1) * pageSize;
-  const paginatedContacts = allContacts.slice(startIdx, startIdx + pageSize);
+  const paginatedContacts = contacts;
   const pageContactIds = paginatedContacts.map((c) => c.id);
   const allPageSelected = pageContactIds.length > 0 && pageContactIds.every((id) => selectedIds.has(id));
-  const allSelected = allContacts.length > 0 && allContacts.every((c) => selectedIds.has(c.id));
+  const allSelected = total > 0 && selectedIds.size >= total;
 
   return (
     <div className="space-y-6">
@@ -668,6 +792,49 @@ export default function AttendeesPage() {
         );
       })()}
 
+      {/* Active form-answer filter chips — one per field, individually
+          removable. Lives outside the popover so the admin always sees
+          what's narrowing the list without opening Filters. */}
+      {Object.keys(fieldFilters).length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed bg-muted/30 px-3 py-2 text-sm">
+          <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-muted-foreground">Filtered:</span>
+          {Object.entries(fieldFilters).map(([name, value]) => {
+            const field = filterableFields.find((f) => f.name === name);
+            const option = field
+              ? fieldFilterOptions(field).find((o) => o.value === value)
+              : undefined;
+            return (
+              <span
+                key={name}
+                className="inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-0.5"
+              >
+                <span className="text-muted-foreground">
+                  {field?.label ?? name}:
+                </span>
+                <span className="font-medium">{option?.label ?? value}</span>
+                <button
+                  type="button"
+                  className="ml-0.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => setFieldFilter(name, "ANY")}
+                >
+                  <X className="h-3 w-3" />
+                  <span className="sr-only">Remove {field?.label ?? name} filter</span>
+                </button>
+              </span>
+            );
+          })}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-7"
+            onClick={clearFieldFilters}
+          >
+            Clear all
+          </Button>
+        </div>
+      )}
+
       {/* Category Tabs */}
       {event?.categories && event.categories.length > 0 && (
         <div className="flex gap-1 bg-muted rounded-lg p-1 overflow-x-auto">
@@ -741,6 +908,62 @@ export default function AttendeesPage() {
           </Select>
         )}
 
+        {filterableFields.length > 0 && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline">
+                <Filter className="mr-2 h-4 w-4" />
+                Filters
+                {Object.keys(fieldFilters).length > 0 && (
+                  <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground">
+                    {Object.keys(fieldFilters).length}
+                  </span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-80 p-0">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <span className="text-sm font-medium">Filter by form answers</span>
+                {Object.keys(fieldFilters).length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={clearFieldFilters}
+                  >
+                    Clear all
+                  </Button>
+                )}
+              </div>
+              <div className="max-h-[55vh] space-y-3 overflow-y-auto p-4">
+                {filterableFields.map((f) => (
+                  <div key={f.name} className="space-y-1.5">
+                    <Label className="text-xs font-medium text-muted-foreground">
+                      {f.label}
+                    </Label>
+                    <Select
+                      value={fieldFilters[f.name] ?? "ANY"}
+                      onValueChange={(v) => setFieldFilter(f.name, v)}
+                    >
+                      <SelectTrigger className="h-9 w-full">
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ANY">Any</SelectItem>
+                        {fieldFilterOptions(f).map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+
         <Input
           placeholder="Search by name, email, organization..."
           value={search}
@@ -785,16 +1008,13 @@ export default function AttendeesPage() {
             <DialogTitle>Send Email to {selectedIds.size} attendee{selectedIds.size !== 1 ? "s" : ""}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {(() => {
-              const withoutEmail = allContacts.filter(
-                (c) => selectedIds.has(c.id) && isSyntheticEmail(c.email)
-              ).length;
-              return withoutEmail > 0 ? (
-                <p className="text-xs text-amber-600 dark:text-amber-500">
-                  {withoutEmail} of {selectedIds.size} recipient{selectedIds.size !== 1 ? "s" : ""} {withoutEmail === 1 ? "has" : "have"} no email — they will be skipped.
-                </p>
-              ) : null;
-            })()}
+            {/* With server pagination the client only holds one page of
+                contacts, so a precise synthetic-email count isn't known
+                up front — the send endpoint skips them and reports the
+                exact skipped count in the result toast. */}
+            <p className="text-xs text-muted-foreground">
+              Recipients without an email address are skipped automatically.
+            </p>
             <p className="text-sm text-muted-foreground">Choose a template to send:</p>
             {templates.map((t) => (
               <button
@@ -920,7 +1140,7 @@ export default function AttendeesPage() {
       </Dialog>
 
       {/* Content - always a flat table */}
-      {allContacts.length === 0 ? (
+      {contacts.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             No attendees found. Import contacts or add them manually.
@@ -960,7 +1180,7 @@ export default function AttendeesPage() {
                   <th className="w-20 px-4 py-3"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y">
+              <tbody className={listLoading ? "divide-y opacity-50 transition-opacity" : "divide-y transition-opacity"}>
                 {paginatedContacts.map((contact) => (
                   <tr key={contact.id} className={`hover:bg-muted/40 transition-colors ${selectedIds.has(contact.id) ? "bg-primary/5" : ""}`}>
                     <td className="px-4 py-3">
@@ -1044,17 +1264,17 @@ export default function AttendeesPage() {
             </table>
           </div>
           {/* Select all banner */}
-          {allPageSelected && !allSelected && allContacts.length > pageSize && (
+          {allPageSelected && !allSelected && total > pageSize && (
             <div className="px-4 py-2 border-t bg-blue-50 dark:bg-blue-950/30 text-sm text-center">
               All {paginatedContacts.length} attendees on this page are selected.{" "}
               <button onClick={selectAllAttendees} className="text-blue-600 dark:text-blue-400 font-medium hover:underline">
-                Select all {allContacts.length} attendees
+                Select all {total} attendees
               </button>
             </div>
           )}
-          {allSelected && allContacts.length > pageSize && (
+          {allSelected && total > pageSize && (
             <div className="px-4 py-2 border-t bg-blue-50 dark:bg-blue-950/30 text-sm text-center">
-              All {allContacts.length} attendees are selected.{" "}
+              All {selectedIds.size} attendees are selected.{" "}
               <button onClick={clearSelection} className="text-blue-600 dark:text-blue-400 font-medium hover:underline">
                 Clear selection
               </button>
@@ -1064,7 +1284,7 @@ export default function AttendeesPage() {
           {/* Pagination footer */}
           <div className="px-4 py-3 border-t bg-muted/20 flex items-center justify-between text-sm">
             <div className="flex items-center gap-2 text-muted-foreground">
-              <span>{visibleCount} attendee{visibleCount !== 1 ? "s" : ""}</span>
+              <span>{total} attendee{total !== 1 ? "s" : ""}</span>
               <span className="text-muted-foreground/50">|</span>
               <span>Rows per page:</span>
               <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
@@ -1075,17 +1295,18 @@ export default function AttendeesPage() {
                   <SelectItem value="10">10</SelectItem>
                   <SelectItem value="25">25</SelectItem>
                   <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">
-                {startIdx + 1}–{Math.min(startIdx + pageSize, allContacts.length)} of {allContacts.length}
+                {total === 0 ? "0" : `${startIdx + 1}–${Math.min(startIdx + paginatedContacts.length, total)}`} of {total}
               </span>
               <Button
                 variant="outline"
                 size="sm"
-                disabled={safePage <= 1}
+                disabled={safePage <= 1 || listLoading}
                 onClick={() => setPage(safePage - 1)}
               >
                 Previous
@@ -1093,7 +1314,7 @@ export default function AttendeesPage() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={safePage >= totalPages}
+                disabled={safePage >= totalPages || listLoading}
                 onClick={() => setPage(safePage + 1)}
               >
                 Next
