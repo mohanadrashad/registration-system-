@@ -55,6 +55,21 @@ export default function AttendeeDetailPage() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Back returns to the exact attendees view (filters + page + scroll)
+  // the admin left — the list page stores its URL in sessionStorage on
+  // row click. State + effect (not a render-time read) so the server
+  // render and hydration agree on the default href.
+  const defaultBackHref = `/dashboard/events/${eventId}/attendees`;
+  const [backHref, setBackHref] = useState(defaultBackHref);
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(`attendees:return:${eventId}`);
+      if (saved && saved.startsWith(defaultBackHref)) setBackHref(saved);
+    } catch {
+      // sessionStorage unavailable — keep the default.
+    }
+  }, [eventId, defaultBackHref]);
+
   const [editValues, setEditValues] = useState<Record<string, unknown>>({});
   const [editCategory, setEditCategory] = useState("");
   const [editStatus, setEditStatus] = useState<ContactStatus>("IMPORTED");
@@ -186,7 +201,7 @@ export default function AttendeeDetailPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0 flex-1">
-          <Link href={`/dashboard/events/${eventId}/attendees`}>
+          <Link href={backHref}>
             <Button variant="ghost" size="sm">
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back

@@ -132,6 +132,29 @@ function fieldFilterOptions(field: FilterableField): FilterableFieldOption[] {
   return field.options;
 }
 
+// Numbered-pager model: first, last, and a window around the current
+// page, with "…" for gaps — e.g. 1 … 4 [5] 6 … 20.
+function pageNumbers(current: number, totalPages: number): (number | "ellipsis")[] {
+  const candidates = new Set<number>([
+    1,
+    totalPages,
+    current - 1,
+    current,
+    current + 1,
+  ]);
+  const sorted = [...candidates]
+    .filter((n) => n >= 1 && n <= totalPages)
+    .sort((a, b) => a - b);
+  const out: (number | "ellipsis")[] = [];
+  let prev = 0;
+  for (const n of sorted) {
+    if (n - prev > 1) out.push("ellipsis");
+    out.push(n);
+    prev = n;
+  }
+  return out;
+}
+
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; }> = {
   IMPORTED: { label: "Imported", variant: "secondary" },
   INVITED: { label: "Invited", variant: "outline" },
@@ -161,9 +184,19 @@ export default function AttendeesPage() {
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [postRegPhases, setPostRegPhases] = useState<PostRegPhase[]>([]);
 
-  const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
-  const [badgeEmailFilter, setBadgeEmailFilter] = useState<string>("ALL");
+  // All filter/page state initializes from the URL and is mirrored back
+  // into it (see the replaceState effect below) — so browser back,
+  // refresh, and shared links restore the exact view instead of
+  // resetting to defaults.
+  const [categoryFilter, setCategoryFilter] = useState<string>(
+    () => searchParams.get("category") || "ALL"
+  );
+  const [statusFilter, setStatusFilter] = useState<string>(
+    () => searchParams.get("status") || "ALL"
+  );
+  const [badgeEmailFilter, setBadgeEmailFilter] = useState<string>(
+    () => searchParams.get("badge") || "ALL"
+  );
   // Combined phase filter: "ALL" or "<phaseId>:<submitted|notSubmitted>".
   // One control instead of two dropdowns keeps the toolbar tight.
   const [phaseFilter, setPhaseFilter] = useState<string>(() => {
@@ -188,15 +221,35 @@ export default function AttendeesPage() {
   // Dynamic per-form-field filters: { fieldName: selectedValue }. Only
   // fields present in filterableFields can appear here — the server
   // validates the same way, so a stale key is just ignored.
-  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
+  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>(() => {
+    try {
+      const raw = searchParams.get("ff");
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, string>)
+        : {};
+    } catch {
+      return {};
+    }
+  });
   const [filterableFields, setFilterableFields] = useState<FilterableField[]>([]);
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const initialSearch = searchParams.get("search") || "";
+  const [search, setSearch] = useState(initialSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [emailedSort, setEmailedSort] = useState<"none" | "yes" | "no">("none");
+  const [page, setPage] = useState(() =>
+    Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1)
+  );
+  const [pageSize, setPageSize] = useState(() => {
+    const v = parseInt(searchParams.get("pageSize") || "", 10);
+    return [10, 25, 50, 100].includes(v) ? v : 10;
+  });
+  const [emailedSort, setEmailedSort] = useState<"none" | "yes" | "no">(() => {
+    const s = searchParams.get("sort");
+    return s === "emailed_yes" ? "yes" : s === "emailed_no" ? "no" : "none";
+  });
 
   // Dialogs
   const [addOpen, setAddOpen] = useState(false);
@@ -208,8 +261,14 @@ export default function AttendeesPage() {
   const [editCategoryValue, setEditCategoryValue] = useState<string>("");
   const [editStatusValue, setEditStatusValue] = useState<string>("");
 
-  // Reset page when filters change
+  // Reset page when filters change. Skipped on mount — otherwise it
+  // would clobber a page number restored from the URL.
+  const filtersDidMountRef = useRef(false);
   useEffect(() => {
+    if (!filtersDidMountRef.current) {
+      filtersDidMountRef.current = true;
+      return;
+    }
     setPage(1);
   }, [
     statusFilter,
@@ -228,6 +287,55 @@ export default function AttendeesPage() {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(t);
   }, [search]);
+
+  // Mirror the full view state into the URL. replaceState (not router
+  // navigation) — no history spam and no re-render; each filter change
+  // updates the current entry, so browser back leaves the page with the
+  // view intact and refresh / shared links restore it.
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (statusFilter !== "ALL") p.set("status", statusFilter);
+    if (categoryFilter !== "ALL") p.set("category", categoryFilter);
+    if (badgeEmailFilter !== "ALL") p.set("badge", badgeEmailFilter);
+    if (debouncedSearch) p.set("search", debouncedSearch);
+    if (phaseFilter !== "ALL") {
+      const [phaseId, phaseStatus] = phaseFilter.split(":");
+      if (phaseId && phaseStatus) {
+        p.set("phase", phaseId);
+        p.set("phaseStatus", phaseStatus);
+      }
+    }
+    if (optionFilterPhaseId && optionFilterOptionId) {
+      p.set("phase", optionFilterPhaseId);
+      p.set("option", optionFilterOptionId);
+    }
+    if (Object.keys(fieldFilters).length > 0) {
+      p.set("ff", JSON.stringify(fieldFilters));
+    }
+    if (page > 1) p.set("page", String(page));
+    if (pageSize !== 10) p.set("pageSize", String(pageSize));
+    if (emailedSort !== "none") {
+      p.set("sort", emailedSort === "yes" ? "emailed_yes" : "emailed_no");
+    }
+    const qs = p.toString();
+    window.history.replaceState(
+      null,
+      "",
+      qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+    );
+  }, [
+    statusFilter,
+    categoryFilter,
+    badgeEmailFilter,
+    debouncedSearch,
+    phaseFilter,
+    optionFilterPhaseId,
+    optionFilterOptionId,
+    fieldFilters,
+    page,
+    pageSize,
+    emailedSort,
+  ]);
 
   // Single source for the filter query string — used by the list fetch
   // AND the export buttons, so the exported file always matches exactly
@@ -327,6 +435,37 @@ export default function AttendeesPage() {
       setPage(1);
     }
   }, [listLoading, page, contacts.length, total]);
+
+  // Scroll memory across the detail-page round trip: position is saved
+  // when a row is clicked (rememberListPosition) and restored once after
+  // the first data load. The return URL is saved alongside so the detail
+  // page's Back button can come back to this exact view.
+  const scrollRestoredRef = useRef(false);
+  useEffect(() => {
+    if (loading || scrollRestoredRef.current) return;
+    scrollRestoredRef.current = true;
+    try {
+      const saved = sessionStorage.getItem(`attendees:scroll:${eventId}`);
+      if (saved) {
+        sessionStorage.removeItem(`attendees:scroll:${eventId}`);
+        window.scrollTo({ top: parseInt(saved, 10) || 0 });
+      }
+    } catch {
+      // sessionStorage unavailable (private mode) — nothing to restore.
+    }
+  }, [loading, eventId]);
+
+  function rememberListPosition() {
+    try {
+      sessionStorage.setItem(
+        `attendees:return:${eventId}`,
+        window.location.pathname + window.location.search
+      );
+      sessionStorage.setItem(`attendees:scroll:${eventId}`, String(window.scrollY));
+    } catch {
+      // Best-effort only.
+    }
+  }
 
   function setFieldFilter(name: string, value: string) {
     setFieldFilters((prev) => {
@@ -771,18 +910,10 @@ export default function AttendeesPage() {
               size="sm"
               className="ml-auto h-7"
               onClick={() => {
+                // The URL-sync effect rewrites the query string on state
+                // change, so clearing state is enough — no manual strip.
                 setOptionFilterPhaseId(null);
                 setOptionFilterOptionId(null);
-                // Strip the URL params so a refresh keeps the cleared
-                // state — otherwise the deep-link would re-apply.
-                const u = new URL(window.location.href);
-                u.searchParams.delete("phase");
-                u.searchParams.delete("option");
-                window.history.replaceState(
-                  null,
-                  "",
-                  u.pathname + (u.search ? `?${u.searchParams}` : "")
-                );
               }}
             >
               <X className="h-3.5 w-3.5" />
@@ -1190,7 +1321,11 @@ export default function AttendeesPage() {
                       />
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={`/dashboard/events/${eventId}/attendees/${contact.id}`} className="hover:underline text-primary font-medium">
+                      <Link
+                        href={`/dashboard/events/${eventId}/attendees/${contact.id}`}
+                        className="hover:underline text-primary font-medium"
+                        onClick={rememberListPosition}
+                      >
                         {fallbackName(contact.firstName, contact.lastName, contact.registration?.confirmationCode)}
                       </Link>
                       <p className="text-xs text-muted-foreground md:hidden">
@@ -1311,6 +1446,26 @@ export default function AttendeesPage() {
               >
                 Previous
               </Button>
+              <div className="hidden sm:flex items-center gap-1">
+                {pageNumbers(safePage, totalPages).map((n, i) =>
+                  n === "ellipsis" ? (
+                    <span key={`e-${i}`} className="px-1 text-muted-foreground">
+                      …
+                    </span>
+                  ) : (
+                    <Button
+                      key={n}
+                      variant={n === safePage ? "default" : "outline"}
+                      size="sm"
+                      className="h-8 min-w-8 px-2"
+                      disabled={listLoading}
+                      onClick={() => setPage(n)}
+                    >
+                      {n}
+                    </Button>
+                  )
+                )}
+              </div>
               <Button
                 variant="outline"
                 size="sm"
