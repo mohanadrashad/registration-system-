@@ -12,6 +12,11 @@ import {
 } from "@/lib/form-builder/options-parse";
 import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
 import { COUNTRIES } from "@/lib/form-builder/countries";
+import {
+  getFilterableFields,
+  readAttendeeFilterParams,
+  buildContactWhere,
+} from "@/lib/attendees/attendee-filters";
 
 // FormField names that are also Contact columns — already emitted in the
 // fixed columns above the dynamic block, so we don't duplicate them.
@@ -130,8 +135,20 @@ export async function GET(
     },
   });
 
+  // Honor the same filter params the attendees page sends (status,
+  // category, search, badge, phase, dynamic form-answer filters) so an
+  // admin who filters the list and hits Export gets exactly the rows on
+  // screen. With no params this is a no-op `{ eventId }` and the export
+  // stays a full dump, as before.
+  const filterableFields = await getFilterableFields(eventId);
+  const filterParams = readAttendeeFilterParams(
+    new URL(req.url).searchParams,
+    filterableFields
+  );
+  const contactWhere = buildContactWhere(eventId, filterParams, filterableFields);
+
   const registrations = await prisma.registration.findMany({
-    where: { eventId },
+    where: { eventId, contact: { is: contactWhere } },
     include: { contact: true },
     orderBy: { registeredAt: "asc" },
   });

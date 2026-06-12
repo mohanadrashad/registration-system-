@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorizeEvent } from "@/lib/api-auth";
+import {
+  getFilterableFields,
+  readAttendeeFilterParams,
+  buildContactWhere,
+} from "@/lib/attendees/attendee-filters";
 
 export async function GET(
   req: NextRequest,
@@ -10,84 +15,16 @@ export async function GET(
   const ctx = await authorizeEvent(eventId, { role: "authenticated" });
   if (ctx instanceof NextResponse) return ctx;
 
-  const searchParams = req.nextUrl.searchParams;
-  const search = searchParams.get("search") || "";
-  const category = searchParams.get("category") || "";
-  const status = searchParams.get("status") || "";
-  const badgeEmail = searchParams.get("badgeEmail") || "";
-  const phaseId = searchParams.get("phase") || "";
-  const phaseStatus = searchParams.get("phaseStatus") || ""; // submitted | notSubmitted
-  // Stage 5: filter by a specific option pick. Combines with `phase`
-  // — "phase=X&option=Y" means "attendees who picked Y on phase X".
-  const optionId = searchParams.get("option") || "";
-
-  const where: Record<string, unknown> = { eventId };
-  const andConditions: Record<string, unknown>[] = [];
-
-  if (search) {
-    andConditions.push({
-      OR: [
-        { firstName: { contains: search, mode: "insensitive" } },
-        { lastName: { contains: search, mode: "insensitive" } },
-        { email: { contains: search, mode: "insensitive" } },
-        { organization: { contains: search, mode: "insensitive" } },
-      ],
-    });
-  }
-
-  if (category) {
-    where.category = category;
-  }
-
-  if (status) {
-    where.status = status;
-  }
-
-  if (badgeEmail === "sent") {
-    where.registration = { badgeEmailSent: true };
-  } else if (badgeEmail === "not_sent") {
-    andConditions.push({
-      OR: [
-        { registration: null },
-        { registration: { badgeEmailSent: false } },
-      ],
-    });
-  }
-
-  // Phase status filter: only meaningful for attendees who have a
-  // registration (a Contact without one can't submit a phase). For
-  // "submitted" we require a matching PhaseSubmission row; for
-  // "notSubmitted" we require either no registration or a registration
-  // with no submission for that phase yet.
-  if (phaseId && phaseStatus === "submitted") {
-    andConditions.push({
-      registration: {
-        is: { phaseSubmissions: { some: { phaseId } } },
-      },
-    });
-  } else if (phaseId && phaseStatus === "notSubmitted") {
-    andConditions.push({
-      registration: {
-        is: { phaseSubmissions: { none: { phaseId } } },
-      },
-    });
-  }
-
-  // Stage 5 option filter — independent of phase-status above. Filters
-  // to contacts whose registration has a selection on (phaseId, optionId).
-  if (phaseId && optionId) {
-    andConditions.push({
-      registration: {
-        is: {
-          selections: { some: { phaseId, optionId } },
-        },
-      },
-    });
-  }
-
-  if (andConditions.length > 0) {
-    where.AND = andConditions;
-  }
+  // Filter construction lives in src/lib/attendees/attendee-filters.ts,
+  // shared with the registrations export route so the exported set always
+  // matches what's on screen. filterableFields also feeds the dynamic
+  // form-answer filter UI (one dropdown per option-bearing form field).
+  const filterableFields = await getFilterableFields(eventId);
+  const filterParams = readAttendeeFilterParams(
+    req.nextUrl.searchParams,
+    filterableFields
+  );
+  const where = buildContactWhere(eventId, filterParams, filterableFields);
 
   try {
     // Batch all queries in a single transaction to minimize connection usage
@@ -169,6 +106,7 @@ export async function GET(
       overallCounts,
       overallTotal: allContacts.length,
       postRegPhases,
+      filterableFields,
     });
   } catch (e) {
     console.error("Failed to fetch attendees data:", e);

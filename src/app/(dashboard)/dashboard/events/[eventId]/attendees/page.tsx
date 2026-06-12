@@ -26,8 +26,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { toast } from "sonner";
 import { isSyntheticEmail, fallbackName } from "@/components/attendee/field-display";
+import { COUNTRIES } from "@/lib/form-builder/countries";
 import {
   Upload,
   Plus,
@@ -96,6 +102,42 @@ interface PostRegPhase {
   options?: { id: string; label: string }[];
 }
 
+interface FilterableFieldOption {
+  value: string;
+  label: string;
+  labelAr: string | null;
+}
+
+// One entry per option-bearing form field on this event's registration
+// form — drives the dynamic "Filters" popover. Comes from the attendees
+// API so the filter set always matches the event's actual form.
+interface FilterableField {
+  name: string;
+  label: string;
+  labelAr: string | null;
+  type: string;
+  options: FilterableFieldOption[];
+}
+
+// COUNTRY and CHECKBOX fields arrive with empty options — their choices
+// are universal, so they're resolved locally instead of shipped per event.
+function fieldFilterOptions(field: FilterableField): FilterableFieldOption[] {
+  if (field.type === "COUNTRY") {
+    return COUNTRIES.map((c) => ({
+      value: c.code,
+      label: c.name,
+      labelAr: c.nameAr,
+    }));
+  }
+  if (field.type === "CHECKBOX") {
+    return [
+      { value: "true", label: "Yes", labelAr: null },
+      { value: "false", label: "No", labelAr: null },
+    ];
+  }
+  return field.options;
+}
+
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; }> = {
   IMPORTED: { label: "Imported", variant: "secondary" },
   INVITED: { label: "Invited", variant: "outline" },
@@ -146,6 +188,11 @@ export default function AttendeesPage() {
   const [optionFilterOptionId, setOptionFilterOptionId] = useState<string | null>(
     () => searchParams.get("option")
   );
+  // Dynamic per-form-field filters: { fieldName: selectedValue }. Only
+  // fields present in filterableFields can appear here — the server
+  // validates the same way, so a stale key is just ignored.
+  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
+  const [filterableFields, setFilterableFields] = useState<FilterableField[]>([]);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -175,6 +222,7 @@ export default function AttendeesPage() {
     optionFilterPhaseId,
     optionFilterOptionId,
     debouncedSearch,
+    fieldFilters,
   ]);
 
   // Debounce search
@@ -183,30 +231,49 @@ export default function AttendeesPage() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // Single source for the filter query string — used by the list fetch
+  // AND the export buttons, so the exported file always matches exactly
+  // what's on screen.
+  const buildFilterParams = useCallback(() => {
+    const p = new URLSearchParams();
+    if (statusFilter !== "ALL") p.set("status", statusFilter);
+    if (categoryFilter !== "ALL") p.set("category", categoryFilter);
+    if (badgeEmailFilter !== "ALL") p.set("badgeEmail", badgeEmailFilter);
+    if (debouncedSearch) p.set("search", debouncedSearch);
+    if (phaseFilter !== "ALL") {
+      const [phaseId, phaseStatus] = phaseFilter.split(":");
+      if (phaseId && phaseStatus) {
+        p.set("phase", phaseId);
+        p.set("phaseStatus", phaseStatus);
+      }
+    }
+    if (optionFilterPhaseId && optionFilterOptionId) {
+      // Option filter shares the `phase` param with the
+      // phase-status filter above. When both are set, the
+      // phase-status filter wins for the phase param value; the
+      // option clause is added by the server as an AND so both
+      // narrow the result set independently.
+      p.set("phase", optionFilterPhaseId);
+      p.set("option", optionFilterOptionId);
+    }
+    if (Object.keys(fieldFilters).length > 0) {
+      p.set("fieldFilters", JSON.stringify(fieldFilters));
+    }
+    return p;
+  }, [
+    statusFilter,
+    categoryFilter,
+    badgeEmailFilter,
+    phaseFilter,
+    optionFilterPhaseId,
+    optionFilterOptionId,
+    debouncedSearch,
+    fieldFilters,
+  ]);
+
   const fetchData = useCallback(async () => {
     try {
-      const p = new URLSearchParams();
-      if (statusFilter !== "ALL") p.set("status", statusFilter);
-      if (categoryFilter !== "ALL") p.set("category", categoryFilter);
-      if (badgeEmailFilter !== "ALL") p.set("badgeEmail", badgeEmailFilter);
-      if (debouncedSearch) p.set("search", debouncedSearch);
-      if (phaseFilter !== "ALL") {
-        const [phaseId, phaseStatus] = phaseFilter.split(":");
-        if (phaseId && phaseStatus) {
-          p.set("phase", phaseId);
-          p.set("phaseStatus", phaseStatus);
-        }
-      }
-      if (optionFilterPhaseId && optionFilterOptionId) {
-        // Option filter shares the `phase` param with the
-        // phase-status filter above. When both are set, the
-        // phase-status filter wins for the phase param value; the
-        // option clause is added by the server as an AND so both
-        // narrow the result set independently.
-        p.set("phase", optionFilterPhaseId);
-        p.set("option", optionFilterOptionId);
-      }
-
+      const p = buildFilterParams();
       const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
       if (!res.ok) throw new Error("Failed");
       const data = await res.json();
@@ -218,25 +285,32 @@ export default function AttendeesPage() {
       setEvent(data.event || null);
       setTemplates(data.templates || []);
       setPostRegPhases(data.postRegPhases || []);
+      setFilterableFields(data.filterableFields || []);
     } catch {
       setGroups([]);
     } finally {
       setLoading(false);
     }
-  }, [
-    eventId,
-    statusFilter,
-    categoryFilter,
-    badgeEmailFilter,
-    phaseFilter,
-    optionFilterPhaseId,
-    optionFilterOptionId,
-    debouncedSearch,
-  ]);
+  }, [eventId, buildFilterParams]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  function setFieldFilter(name: string, value: string) {
+    setFieldFilters((prev) => {
+      const next = { ...prev };
+      if (value === "ANY") delete next[name];
+      else next[name] = value;
+      return next;
+    });
+    setSelectedIds(new Set());
+  }
+
+  function clearFieldFilters() {
+    setFieldFilters({});
+    setSelectedIds(new Set());
+  }
 
   function toggleContact(id: string) {
     const next = new Set(selectedIds);
@@ -452,14 +526,22 @@ export default function AttendeesPage() {
     // show up. Reasonable on an "Attendees" page; if the broader list
     // is needed, contacts/export still exists but is no longer wired
     // to any UI button.
-    window.open(`/api/events/${eventId}/registrations/export?format=csv`, "_blank");
+    //
+    // The export carries the page's active filters (status, category,
+    // search, badge, phase, dynamic form-answer filters) so the file
+    // matches what's on screen. No filters → full dump, as before.
+    const p = buildFilterParams();
+    p.set("format", "csv");
+    window.open(`/api/events/${eventId}/registrations/export?${p}`, "_blank");
   }
 
   function handleExportExcel() {
     // Same data as the CSV export, but as a real .xlsx where each FILE
     // field's cell is a clickable link to the admin-auth-gated stream
     // route (opens only for a logged-in admin; not publicly reachable).
-    window.open(`/api/events/${eventId}/registrations/export?format=xlsx`, "_blank");
+    const p = buildFilterParams();
+    p.set("format", "xlsx");
+    window.open(`/api/events/${eventId}/registrations/export?${p}`, "_blank");
   }
 
   if (loading) {
@@ -668,6 +750,49 @@ export default function AttendeesPage() {
         );
       })()}
 
+      {/* Active form-answer filter chips — one per field, individually
+          removable. Lives outside the popover so the admin always sees
+          what's narrowing the list without opening Filters. */}
+      {Object.keys(fieldFilters).length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed bg-muted/30 px-3 py-2 text-sm">
+          <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-muted-foreground">Filtered:</span>
+          {Object.entries(fieldFilters).map(([name, value]) => {
+            const field = filterableFields.find((f) => f.name === name);
+            const option = field
+              ? fieldFilterOptions(field).find((o) => o.value === value)
+              : undefined;
+            return (
+              <span
+                key={name}
+                className="inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-0.5"
+              >
+                <span className="text-muted-foreground">
+                  {field?.label ?? name}:
+                </span>
+                <span className="font-medium">{option?.label ?? value}</span>
+                <button
+                  type="button"
+                  className="ml-0.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => setFieldFilter(name, "ANY")}
+                >
+                  <X className="h-3 w-3" />
+                  <span className="sr-only">Remove {field?.label ?? name} filter</span>
+                </button>
+              </span>
+            );
+          })}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-7"
+            onClick={clearFieldFilters}
+          >
+            Clear all
+          </Button>
+        </div>
+      )}
+
       {/* Category Tabs */}
       {event?.categories && event.categories.length > 0 && (
         <div className="flex gap-1 bg-muted rounded-lg p-1 overflow-x-auto">
@@ -739,6 +864,62 @@ export default function AttendeesPage() {
               ])}
             </SelectContent>
           </Select>
+        )}
+
+        {filterableFields.length > 0 && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline">
+                <Filter className="mr-2 h-4 w-4" />
+                Filters
+                {Object.keys(fieldFilters).length > 0 && (
+                  <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground">
+                    {Object.keys(fieldFilters).length}
+                  </span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-80 p-0">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <span className="text-sm font-medium">Filter by form answers</span>
+                {Object.keys(fieldFilters).length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={clearFieldFilters}
+                  >
+                    Clear all
+                  </Button>
+                )}
+              </div>
+              <div className="max-h-[55vh] space-y-3 overflow-y-auto p-4">
+                {filterableFields.map((f) => (
+                  <div key={f.name} className="space-y-1.5">
+                    <Label className="text-xs font-medium text-muted-foreground">
+                      {f.label}
+                    </Label>
+                    <Select
+                      value={fieldFilters[f.name] ?? "ANY"}
+                      onValueChange={(v) => setFieldFilter(f.name, v)}
+                    >
+                      <SelectTrigger className="h-9 w-full">
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ANY">Any</SelectItem>
+                        {fieldFilterOptions(f).map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
         )}
 
         <Input
