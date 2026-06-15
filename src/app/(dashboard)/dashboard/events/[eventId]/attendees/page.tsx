@@ -51,6 +51,7 @@ import {
   Filter,
   X,
   FileSpreadsheet,
+  Tags,
 } from "lucide-react";
 
 type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
@@ -111,6 +112,14 @@ interface FilterableField {
   labelAr: string | null;
   type: string;
   options: FilterableFieldOption[];
+}
+
+// Attendee groups, lazy-fetched for the bulk-assign dialog.
+interface BulkGroup {
+  id: string;
+  name: string;
+  allowMultiple: boolean;
+  values: { id: string; label: string }[];
 }
 
 // COUNTRY and CHECKBOX fields arrive with empty options — their choices
@@ -255,6 +264,15 @@ export default function AttendeesPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
+
+  // Bulk group-assign dialog. Groups are lazy-fetched when it opens (they
+  // aren't needed for the rest of the page).
+  const [groupAssignOpen, setGroupAssignOpen] = useState(false);
+  const [gaGroups, setGaGroups] = useState<BulkGroup[]>([]);
+  const [gaGroupId, setGaGroupId] = useState<string>("");
+  const [gaValueId, setGaValueId] = useState<string>("");
+  const [gaMode, setGaMode] = useState<"set" | "add" | "remove">("set");
+  const [gaApplying, setGaApplying] = useState(false);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editContact, setEditContact] = useState<Contact | null>(null);
@@ -648,6 +666,78 @@ export default function AttendeesPage() {
       fetchData();
     } catch {
       toast.error("Failed to delete attendees");
+    }
+  }
+
+  // ── Bulk group-assign ───────────────────────────────────────────────
+  async function openGroupAssign() {
+    if (selectedIds.size === 0) {
+      toast.error("No attendees selected");
+      return;
+    }
+    setGroupAssignOpen(true);
+    // Lazy-load groups the first time.
+    if (gaGroups.length === 0) {
+      try {
+        const res = await fetch(`/api/events/${eventId}/groups`);
+        if (res.ok) {
+          const data: BulkGroup[] = await res.json();
+          setGaGroups(data);
+        } else {
+          toast.error("Failed to load groups");
+        }
+      } catch {
+        toast.error("Failed to load groups");
+      }
+    }
+  }
+
+  function onGroupAssignGroupChange(groupId: string) {
+    setGaGroupId(groupId);
+    setGaValueId("");
+    // Single-value groups default to "Set"; multi-value to "Add".
+    const g = gaGroups.find((x) => x.id === groupId);
+    setGaMode(g && g.allowMultiple ? "add" : "set");
+  }
+
+  async function applyGroupAssign() {
+    if (!gaGroupId || !gaValueId) {
+      toast.error("Pick a group and a value");
+      return;
+    }
+    setGaApplying(true);
+    try {
+      const res = await fetch(
+        `/api/events/${eventId}/groups/${gaGroupId}/assign`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contactIds: Array.from(selectedIds),
+            valueId: gaValueId,
+            mode: gaMode,
+          }),
+        }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error || "Failed to update attendees");
+        return;
+      }
+      const result = await res.json();
+      const verb =
+        gaMode === "remove" ? "Removed from" : "Applied to";
+      toast.success(`${verb} ${result.affected} attendee(s)`);
+      setGroupAssignOpen(false);
+      setGaGroupId("");
+      setGaValueId("");
+      // No list refetch: group values aren't shown in the table (Stage 3),
+      // so there's nothing on-screen to refresh — and skipping it avoids
+      // any dialog-close/refetch commit race.
+    } catch {
+      toast.error("Failed to update attendees");
+    } finally {
+      setGaApplying(false);
     }
   }
 
@@ -1122,6 +1212,16 @@ export default function AttendeesPage() {
           {userCanEdit && (
             <Button
               variant="outline"
+              disabled={selectedIds.size === 0}
+              onClick={openGroupAssign}
+            >
+              <Tags className="mr-2 h-4 w-4" />
+              Set group
+            </Button>
+          )}
+          {userCanEdit && (
+            <Button
+              variant="outline"
               disabled={selectedIds.size === 0 || sending}
               onClick={openEmailDialog}
             >
@@ -1131,6 +1231,116 @@ export default function AttendeesPage() {
           )}
         </div>
       </div>
+
+      {/* Bulk group-assign Dialog */}
+      <Dialog open={groupAssignOpen} onOpenChange={setGroupAssignOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Set group for {selectedIds.size} attendee
+              {selectedIds.size !== 1 ? "s" : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {gaGroups.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">
+              No groups defined yet. Create one in Settings → Groups first.
+            </p>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label>Group</Label>
+                <Select value={gaGroupId} onValueChange={onGroupAssignGroupChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {gaGroups.map((g) => (
+                      <SelectItem key={g.id} value={g.id}>
+                        {g.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {(() => {
+                const group = gaGroups.find((g) => g.id === gaGroupId);
+                if (!group) return null;
+                return (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label>Value</Label>
+                      <Select value={gaValueId} onValueChange={setGaValueId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose a value" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {group.values.length === 0 ? (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              This group has no values yet.
+                            </div>
+                          ) : (
+                            group.values.map((v) => (
+                              <SelectItem key={v.id} value={v.id}>
+                                {v.label}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label>Action</Label>
+                      <Select
+                        value={gaMode}
+                        onValueChange={(v) =>
+                          setGaMode(v as "set" | "add" | "remove")
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {group.allowMultiple && (
+                            <SelectItem value="add">
+                              Add this value
+                            </SelectItem>
+                          )}
+                          <SelectItem value="set">
+                            {group.allowMultiple
+                              ? "Set to only this value"
+                              : "Set to this value"}
+                          </SelectItem>
+                          <SelectItem value="remove">
+                            Remove this value
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
+                );
+              })()}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setGroupAssignOpen(false)}
+                  disabled={gaApplying}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={applyGroupAssign}
+                  disabled={gaApplying || !gaGroupId || !gaValueId}
+                >
+                  {gaApplying ? "Applying…" : "Apply"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Send Email Dialog */}
       <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
