@@ -500,6 +500,33 @@ export default function AttendeesPage() {
     setSelectedIds(new Set());
   }
 
+  // One filter control (form field OR group dimension — same machinery).
+  function renderFilterControl(f: FilterableField) {
+    return (
+      <div key={f.name} className="space-y-1.5">
+        <Label className="text-xs font-medium text-muted-foreground">
+          {f.label}
+        </Label>
+        <Select
+          value={fieldFilters[f.name] ?? "ANY"}
+          onValueChange={(v) => setFieldFilter(f.name, v)}
+        >
+          <SelectTrigger className="h-9 w-full">
+            <SelectValue placeholder="Any" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ANY">Any</SelectItem>
+            {fieldFilterOptions(f).map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
+
   function toggleContact(id: string) {
     const next = new Set(selectedIds);
     if (next.has(id)) next.delete(id);
@@ -1144,7 +1171,7 @@ export default function AttendeesPage() {
             </PopoverTrigger>
             <PopoverContent align="start" className="w-80 p-0">
               <div className="flex items-center justify-between border-b px-4 py-3">
-                <span className="text-sm font-medium">Filter by form answers</span>
+                <span className="text-sm font-medium">Filters</span>
                 {Object.keys(fieldFilters).length > 0 && (
                   <Button
                     variant="ghost"
@@ -1157,29 +1184,34 @@ export default function AttendeesPage() {
                 )}
               </div>
               <div className="max-h-[55vh] space-y-3 overflow-y-auto p-4">
-                {filterableFields.map((f) => (
-                  <div key={f.name} className="space-y-1.5">
-                    <Label className="text-xs font-medium text-muted-foreground">
-                      {f.label}
-                    </Label>
-                    <Select
-                      value={fieldFilters[f.name] ?? "ANY"}
-                      onValueChange={(v) => setFieldFilter(f.name, v)}
-                    >
-                      <SelectTrigger className="h-9 w-full">
-                        <SelectValue placeholder="Any" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ANY">Any</SelectItem>
-                        {fieldFilterOptions(f).map((o) => (
-                          <SelectItem key={o.value} value={o.value}>
-                            {o.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ))}
+                {(() => {
+                  const formFields = filterableFields.filter(
+                    (f) => f.type !== "GROUP"
+                  );
+                  const groupFields = filterableFields.filter(
+                    (f) => f.type === "GROUP"
+                  );
+                  return (
+                    <>
+                      {/* Only label the section when BOTH kinds exist, so the
+                          common single-section case stays clean. */}
+                      {formFields.length > 0 && groupFields.length > 0 && (
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Form answers
+                        </p>
+                      )}
+                      {formFields.map(renderFilterControl)}
+                      {groupFields.length > 0 && (
+                        <div className="space-y-3 border-t pt-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Groups
+                          </p>
+                          {groupFields.map(renderFilterControl)}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </PopoverContent>
           </Popover>

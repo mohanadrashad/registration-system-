@@ -35,32 +35,54 @@ export interface FilterableFieldOption {
   labelAr: string | null;
 }
 
+// Custom Attendee Group dimensions ride the SAME filter machinery as form
+// fields: a group entry is namespaced `group:<groupId>` so it can't collide
+// with a form field name, carries the sentinel type "GROUP", and lists its
+// values as options. The shared fieldFilters map / URL param / chips on the
+// client then work for groups with no extra plumbing; only buildContactWhere
+// routes a group key to a groupAssignments predicate instead of formData.
+export const GROUP_FILTER_PREFIX = "group:";
+export type FilterableType = FieldType | "GROUP";
+
 export interface FilterableField {
   name: string;
   label: string;
   labelAr: string | null;
-  type: FieldType;
-  // SELECT/RADIO/MULTISELECT carry their parsed options (plus the reserved
-  // __other entry when enabled). COUNTRY and CHECKBOX send an empty list —
-  // the client renders the countries list / Yes-No locally.
+  type: FilterableType;
+  source: "form" | "group";
+  // SELECT/RADIO/MULTISELECT and GROUP carry their options. COUNTRY and
+  // CHECKBOX send an empty list — the client renders countries / Yes-No
+  // locally.
   options: FilterableFieldOption[];
 }
 
 export async function getFilterableFields(
   eventId: string
 ): Promise<FilterableField[]> {
-  const fields = await prisma.formField.findMany({
-    where: {
-      eventId,
-      isActive: true,
-      type: { in: FILTERABLE_FIELD_TYPES },
-      step: { phase: { type: "REGISTRATION" } },
-    },
-    orderBy: { order: "asc" },
-    select: { name: true, label: true, labelAr: true, type: true, options: true },
-  });
+  const [fields, groups] = await Promise.all([
+    prisma.formField.findMany({
+      where: {
+        eventId,
+        isActive: true,
+        type: { in: FILTERABLE_FIELD_TYPES },
+        step: { phase: { type: "REGISTRATION" } },
+      },
+      orderBy: { order: "asc" },
+      select: { name: true, label: true, labelAr: true, type: true, options: true },
+    }),
+    prisma.attendeeGroup.findMany({
+      where: { eventId },
+      orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+      include: {
+        values: {
+          orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+          select: { id: true, label: true },
+        },
+      },
+    }),
+  ]);
 
-  return fields.map((f) => {
+  const formFilters: FilterableField[] = fields.map((f) => {
     let options: FilterableFieldOption[] = [];
     if (
       f.type === FieldType.SELECT ||
@@ -86,9 +108,28 @@ export async function getFilterableFields(
       label: f.label,
       labelAr: f.labelAr,
       type: f.type,
+      source: "form" as const,
       options,
     };
   });
+
+  // Only groups with at least one value make usable filters.
+  const groupFilters: FilterableField[] = groups
+    .filter((g) => g.values.length > 0)
+    .map((g) => ({
+      name: `${GROUP_FILTER_PREFIX}${g.id}`,
+      label: g.name,
+      labelAr: null,
+      type: "GROUP" as const,
+      source: "group" as const,
+      options: g.values.map((v) => ({
+        value: v.id,
+        label: v.label,
+        labelAr: null,
+      })),
+    }));
+
+  return [...formFilters, ...groupFilters];
 }
 
 /**
@@ -118,31 +159,6 @@ export function parseFieldFilters(
     out[key] = value;
   }
   return out;
-}
-
-/**
- * Registration-side predicates for the active field filters, against
- * formData JSON paths. MULTISELECT answers are arrays → containment;
- * CHECKBOX answers are booleans; everything else is a string equals.
- */
-export function buildFormDataConditions(
-  fieldFilters: Record<string, string>,
-  fields: FilterableField[]
-): Record<string, unknown>[] {
-  const byName = new Map(fields.map((f) => [f.name, f]));
-  const conditions: Record<string, unknown>[] = [];
-  for (const [name, value] of Object.entries(fieldFilters)) {
-    const field = byName.get(name);
-    if (!field) continue;
-    if (field.type === FieldType.MULTISELECT) {
-      conditions.push({ formData: { path: [name], array_contains: value } });
-    } else if (field.type === FieldType.CHECKBOX) {
-      conditions.push({ formData: { path: [name], equals: value === "true" } });
-    } else {
-      conditions.push({ formData: { path: [name], equals: value } });
-    }
-  }
-  return conditions;
 }
 
 export interface AttendeeFilterParams {
@@ -246,10 +262,33 @@ export function buildContactWhere(
     });
   }
 
-  // Dynamic form-answer filters. Nested under registration — a contact
-  // without a registration has no answers and is correctly excluded.
-  for (const cond of buildFormDataConditions(p.fieldFilters, fields)) {
-    andConditions.push({ registration: { is: cond } });
+  // Dynamic filters — two backing stores, routed by the field's source:
+  //   • form answers → Registration.formData JSON paths (nested under
+  //     registration, so a contact without a registration is excluded)
+  //   • group values → ContactGroupAssignment rows directly on the contact
+  //     (works for non-registered contacts too)
+  const byName = new Map(fields.map((f) => [f.name, f]));
+  for (const [name, value] of Object.entries(p.fieldFilters)) {
+    const field = byName.get(name);
+    if (!field) continue;
+    if (field.source === "group") {
+      const groupId = name.slice(GROUP_FILTER_PREFIX.length);
+      andConditions.push({
+        groupAssignments: { some: { groupId, valueId: value } },
+      });
+    } else if (field.type === FieldType.MULTISELECT) {
+      andConditions.push({
+        registration: { is: { formData: { path: [name], array_contains: value } } },
+      });
+    } else if (field.type === FieldType.CHECKBOX) {
+      andConditions.push({
+        registration: { is: { formData: { path: [name], equals: value === "true" } } },
+      });
+    } else {
+      andConditions.push({
+        registration: { is: { formData: { path: [name], equals: value } } },
+      });
+    }
   }
 
   if (andConditions.length > 0) {
