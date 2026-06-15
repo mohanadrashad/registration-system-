@@ -23,6 +23,7 @@ import {
 import { IdentityCard } from "@/components/attendee/identity-card";
 import { RegistrationAnswersCard } from "@/components/attendee/registration-answers-card";
 import { AdminCard } from "@/components/attendee/admin-card";
+import { AttendeeGroupsCard } from "@/components/attendee/attendee-groups-card";
 import { RegistrationLinkCard } from "@/components/attendee/registration-link-card";
 import { PhaseColumn } from "@/components/attendee/phase-column";
 import { EBadgeCard } from "@/components/attendee/ebadge-card";
@@ -312,6 +313,11 @@ export default function AttendeeDetailPage() {
             setEditCategory={setEditCategory}
             editStatus={editStatus}
             setEditStatus={setEditStatus}
+          />
+          <AttendeeGroupsCard
+            eventId={eventId}
+            contactId={contactId}
+            canEdit={userCanEdit}
           />
           <RegistrationLinkCard
             hasToken={!!contact.inviteToken}
