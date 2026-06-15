@@ -27,12 +27,17 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetFooter,
+  SheetClose,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { isSyntheticEmail, fallbackName } from "@/components/attendee/field-display";
+import { FilterMultiSelect } from "@/components/attendee/filter-multi-select";
 import { COUNTRIES } from "@/lib/form-builder/countries";
 import {
   Upload,
@@ -197,9 +202,23 @@ export default function AttendeesPage() {
   // into it (see the replaceState effect below) — so browser back,
   // refresh, and shared links restore the exact view instead of
   // resetting to defaults.
-  const [categoryFilter, setCategoryFilter] = useState<string>(
-    () => searchParams.get("category") || "ALL"
-  );
+  // Multi-select category filter (empty = all). Initialized from the
+  // `categories` JSON param, falling back to a legacy single `category`.
+  const [categoryFilters, setCategoryFilters] = useState<string[]>(() => {
+    const raw = searchParams.get("categories");
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((c): c is string => typeof c === "string" && c !== "");
+        }
+      } catch {
+        // fall through
+      }
+    }
+    const single = searchParams.get("category");
+    return single ? [single] : [];
+  });
   const [statusFilter, setStatusFilter] = useState<string>(
     () => searchParams.get("status") || "ALL"
   );
@@ -227,17 +246,24 @@ export default function AttendeesPage() {
   const [optionFilterOptionId, setOptionFilterOptionId] = useState<string | null>(
     () => searchParams.get("option")
   );
-  // Dynamic per-form-field filters: { fieldName: selectedValue }. Only
-  // fields present in filterableFields can appear here — the server
-  // validates the same way, so a stale key is just ignored.
-  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>(() => {
+  // Dynamic per-field filters: { fieldName: selectedValues[] }. Each filter
+  // holds a LIST of values (OR within the filter). Only fields present in
+  // filterableFields can appear; the server validates the same way, so a
+  // stale key is ignored. A bare string from an older link is coerced to a
+  // one-element array.
+  const [fieldFilters, setFieldFilters] = useState<Record<string, string[]>>(() => {
     try {
       const raw = searchParams.get("ff");
       if (!raw) return {};
       const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, string>)
-        : {};
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      const out: Record<string, string[]> = {};
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        const arr = Array.isArray(v) ? v : [v];
+        const vals = arr.filter((x): x is string => typeof x === "string" && x !== "");
+        if (vals.length) out[k] = vals;
+      }
+      return out;
     } catch {
       return {};
     }
@@ -290,7 +316,7 @@ export default function AttendeesPage() {
     setPage(1);
   }, [
     statusFilter,
-    categoryFilter,
+    categoryFilters,
     badgeEmailFilter,
     phaseFilter,
     optionFilterPhaseId,
@@ -313,7 +339,7 @@ export default function AttendeesPage() {
   useEffect(() => {
     const p = new URLSearchParams();
     if (statusFilter !== "ALL") p.set("status", statusFilter);
-    if (categoryFilter !== "ALL") p.set("category", categoryFilter);
+    if (categoryFilters.length > 0) p.set("categories", JSON.stringify(categoryFilters));
     if (badgeEmailFilter !== "ALL") p.set("badge", badgeEmailFilter);
     if (debouncedSearch) p.set("search", debouncedSearch);
     if (phaseFilter !== "ALL") {
@@ -343,7 +369,7 @@ export default function AttendeesPage() {
     );
   }, [
     statusFilter,
-    categoryFilter,
+    categoryFilters,
     badgeEmailFilter,
     debouncedSearch,
     phaseFilter,
@@ -361,7 +387,7 @@ export default function AttendeesPage() {
   const buildFilterParams = useCallback(() => {
     const p = new URLSearchParams();
     if (statusFilter !== "ALL") p.set("status", statusFilter);
-    if (categoryFilter !== "ALL") p.set("category", categoryFilter);
+    if (categoryFilters.length > 0) p.set("categories", JSON.stringify(categoryFilters));
     if (badgeEmailFilter !== "ALL") p.set("badgeEmail", badgeEmailFilter);
     if (debouncedSearch) p.set("search", debouncedSearch);
     if (phaseFilter !== "ALL") {
@@ -386,7 +412,7 @@ export default function AttendeesPage() {
     return p;
   }, [
     statusFilter,
-    categoryFilter,
+    categoryFilters,
     badgeEmailFilter,
     phaseFilter,
     optionFilterPhaseId,
@@ -485,11 +511,27 @@ export default function AttendeesPage() {
     }
   }
 
-  function setFieldFilter(name: string, value: string) {
+  // Toggle one value within a filter (add if absent, remove if present).
+  // When a filter's list empties, drop the key so the active count stays
+  // accurate and the URL stays clean.
+  function toggleFieldFilter(name: string, value: string) {
     setFieldFilters((prev) => {
       const next = { ...prev };
-      if (value === "ANY") delete next[name];
-      else next[name] = value;
+      const current = next[name] ?? [];
+      const updated = current.includes(value)
+        ? current.filter((v) => v !== value)
+        : [...current, value];
+      if (updated.length === 0) delete next[name];
+      else next[name] = updated;
+      return next;
+    });
+    setSelectedIds(new Set());
+  }
+
+  function clearOneFilter(name: string) {
+    setFieldFilters((prev) => {
+      const next = { ...prev };
+      delete next[name];
       return next;
     });
     setSelectedIds(new Set());
@@ -500,32 +542,20 @@ export default function AttendeesPage() {
     setSelectedIds(new Set());
   }
 
-  // One filter control (form field OR group dimension — same machinery).
-  function renderFilterControl(f: FilterableField) {
-    return (
-      <div key={f.name} className="space-y-1.5">
-        <Label className="text-xs font-medium text-muted-foreground">
-          {f.label}
-        </Label>
-        <Select
-          value={fieldFilters[f.name] ?? "ANY"}
-          onValueChange={(v) => setFieldFilter(f.name, v)}
-        >
-          <SelectTrigger className="h-9 w-full">
-            <SelectValue placeholder="Any" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ANY">Any</SelectItem>
-            {fieldFilterOptions(f).map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+  // Multi-select category: clicking a category toggles it; "All Categories"
+  // (empty list) clears the filter.
+  function toggleCategory(cat: string) {
+    setCategoryFilters((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
     );
+    setSelectedIds(new Set());
   }
+
+  // Total values selected across the dynamic field/group filters (badge).
+  const activeFilterCount = Object.values(fieldFilters).reduce(
+    (n, vals) => n + vals.length,
+    0
+  );
 
   function toggleContact(id: string) {
     const next = new Set(selectedIds);
@@ -800,8 +830,8 @@ export default function AttendeesPage() {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
 
-    if (!formData.get("category") && categoryFilter !== "ALL") {
-      formData.set("category", categoryFilter);
+    if (!formData.get("category") && categoryFilters.length === 1) {
+      formData.set("category", categoryFilters[0]);
     }
 
     const res = await fetch(`/api/events/${eventId}/contacts/import`, {
@@ -856,8 +886,11 @@ export default function AttendeesPage() {
     return <div className="flex items-center justify-center py-12">Loading...</div>;
   }
 
-  // When a specific category is selected, the Category column is hidden.
-  const isSingleCategory = categoryFilter !== "ALL";
+  // When exactly one category is selected, every row is that category, so
+  // the Category column is hidden. A single selected category also pre-fills
+  // the add/import dialogs.
+  const isSingleCategory = categoryFilters.length === 1;
+  const singleSelectedCategory = isSingleCategory ? categoryFilters[0] : undefined;
 
   // Server-side pagination: `contacts` is already the sorted page slice,
   // `total`/`totalPages` come from the DB aggregate.
@@ -904,7 +937,7 @@ export default function AttendeesPage() {
               {event?.categories && event.categories.length > 0 && (
                 <div className="space-y-2">
                   <Label>Assign Category</Label>
-                  <Select name="category" defaultValue={categoryFilter !== "ALL" ? categoryFilter : undefined}>
+                  <Select name="category" defaultValue={singleSelectedCategory}>
                     <SelectTrigger>
                       <SelectValue placeholder="Use category from file" />
                     </SelectTrigger>
@@ -914,9 +947,9 @@ export default function AttendeesPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {categoryFilter !== "ALL" && (
+                  {singleSelectedCategory && (
                     <p className="text-xs text-muted-foreground">
-                      Pre-filled with current category tab: <strong>{categoryFilter}</strong>
+                      Pre-filled with current category tab: <strong>{singleSelectedCategory}</strong>
                     </p>
                   )}
                 </div>
@@ -969,7 +1002,7 @@ export default function AttendeesPage() {
               {event?.categories && event.categories.length > 0 && (
                 <div className="space-y-2">
                   <Label>Category</Label>
-                  <Select name="category" defaultValue={categoryFilter !== "ALL" ? categoryFilter : undefined}>
+                  <Select name="category" defaultValue={singleSelectedCategory}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
@@ -1040,37 +1073,41 @@ export default function AttendeesPage() {
         );
       })()}
 
-      {/* Active form-answer filter chips — one per field, individually
-          removable. Lives outside the popover so the admin always sees
-          what's narrowing the list without opening Filters. */}
-      {Object.keys(fieldFilters).length > 0 && (
+      {/* Active filter chips — one per SELECTED VALUE (a filter with two
+          values shows two chips), individually removable. Lives outside
+          the Filters panel so the admin always sees what's narrowing the
+          list. */}
+      {activeFilterCount > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed bg-muted/30 px-3 py-2 text-sm">
           <Filter className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="text-muted-foreground">Filtered:</span>
-          {Object.entries(fieldFilters).map(([name, value]) => {
+          {Object.entries(fieldFilters).flatMap(([name, values]) => {
             const field = filterableFields.find((f) => f.name === name);
-            const option = field
-              ? fieldFilterOptions(field).find((o) => o.value === value)
-              : undefined;
-            return (
-              <span
-                key={name}
-                className="inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-0.5"
-              >
-                <span className="text-muted-foreground">
-                  {field?.label ?? name}:
-                </span>
-                <span className="font-medium">{option?.label ?? value}</span>
-                <button
-                  type="button"
-                  className="ml-0.5 text-muted-foreground hover:text-foreground"
-                  onClick={() => setFieldFilter(name, "ANY")}
+            const opts = field ? fieldFilterOptions(field) : [];
+            return values.map((value) => {
+              const option = opts.find((o) => o.value === value);
+              return (
+                <span
+                  key={`${name}:${value}`}
+                  className="inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-0.5"
                 >
-                  <X className="h-3 w-3" />
-                  <span className="sr-only">Remove {field?.label ?? name} filter</span>
-                </button>
-              </span>
-            );
+                  <span className="text-muted-foreground">
+                    {field?.label ?? name}:
+                  </span>
+                  <span className="font-medium">{option?.label ?? value}</span>
+                  <button
+                    type="button"
+                    className="ml-0.5 text-muted-foreground hover:text-foreground"
+                    onClick={() => toggleFieldFilter(name, value)}
+                  >
+                    <X className="h-3 w-3" />
+                    <span className="sr-only">
+                      Remove {field?.label ?? name} {option?.label ?? value} filter
+                    </span>
+                  </button>
+                </span>
+              );
+            });
           })}
           <Button
             variant="ghost"
@@ -1083,20 +1120,32 @@ export default function AttendeesPage() {
         </div>
       )}
 
-      {/* Category Tabs */}
+      {/* Category Tabs — multi-select. Click categories to toggle them
+          (several can be active = OR); "All Categories" clears them. */}
       {event?.categories && event.categories.length > 0 && (
         <div className="flex gap-1 bg-muted rounded-lg p-1 overflow-x-auto">
-          {["ALL", ...event.categories].map((cat) => (
+          <button
+            key="ALL"
+            onClick={() => { setCategoryFilters([]); setSelectedIds(new Set()); }}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
+              categoryFilters.length === 0
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All Categories
+          </button>
+          {event.categories.map((cat) => (
             <button
               key={cat}
-              onClick={() => { setCategoryFilter(cat); setSelectedIds(new Set()); }}
+              onClick={() => toggleCategory(cat)}
               className={`px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
-                categoryFilter === cat
+                categoryFilters.includes(cat)
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              {cat === "ALL" ? "All Categories" : cat}
+              {cat}
             </button>
           ))}
         </div>
@@ -1157,33 +1206,26 @@ export default function AttendeesPage() {
         )}
 
         {filterableFields.length > 0 && (
-          <Popover>
-            <PopoverTrigger asChild>
+          <Sheet>
+            <SheetTrigger asChild>
               <Button variant="outline">
                 <Filter className="mr-2 h-4 w-4" />
                 Filters
-                {Object.keys(fieldFilters).length > 0 && (
+                {activeFilterCount > 0 && (
                   <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground">
-                    {Object.keys(fieldFilters).length}
+                    {activeFilterCount}
                   </span>
                 )}
               </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-80 p-0">
-              <div className="flex items-center justify-between border-b px-4 py-3">
-                <span className="text-sm font-medium">Filters</span>
-                {Object.keys(fieldFilters).length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={clearFieldFilters}
-                  >
-                    Clear all
-                  </Button>
-                )}
-              </div>
-              <div className="max-h-[55vh] space-y-3 overflow-y-auto p-4">
+            </SheetTrigger>
+            {/* A side panel (not a popover) so long option lists have room
+                and nothing gets clipped — each filter is an inline
+                multi-select. */}
+            <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-md">
+              <SheetHeader className="border-b">
+                <SheetTitle>Filters</SheetTitle>
+              </SheetHeader>
+              <div className="flex-1 space-y-5 overflow-y-auto p-4">
                 {(() => {
                   const formFields = filterableFields.filter(
                     (f) => f.type !== "GROUP"
@@ -1191,30 +1233,51 @@ export default function AttendeesPage() {
                   const groupFields = filterableFields.filter(
                     (f) => f.type === "GROUP"
                   );
+                  const control = (f: FilterableField) => (
+                    <FilterMultiSelect
+                      key={f.name}
+                      label={f.label}
+                      options={fieldFilterOptions(f)}
+                      selected={fieldFilters[f.name] ?? []}
+                      onToggle={(v) => toggleFieldFilter(f.name, v)}
+                      onClear={() => clearOneFilter(f.name)}
+                    />
+                  );
                   return (
                     <>
-                      {/* Only label the section when BOTH kinds exist, so the
-                          common single-section case stays clean. */}
                       {formFields.length > 0 && groupFields.length > 0 && (
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                           Form answers
                         </p>
                       )}
-                      {formFields.map(renderFilterControl)}
+                      {formFields.map(control)}
                       {groupFields.length > 0 && (
-                        <div className="space-y-3 border-t pt-3">
+                        <div className="space-y-5 border-t pt-5">
                           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                             Groups
                           </p>
-                          {groupFields.map(renderFilterControl)}
+                          {groupFields.map(control)}
                         </div>
                       )}
                     </>
                   );
                 })()}
               </div>
-            </PopoverContent>
-          </Popover>
+              <SheetFooter className="flex-row items-center justify-between border-t">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearFieldFilters}
+                  disabled={activeFilterCount === 0}
+                >
+                  Clear all
+                </Button>
+                <SheetClose asChild>
+                  <Button size="sm">Done</Button>
+                </SheetClose>
+              </SheetFooter>
+            </SheetContent>
+          </Sheet>
         )}
 
         <Input
