@@ -31,6 +31,8 @@ model User {
   registrationsUpdated  Registration[] @relation(name: "RegistrationUpdater")
   registrationsApproved Registration[] @relation(name: "RegistrationApprover")
   registrationsRejected Registration[] @relation(name: "RegistrationRejecter")
+
+  groupAssignmentsCreated ContactGroupAssignment[] @relation(name: "GroupAssignmentCreator")
 }
 
 model Account {
@@ -107,6 +109,7 @@ model Event {
   domain           EventDomain?
   members          EventMember[]
   phases           Phase[]
+  attendeeGroups   AttendeeGroup[]
 }
 
 // ─── Event Access (per-event membership) ───
@@ -125,6 +128,81 @@ model EventMember {
   @@unique([userId, eventId])
   @@index([eventId])
   @@index([userId])
+}
+
+// ─── Attendee Groups (custom admin-managed classification) ───
+//
+// A generalization of the single built-in Event.categories concept:
+// each event can define ANY number of named grouping dimensions
+// ("Ranking", "Region", "Table"), each with its own managed value list,
+// and tag attendees with them. Admin-assigned (never on the public
+// registration form) and stored relationally (not in Contact.metadata)
+// so they filter fast at scale and persist for non-registered contacts.
+//
+// Deliberately SEPARATE from Event.categories / Contact.category, which
+// stays as-is (it still drives Phase.appliesToCategories visibility).
+// These groups are for organizing, filtering, and export only.
+
+model AttendeeGroup {
+  id            String  @id @default(cuid())
+  eventId       String
+  name          String // Admin-named dimension, e.g. "Ranking"
+  // false = single value per attendee (like Category); true = the
+  // attendee can hold several values from this group at once.
+  allowMultiple Boolean @default(false)
+  order         Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event       Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  values      AttendeeGroupValue[]
+  assignments ContactGroupAssignment[]
+
+  @@unique([eventId, name])
+  @@index([eventId])
+}
+
+model AttendeeGroupValue {
+  id      String  @id @default(cuid())
+  groupId String
+  label   String // e.g. "Gold"
+  color   String? // optional hex swatch for chips/badges (future use)
+  order   Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  group       AttendeeGroup            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  assignments ContactGroupAssignment[]
+
+  @@unique([groupId, label])
+  @@index([groupId])
+}
+
+model ContactGroupAssignment {
+  id        String @id @default(cuid())
+  contactId String
+  // groupId is denormalized (valueId already implies it) so single-value
+  // enforcement and "assignments grouped by dimension" queries don't need
+  // an extra join. The API guarantees valueId.groupId === groupId.
+  groupId   String
+  valueId   String
+
+  createdAt DateTime @default(now())
+  createdBy String? // actor who assigned; SetNull on user delete (audit)
+
+  contact Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  group   AttendeeGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  value   AttendeeGroupValue @relation(fields: [valueId], references: [id], onDelete: Cascade)
+  creator User?              @relation(name: "GroupAssignmentCreator", fields: [createdBy], references: [id])
+
+  // One row per (contact, value): can't assign the same value twice.
+  // Single-value groups are enforced in the API (replace, not stack).
+  @@unique([contactId, valueId])
+  @@index([contactId])
+  @@index([groupId])
+  @@index([valueId])
 }
 
 // ─── Event Modules (Feature Toggles) ───
@@ -352,11 +430,12 @@ model Contact {
   updatedAt    DateTime      @updatedAt
   updatedBy    String?
 
-  event        Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  registration Registration?
-  emailLogs    EmailLog[]
-  whatsAppLogs WhatsAppLog[]
-  updater      User?         @relation(name: "ContactUpdater", fields: [updatedBy], references: [id])
+  event            Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration     Registration?
+  emailLogs        EmailLog[]
+  whatsAppLogs     WhatsAppLog[]
+  updater          User?                    @relation(name: "ContactUpdater", fields: [updatedBy], references: [id])
+  groupAssignments ContactGroupAssignment[]
 
   @@unique([eventId, email])
   @@index([eventId])
@@ -389,12 +468,12 @@ model Registration {
   // approval service when the registration enters CONFIRMED/CANCELLED
   // via that path; status changes through other routes (waitlist
   // promotion, portal cancel) leave them null.
-  updatedBy        String?
-  approvedBy       String?
-  approvedAt       DateTime?
-  rejectedBy       String?
-  rejectedAt       DateTime?
-  rejectionReason  String?            @db.Text
+  updatedBy       String?
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?   @db.Text
 
   contact          Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
   event            Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
