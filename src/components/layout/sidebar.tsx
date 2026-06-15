@@ -21,6 +21,7 @@ import {
   Palette,
   ClipboardCheck,
   Users2,
+  Tags,
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
@@ -95,6 +96,11 @@ export function getEventNavItems(eventId: string): EventNavItem[] {
       title: "Branding",
       href: `/dashboard/events/${eventId}/settings/branding`,
       icon: Palette,
+    },
+    {
+      title: "Groups",
+      href: `/dashboard/events/${eventId}/settings/groups`,
+      icon: Tags,
     },
     {
       title: "Email Config",
