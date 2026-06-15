@@ -147,9 +147,25 @@ export async function GET(
   );
   const contactWhere = buildContactWhere(eventId, filterParams, filterableFields);
 
+  // Custom Attendee Groups → one column each (admin classifications like
+  // Ranking/Region). Headers ordered like the management screen.
+  const groups = await prisma.attendeeGroup.findMany({
+    where: { eventId },
+    orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+    select: { id: true, name: true },
+  });
+
   const registrations = await prisma.registration.findMany({
     where: { eventId, contact: { is: contactWhere } },
-    include: { contact: true },
+    include: {
+      contact: {
+        include: {
+          groupAssignments: {
+            select: { groupId: true, value: { select: { label: true } } },
+          },
+        },
+      },
+    },
     orderBy: { registeredAt: "asc" },
   });
 
@@ -217,6 +233,19 @@ export async function GET(
       }
     }
 
+    // Group columns: the attendee's value label(s) per group, joined.
+    if (groups.length > 0) {
+      const labelsByGroup = new Map<string, string[]>();
+      for (const a of r.contact.groupAssignments) {
+        const list = labelsByGroup.get(a.groupId) ?? [];
+        list.push(a.value.label);
+        labelsByGroup.set(a.groupId, list);
+      }
+      for (const g of groups) {
+        row[g.name] = (labelsByGroup.get(g.id) ?? []).join(", ");
+      }
+    }
+
     return row;
   });
 
@@ -233,6 +262,7 @@ export async function GET(
       const parsed = parseFormFieldOptions(field.options);
       if (parsed.other) columns.push(`${field.label} (Other)`);
     }
+    for (const g of groups) columns.push(g.name);
 
     const ws = XLSX.utils.json_to_sheet(data, { header: columns });
 
