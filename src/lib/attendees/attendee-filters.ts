@@ -134,14 +134,16 @@ export async function getFilterableFields(
 
 /**
  * Parse the `fieldFilters` query param — a JSON object of
- * { fieldName: value } — keeping only keys that are real filterable
- * fields on this event. Unknown keys are dropped so the client can't
- * probe arbitrary formData paths.
+ * { fieldName: value | value[] } — keeping only keys that are real
+ * filterable fields on this event. Each filter holds a LIST of selected
+ * values (OR within the filter); a bare string is accepted for backward
+ * compatibility with older single-value links. Unknown keys are dropped
+ * so the client can't probe arbitrary formData paths.
  */
 export function parseFieldFilters(
   raw: string | null,
   fields: FilterableField[]
-): Record<string, string> {
+): Record<string, string[]> {
   if (!raw) return {};
   let parsed: unknown;
   try {
@@ -152,24 +154,49 @@ export function parseFieldFilters(
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
 
   const known = new Set(fields.map((f) => f.name));
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(parsed)) {
-    if (typeof value !== "string" || value === "") continue;
+  const out: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
     if (!known.has(key)) continue;
-    out[key] = value;
+    const arr = Array.isArray(value) ? value : [value];
+    const vals = [
+      ...new Set(arr.filter((v): v is string => typeof v === "string" && v !== "")),
+    ];
+    if (vals.length > 0) out[key] = vals;
   }
   return out;
 }
 
+// Categories arrive as a JSON array in `categories` (multi-select). An
+// older single `category` param is still honored for shared links.
+function parseCategories(searchParams: URLSearchParams): string[] {
+  const raw = searchParams.get("categories");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return [
+          ...new Set(
+            parsed.filter((c): c is string => typeof c === "string" && c !== "")
+          ),
+        ];
+      }
+    } catch {
+      // fall through to legacy single param
+    }
+  }
+  const single = searchParams.get("category");
+  return single ? [single] : [];
+}
+
 export interface AttendeeFilterParams {
   search: string;
-  category: string;
+  categories: string[];
   status: string;
   badgeEmail: string;
   phaseId: string;
   phaseStatus: string; // submitted | notSubmitted
   optionId: string;
-  fieldFilters: Record<string, string>;
+  fieldFilters: Record<string, string[]>;
 }
 
 export function readAttendeeFilterParams(
@@ -178,7 +205,7 @@ export function readAttendeeFilterParams(
 ): AttendeeFilterParams {
   return {
     search: searchParams.get("search") || "",
-    category: searchParams.get("category") || "",
+    categories: parseCategories(searchParams),
     status: searchParams.get("status") || "",
     badgeEmail: searchParams.get("badgeEmail") || "",
     phaseId: searchParams.get("phase") || "",
@@ -212,8 +239,10 @@ export function buildContactWhere(
     });
   }
 
-  if (p.category) {
-    where.category = p.category;
+  if (p.categories.length === 1) {
+    where.category = p.categories[0];
+  } else if (p.categories.length > 1) {
+    where.category = { in: p.categories };
   }
 
   if (p.status) {
@@ -262,31 +291,49 @@ export function buildContactWhere(
     });
   }
 
-  // Dynamic filters — two backing stores, routed by the field's source:
+  // Dynamic filters — each filter holds a LIST of values OR'd together
+  // (e.g. City = Riyadh OR Jeddah); different filters AND together.
+  // Routed by the field's source:
   //   • form answers → Registration.formData JSON paths (nested under
   //     registration, so a contact without a registration is excluded)
   //   • group values → ContactGroupAssignment rows directly on the contact
   //     (works for non-registered contacts too)
   const byName = new Map(fields.map((f) => [f.name, f]));
-  for (const [name, value] of Object.entries(p.fieldFilters)) {
+  for (const [name, values] of Object.entries(p.fieldFilters)) {
     const field = byName.get(name);
-    if (!field) continue;
+    if (!field || values.length === 0) continue;
     if (field.source === "group") {
       const groupId = name.slice(GROUP_FILTER_PREFIX.length);
       andConditions.push({
-        groupAssignments: { some: { groupId, valueId: value } },
+        groupAssignments: { some: { groupId, valueId: { in: values } } },
       });
     } else if (field.type === FieldType.MULTISELECT) {
       andConditions.push({
-        registration: { is: { formData: { path: [name], array_contains: value } } },
+        registration: {
+          is: {
+            OR: values.map((v) => ({
+              formData: { path: [name], array_contains: v },
+            })),
+          },
+        },
       });
     } else if (field.type === FieldType.CHECKBOX) {
       andConditions.push({
-        registration: { is: { formData: { path: [name], equals: value === "true" } } },
+        registration: {
+          is: {
+            OR: values.map((v) => ({
+              formData: { path: [name], equals: v === "true" },
+            })),
+          },
+        },
       });
     } else {
       andConditions.push({
-        registration: { is: { formData: { path: [name], equals: value } } },
+        registration: {
+          is: {
+            OR: values.map((v) => ({ formData: { path: [name], equals: v } })),
+          },
+        },
       });
     }
   }
