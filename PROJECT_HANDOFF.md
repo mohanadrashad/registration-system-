@@ -1,13 +1,13 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-06-13 (Attendees-page arc COMPLETE + live — dynamic form-answer filters + filter-aware exports + server-side pagination + bulk delete (PR #53) and URL view-state persistence + scroll memory + numbered pager (PR #54). Also this window: full-codebase review hardening shipped (PR #52 — capacity-race lock, OTP throttle, validation gaps), client-side image compression (PR #50), orphan-blob reconciliation script (PR #51), COUNTRY export fix (PR #49))
+**Last updated:** 2026-06-15 (Attendee Groups feature COMPLETE + live — custom admin-named classification dimensions, all 3 stages (PRs #55 model+UI, #56 assignment, #57 filter+export). Plus multi-select filters: every attendee filter — form answers, groups, AND categories — now accepts multiple values, and the Filters popover became a side-panel with inline checkbox multi-selects, fixing a clipped-dropdown bug (PR #58). Prior window (2026-06-13): attendees-page arc — dynamic filters + server pagination + bulk delete (#53), view persistence (#54); review hardening (#52); image compression (#50); orphan-blob script (#51); COUNTRY export fix (#49))
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
 **Storage — TWO Vercel Blob stores:** (1) **private** store (id `Q7RjwvBaaLwKE6eR`, env `BLOB_READ_WRITE_TOKEN`) — visitor FILE uploads + phase receipts, served via stream-through. (2) **`branding-public`** store (PUBLIC, id `store_O0LBuk4rM0qMcAYL`, env `BLOB_PUBLIC_READ_WRITE_TOKEN` — set in **Preview + Production**) — admin-uploaded logos/favicons, served as direct CDN URLs on the public registration page. A logo isn't secret; the private store rejects `access:"public"` (store-level), which forced the second store.
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
-**Branch in progress:** none — between projects (attendees-page arc fully shipped; no queued substantive feature)
-**Production branch:** `main`, HEAD at `83cc2c6` (attendees view persistence, PR #54)
+**Branch in progress:** none — between projects (Attendee Groups feature fully shipped + multi-select filters live; no queued substantive feature)
+**Production branch:** `main`, HEAD at `db706c7` (multi-select filters, PR #58)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
@@ -30,6 +30,34 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-15 — Multi-select filters + filter side-panel — live on prod
+
+Follow-up to the attendees filter work, from two user reports: "I want to select more than one choice in any filter" and "the last choice in the dropdown is cut off." Squash-merged `db706c7` (PR #58). Memory `[[attendee-field-filters]]`.
+
+- **Every filter is now multi-value.** The filter value model went `Record<string,string>` → `Record<string,string[]>` (OR within a filter, AND across filters). `buildContactWhere` routes each list: group → `valueId { in }`, MULTISELECT/CHECKBOX/SELECT → `registration.is.OR` of formData predicates. `parseFieldFilters` still accepts a bare string, so older single-value links keep working.
+- **Category is multi-select too** (separate ask, same PR): the category tab strip toggles categories (several active = OR), "All Categories" clears. New `categories` JSON URL param; legacy single `category` param still read. `where.category = { in }` for 2+, plain equals for 1.
+- **Clipped-dropdown fix.** The Filters **popover** is replaced by a right-side **Sheet**; each filter is an inline checkbox list (`FilterMultiSelect` component, with a search box when >8 options). The old bug was a Radix `Select` dropdown clipped by the popover's `overflow-y-auto` scroll container — gone now that nothing floats inside a scroll box. Active-filter chips render one per selected value; the badge counts total selected values.
+- **Process footgun logged** in the memory: `git checkout -b X` followed by `git reset --hard origin/main` **discards uncommitted edits to tracked files** (untracked files survive). Commit first, or branch from a clean tree. Cost a re-apply of the whole client diff this session.
+
+### 2026-06-15 — Attendee Groups — custom admin-managed classification — FEATURE COMPLETE, live on prod
+
+"Categories but I can name it anything." A generalization of the single built-in `Event.categories` into **any number of admin-named grouping dimensions** ("Ranking", "Region", "Table"), each with its own managed value list. Admin-assigned (never on the public form), stored relationally so it filters fast at scale and persists for non-registered contacts. **Deliberately separate from the existing Category** (which still drives `Phase.appliesToCategories` visibility — untouched). Three stages, three PRs, all live. Memory `[[attendee-groups-feature]]`.
+
+**Locked spec (user-confirmed up front):** filtering/export only (no phase-visibility wiring); one value per attendee with a per-group `allowMultiple` toggle; kept alongside Category, not replacing it.
+
+**Schema (additive, all 3 models landed in Stage 1 — one push):**
+- `AttendeeGroup` (eventId, name, allowMultiple, order; `@@unique[eventId,name]`)
+- `AttendeeGroupValue` (groupId, label, color?, order; `@@unique[groupId,label]`)
+- `ContactGroupAssignment` (contactId, groupId, valueId, createdBy?; `@@unique[contactId,valueId]`; groupId denormalized, API guarantees valueId.groupId===groupId; createdBy = SetNull audit pattern)
+
+**Stage 1 — data model + management UI** — `4c0350e` (PR #55). CRUD API under `/api/events/[eventId]/groups/...` (authorizeEvent; group DELETE = manager, rest = editor; P2002→409; full event→group→value scope checks). New **Settings → Groups** page (create group + allow-multiple toggle, add/rename/delete values inline, rename/delete group) + sidebar nav (`Tags` icon). Zod in `validations/attendee-group.ts`.
+
+**Stage 2 — assignment (per-attendee + bulk)** — `34f5c20` (PR #56). `GET/PUT contacts/[contactId]/groups[/[groupId]]` (PUT = "set" semantics, single-value rejects >1, deleteMany+createMany tx, createdBy stamped) + `POST groups/[groupId]/assign` (bulk set/add/remove; add→set coercion for single-value; contactIds scoped to event; cap 10k). UI: `AttendeeGroupsCard` on the attendee detail page (single = dropdown, multi = toggle chips; optimistic writes — no Dialog/refetch so no Radix race; renders null when 0 groups) + "Set group" bulk dialog on the attendees list (no list refetch after apply, since no group column yet).
+
+**Stage 3 — filter + export** — `cdc0fe5` (PR #57). `getFilterableFields` appends group entries (`name="group:<id>"`, `type:"GROUP"`, `source:"group"`, values as options) so groups ride the existing fieldFilters map / URL param / chips with zero new client state; `buildContactWhere` routes `group:` keys to `{ groupAssignments: { some: { groupId, valueId } } }` on the Contact. Export gains one column per group (value labels joined). Filters panel partitions into "Form answers" / "Groups". **KNOWN minor:** a group named identically to a form-field label / base column collides on the export header (later wins) — flagged for a future prefix.
+
+**Windows footgun (logged):** `prisma generate` failed EPERM (DLL rename) because a stale `next` process from 8 days prior held `arch-pass\node_modules\.prisma\client\query_engine-windows.dll.node`. Find via `Get-Process node | ? {$_.Modules.FileName -like '*arch-pass*query_engine*'}`, Stop-Process that PID, regenerate.
 
 ### 2026-06-13 — Attendees view persistence — URL state + scroll memory + numbered pager — live on prod
 
@@ -686,7 +714,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 - `upload-image-compression-shipped.md` — client-side compression params (1800px / q0.82 / >400KB), what's exempt (PDF, HEIC, small), why those numbers (ID legibility)
 - `blob-stores-and-dev-db-footgun.md` — the two stores + tokens, the DEV-DB-local/PROD-blob-token reconciliation footgun, the "connection lost" catch-all masking quota errors
 - `full-codebase-review-2026-06.md` — review-pass close-out: lockEventRow contract, rejected false-positive findings (don't re-fix), the deferred-items list with triggers
-- `attendee-field-filters.md` — shared where-builder contract, fieldFilters param validation, Prisma groupBy quirks, URL-state + scroll-memory patterns, single-consumer API note
+- `attendee-field-filters.md` — shared where-builder contract, fieldFilters param validation (now string[] — multi-select), Prisma groupBy quirks, URL-state + scroll-memory patterns, Sheet-vs-Select clipping fix, the reset-hard-discards-edits footgun
+- `attendee-groups-feature.md` — custom admin-managed classification (Ranking/Region): 3-model design, locked spec, all-3-stages-complete status, the shared-where-builder reuse for group filters
 
 ---
 
@@ -714,7 +743,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
-3. State what you want to work on. The queue is empty — recent arcs (registration customization, FILE admin file-ops, the attendees-page rebuild) are all shipped. Possible next directions:
+3. State what you want to work on. The queue is empty — recent arcs (registration customization, FILE admin file-ops, the attendees-page rebuild, the Attendee Groups feature) are all shipped. Possible next directions:
+   - **Attendee Groups follow-ups** → group-value colors (the `color` column exists, unused in UI yet); a group column in the attendees table; the export-header collision prefix (see Stage 3 known-minor). All optional.
    - **Deferred review items** → see the trigger table under "Deferred from the 2026-06-12 review" — pick one up only when its trigger fires (Viewer-role members added; reminder volume grows).
    - **Friendlier admin file-op error surfacing** → small follow-up ticket (see "Open follow-up tickets"); make the empty-field-guard / auth reasons reach the admin instead of the generic SDK token message.
    - **The per-event template / layout system** → the larger deferred project; needs its own spec.
@@ -723,6 +753,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 Whatever you pick, Claude will read this handoff + the specs + memory and pick up from here without re-asking.
 
 ---
+
+*Updated 2026-06-15. **Attendee Groups feature complete + multi-select filters.** The "categories but I can name it anything" request shipped as a 3-stage feature: define custom named grouping dimensions with their value lists (PR #55, `4c0350e`), assign attendees individually or in bulk (PR #56, `34f5c20`), and filter + export by them (PR #57, `cdc0fe5`). 3 new additive tables (AttendeeGroup / AttendeeGroupValue / ContactGroupAssignment), kept fully separate from the load-bearing built-in Category. Group filters reuse the shared `buildContactWhere` so they appear in the same Filters panel + chips + export with near-zero new client code. Then PR #58 (`db706c7`) made **every** attendee filter multi-value (form answers, groups, AND categories — OR within a filter, AND across) and replaced the Filters popover with a right-side **Sheet** of inline checkbox multi-selects, fixing a bug where a nested Select's last option was clipped by the popover's scroll container. Back-compat preserved (old single-value links coerce to one-element lists). Two process footguns logged in `[[attendee-field-filters]]` / `[[attendee-groups-feature]]`: `git reset --hard` after `checkout -b` discards uncommitted tracked-file edits; and a stale node process can hold the Prisma engine DLL on Windows (find by loaded-module path, Stop-Process, regenerate).*
 
 *Updated 2026-06-13. **Attendees-page arc complete** — PR #53 (`198f77c`): dynamic form-answer filters derived from each event's own form (city/gender/nationality on PF; whatever fields elsewhere), executed server-side on `Registration.formData` JSON paths via the shared where-builder that also drives `registrations/export` ("export = screen" by construction), PLUS server-side pagination/aggregates for 7k+ events and a one-transaction `contacts/bulk-delete` (was 7k sequential DELETEs). PR #54 (`83cc2c6`): view state persisted in the URL (back/refresh/share restores filters+page), scroll + return-URL memory across the detail round trip, numbered pager with ellipsis. Earlier the same window, PR #52 (`2d93b0d`) shipped the full-codebase review hardening — headline: the capacity-oversell race closed with `approvalService.lockEventRow` (`SELECT … FOR UPDATE`; any future capacity-writing path must take it), plus OTP request throttling (enumeration-safe), required-CHECKBOX/MULTISELECT validation, register-body key filtering, users-route zod validation, and dashboard silent-failure fixes. Two review findings rejected as false positives (documented — don't re-fix). Deferred items + triggers live in the queue section. From the separate 2026-06-11 session: Blob quota incident → image compression (PR #50) + guarded orphan-blob script (PR #51); COUNTRY export fix (PR #49).*
 
