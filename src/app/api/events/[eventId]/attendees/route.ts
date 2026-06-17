@@ -106,7 +106,7 @@ export async function GET(
             { createdAt: "desc" },
           ];
 
-    const [contacts, total, filteredGroups, overallGroups, regFormFields] =
+    const [contacts, total, filteredGroups, overallGroups, regFormFields, eventGroups] =
       await prisma.$transaction([
         prisma.contact.findMany({
           where,
@@ -126,6 +126,11 @@ export async function GET(
               select: { id: true, status: true, sentAt: true },
               orderBy: { sentAt: "desc" },
               take: 1,
+            },
+            // Attendee Group assignments — folded into per-group display
+            // strings below (raw rows not forwarded to the client).
+            groupAssignments: {
+              select: { groupId: true, value: { select: { label: true } } },
             },
           },
           orderBy,
@@ -158,6 +163,13 @@ export async function GET(
           orderBy: { order: "asc" },
           select: { name: true, label: true, type: true, options: true },
         }),
+        // Custom Attendee Groups — one optional column each, ordered like
+        // the management screen (matches the export's group columns).
+        prisma.attendeeGroup.findMany({
+          where: { eventId },
+          orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+          select: { id: true, name: true },
+        }),
       ]);
 
     // Fields that warrant an answer column (skip layout-only types and
@@ -168,7 +180,8 @@ export async function GET(
     // shape plus pre-formatted `formValues` keyed by field name. Only
     // non-empty answers are emitted to keep the payload small.
     const contactsOut = contacts.map((c) => {
-      const reg = c.registration;
+      const { registration: reg, groupAssignments, ...rest } = c;
+
       const formValues: Record<string, string> = {};
       if (reg?.formData && formColumnFields.length > 0) {
         const fd = reg.formData as Record<string, unknown>;
@@ -177,8 +190,24 @@ export async function GET(
           if (display) formValues[f.name] = display;
         }
       }
+
+      // One display string per group: the attendee's value label(s) joined
+      // (matches the export's group columns).
+      const groupValues: Record<string, string> = {};
+      if (groupAssignments.length > 0 && eventGroups.length > 0) {
+        const byGroup = new Map<string, string[]>();
+        for (const a of groupAssignments) {
+          const list = byGroup.get(a.groupId) ?? [];
+          list.push(a.value.label);
+          byGroup.set(a.groupId, list);
+        }
+        for (const [groupId, labels] of byGroup) {
+          if (labels.length) groupValues[groupId] = labels.join(", ");
+        }
+      }
+
       return {
-        ...c,
+        ...rest,
         registration: reg
           ? {
               status: reg.status,
@@ -188,6 +217,7 @@ export async function GET(
             }
           : null,
         formValues,
+        groupValues,
       };
     });
 
@@ -242,6 +272,12 @@ export async function GET(
       response.formColumns = formColumnFields.map((f) => ({
         name: f.name,
         label: f.label,
+      }));
+      // Custom Attendee Group columns (id + name) for the picker; values
+      // ride on each contact's `groupValues`.
+      response.groupColumns = eventGroups.map((g) => ({
+        id: g.id,
+        name: g.name,
       }));
     }
 
