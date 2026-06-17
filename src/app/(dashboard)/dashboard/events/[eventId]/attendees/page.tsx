@@ -79,6 +79,8 @@ interface Contact {
   // Pre-formatted registration form answers, keyed by FormField.name. Only
   // non-empty answers are present; the server formats them to match export.
   formValues?: Record<string, string>;
+  // Attendee Group value label(s), keyed by group id (joined per group).
+  groupValues?: Record<string, string>;
 }
 
 interface StatusCounts {
@@ -212,12 +214,16 @@ const columnStorageKey = (eventId: string) => `attendees:columns:${eventId}`;
 // their keys can't collide with the built-in column keys above. They are
 // always opt-in (hidden until the admin ticks them).
 const FORM_COLUMN_PREFIX = "form:";
+const GROUP_COLUMN_PREFIX = "group:";
 const formColumnKey = (name: string) => `${FORM_COLUMN_PREFIX}${name}`;
-// A persisted layout may reference a built-in key or a form-answer key; form
-// keys are validated against the event's actual fields later (at render).
+const groupColumnKey = (id: string) => `${GROUP_COLUMN_PREFIX}${id}`;
+const isDynamicColumnKey = (k: string) =>
+  k.startsWith(FORM_COLUMN_PREFIX) || k.startsWith(GROUP_COLUMN_PREFIX);
+// A persisted layout may reference a built-in key or a dynamic (form / group)
+// key; dynamic keys are validated against the event's actual fields/groups
+// later (at render).
 const isPersistedColumnKey = (k: unknown): k is string =>
-  typeof k === "string" &&
-  (MANAGEABLE_KEYS.has(k) || k.startsWith(FORM_COLUMN_PREFIX));
+  typeof k === "string" && (MANAGEABLE_KEYS.has(k) || isDynamicColumnKey(k));
 
 export default function AttendeesPage() {
   const params = useParams();
@@ -344,6 +350,8 @@ export default function AttendeesPage() {
   // The event's registration form-answer columns (name + display label),
   // loaded once with meta. Values ride on each contact's `formValues`.
   const [formColumns, setFormColumns] = useState<{ name: string; label: string }[]>([]);
+  // Custom Attendee Group columns (id + name); values ride on `groupValues`.
+  const [groupColumns, setGroupColumns] = useState<{ id: string; name: string }[]>([]);
 
   // Column show/hide + order. Defaults render on first paint (matches the
   // server HTML, so no hydration mismatch); the user's saved layout loads
@@ -376,22 +384,26 @@ export default function AttendeesPage() {
     }
   }, [eventId]);
 
-  // Materialize form-answer columns once their definitions load: append any
-  // not yet in the order and default the newly-discovered ones to hidden. A
-  // form column the admin previously revealed stays in the saved order, so
-  // it isn't re-hidden. State only — persisted on the next user action.
+  // Materialize dynamic (form-answer + group) columns once their definitions
+  // load: append any not yet in the order and default the newly-discovered
+  // ones to hidden. A dynamic column the admin previously revealed stays in
+  // the saved order, so it isn't re-hidden. State only — persisted on the
+  // next user action.
   useEffect(() => {
-    if (formColumns.length === 0) return;
-    const formKeys = formColumns.map((f) => formColumnKey(f.name));
+    const dynamicKeys = [
+      ...formColumns.map((f) => formColumnKey(f.name)),
+      ...groupColumns.map((g) => groupColumnKey(g.id)),
+    ];
+    if (dynamicKeys.length === 0) return;
     const known = new Set(columnOrder);
-    const missing = formKeys.filter((k) => !known.has(k));
+    const missing = dynamicKeys.filter((k) => !known.has(k));
     if (missing.length === 0) return;
     setColumnOrder((prev) => [...prev, ...missing]);
     setHiddenColumns((prev) => {
       const toHide = missing.filter((k) => !prev.includes(k));
       return toHide.length ? [...prev, ...toHide] : prev;
     });
-  }, [formColumns, columnOrder]);
+  }, [formColumns, groupColumns, columnOrder]);
 
   const persistColumns = useCallback(
     (order: string[], hidden: string[]) => {
@@ -407,13 +419,14 @@ export default function AttendeesPage() {
     [eventId]
   );
 
-  // All manageable columns = built-ins + this event's form-answer columns.
+  // All manageable columns = built-ins + form-answer columns + group columns.
   const allManageable = useMemo<ManageableColumn[]>(
     () => [
       ...MANAGEABLE_COLUMNS,
       ...formColumns.map((f) => ({ key: formColumnKey(f.name), label: f.label })),
+      ...groupColumns.map((g) => ({ key: groupColumnKey(g.id), label: g.name })),
     ],
-    [formColumns]
+    [formColumns, groupColumns]
   );
   const allColumnKeys = useMemo(
     () => new Set(allManageable.map((c) => c.key)),
@@ -462,14 +475,18 @@ export default function AttendeesPage() {
   );
 
   const handleColumnReset = useCallback(() => {
-    // Restore built-ins to default and return form columns to appended+hidden.
-    const formKeys = formColumns.map((f) => formColumnKey(f.name));
-    const order = [...DEFAULT_COLUMN_ORDER, ...formKeys];
-    const hidden = [...DEFAULT_HIDDEN, ...formKeys];
+    // Restore built-ins to default and return dynamic (form + group) columns
+    // to appended + hidden.
+    const dynamicKeys = [
+      ...formColumns.map((f) => formColumnKey(f.name)),
+      ...groupColumns.map((g) => groupColumnKey(g.id)),
+    ];
+    const order = [...DEFAULT_COLUMN_ORDER, ...dynamicKeys];
+    const hidden = [...DEFAULT_HIDDEN, ...dynamicKeys];
     setColumnOrder(order);
     setHiddenColumns(hidden);
     persistColumns(order, hidden);
-  }, [formColumns, persistColumns]);
+  }, [formColumns, groupColumns, persistColumns]);
 
   // Dialogs
   const [addOpen, setAddOpen] = useState(false);
@@ -636,6 +653,7 @@ export default function AttendeesPage() {
         setTemplates(data.templates || []);
         setPostRegPhases(data.postRegPhases || []);
         setFormColumns(data.formColumns || []);
+        setGroupColumns(data.groupColumns || []);
         metaLoadedRef.current = true;
       }
     } catch {
@@ -1209,33 +1227,44 @@ export default function AttendeesPage() {
   const thBaseClass =
     "text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground";
 
+  // A dynamic (form-answer or group) column: a truncated header + a cell that
+  // shows a pre-formatted display string with a tooltip for the full value.
+  const dynamicColumnDef = (
+    label: string,
+    getValue: (c: Contact) => string | undefined
+  ): { header: ReactNode; cell: (c: Contact) => ReactNode; tdClassName: string } => ({
+    header: (
+      <span className="block max-w-[12rem] truncate" title={label}>
+        {label}
+      </span>
+    ),
+    tdClassName: "px-4 py-3 text-muted-foreground",
+    cell: (c) => {
+      const v = getValue(c);
+      return v ? (
+        <span className="block max-w-[14rem] truncate" title={v}>
+          {v}
+        </span>
+      ) : (
+        "-"
+      );
+    },
+  });
+
   // Resolve a column key to its header + cell renderer. Built-ins come from
-  // the static map above; form-answer columns render the pre-formatted
-  // `formValues[name]`, truncated with a tooltip for long answers.
+  // the static map above; form-answer columns render `formValues[name]` and
+  // group columns render `groupValues[id]` (both server-formatted to match
+  // the export).
   const getColumnDef = (
     key: string
   ): { header: ReactNode; cell: (c: Contact) => ReactNode; tdClassName: string } => {
     if (key.startsWith(FORM_COLUMN_PREFIX)) {
       const name = key.slice(FORM_COLUMN_PREFIX.length);
-      const label = labelByKey[key] ?? name;
-      return {
-        header: (
-          <span className="block max-w-[12rem] truncate" title={label}>
-            {label}
-          </span>
-        ),
-        tdClassName: "px-4 py-3 text-muted-foreground",
-        cell: (c) => {
-          const v = c.formValues?.[name];
-          return v ? (
-            <span className="block max-w-[14rem] truncate" title={v}>
-              {v}
-            </span>
-          ) : (
-            "-"
-          );
-        },
-      };
+      return dynamicColumnDef(labelByKey[key] ?? name, (c) => c.formValues?.[name]);
+    }
+    if (key.startsWith(GROUP_COLUMN_PREFIX)) {
+      const id = key.slice(GROUP_COLUMN_PREFIX.length);
+      return dynamicColumnDef(labelByKey[key] ?? "Group", (c) => c.groupValues?.[id]);
     }
     return columnDefs[key];
   };
