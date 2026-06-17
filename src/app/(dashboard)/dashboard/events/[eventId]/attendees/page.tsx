@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, type ReactNode } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
@@ -76,6 +76,9 @@ interface Contact {
   status: ContactStatus;
   registration: { status: string; registeredAt: string; confirmationCode: string; badgeEmailSent: boolean } | null;
   emailLogs: { id: string; status: string; sentAt: string | null }[];
+  // Pre-formatted registration form answers, keyed by FormField.name. Only
+  // non-empty answers are present; the server formats them to match export.
+  formValues?: Record<string, string>;
 }
 
 interface StatusCounts {
@@ -187,20 +190,34 @@ const statusConfig: Record<ContactStatus, { label: string; variant: "default" | 
 // category (isSingleCategory), matching the long-standing behavior.
 const MANAGEABLE_COLUMNS: ManageableColumn[] = [
   { key: "email", label: "Email" },
+  { key: "phone", label: "Phone" },
   { key: "organization", label: "Organization" },
+  { key: "designation", label: "Designation" },
   { key: "category", label: "Category" },
   { key: "status", label: "Status" },
   { key: "emailed", label: "Emailed" },
   { key: "invited", label: "Invited" },
   { key: "registered", label: "Registered" },
+  { key: "confirmationCode", label: "Confirmation code" },
   { key: "badge", label: "Badge" },
 ];
 const DEFAULT_COLUMN_ORDER = MANAGEABLE_COLUMNS.map((c) => c.key);
 const MANAGEABLE_KEYS = new Set(DEFAULT_COLUMN_ORDER);
-const COLUMN_LABELS: Record<string, string> = Object.fromEntries(
-  MANAGEABLE_COLUMNS.map((c) => [c.key, c.label])
-);
+// Columns shown only when an admin opts in — kept off by default so the
+// table stays compact and adding them never widens an existing layout.
+const DEFAULT_HIDDEN = new Set(["phone", "designation", "confirmationCode"]);
 const columnStorageKey = (eventId: string) => `attendees:columns:${eventId}`;
+
+// Registration form-answer columns are dynamic (per event) and namespaced so
+// their keys can't collide with the built-in column keys above. They are
+// always opt-in (hidden until the admin ticks them).
+const FORM_COLUMN_PREFIX = "form:";
+const formColumnKey = (name: string) => `${FORM_COLUMN_PREFIX}${name}`;
+// A persisted layout may reference a built-in key or a form-answer key; form
+// keys are validated against the event's actual fields later (at render).
+const isPersistedColumnKey = (k: unknown): k is string =>
+  typeof k === "string" &&
+  (MANAGEABLE_KEYS.has(k) || k.startsWith(FORM_COLUMN_PREFIX));
 
 export default function AttendeesPage() {
   const params = useParams();
@@ -324,38 +341,57 @@ export default function AttendeesPage() {
       : "registered_desc";
   });
 
+  // The event's registration form-answer columns (name + display label),
+  // loaded once with meta. Values ride on each contact's `formValues`.
+  const [formColumns, setFormColumns] = useState<{ name: string; label: string }[]>([]);
+
   // Column show/hide + order. Defaults render on first paint (matches the
   // server HTML, so no hydration mismatch); the user's saved layout loads
   // from localStorage on mount and is persisted only on explicit user
   // actions (never from the load itself, so the load can't be clobbered).
   const [columnOrder, setColumnOrder] = useState<string[]>(DEFAULT_COLUMN_ORDER);
-  const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
+  const [hiddenColumns, setHiddenColumns] = useState<string[]>(() => [...DEFAULT_HIDDEN]);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(columnStorageKey(eventId));
       if (!raw) return;
       const parsed = JSON.parse(raw) as { order?: unknown; hidden?: unknown };
-      if (Array.isArray(parsed.order)) {
-        const known = parsed.order.filter(
-          (k): k is string => typeof k === "string" && MANAGEABLE_KEYS.has(k)
-        );
-        // Append any columns added since the layout was saved so new
-        // features don't stay invisible after a code update.
-        const missing = DEFAULT_COLUMN_ORDER.filter((k) => !known.includes(k));
-        setColumnOrder([...known, ...missing]);
-      }
-      if (Array.isArray(parsed.hidden)) {
-        setHiddenColumns(
-          parsed.hidden.filter(
-            (k): k is string => typeof k === "string" && MANAGEABLE_KEYS.has(k)
-          )
-        );
-      }
+
+      const savedOrder = Array.isArray(parsed.order)
+        ? parsed.order.filter(isPersistedColumnKey)
+        : [];
+      // Append built-in columns added since the layout was saved; form
+      // columns are materialized separately once their definitions arrive.
+      const newBuiltins = DEFAULT_COLUMN_ORDER.filter((k) => !savedOrder.includes(k));
+      if (savedOrder.length > 0) setColumnOrder([...savedOrder, ...newBuiltins]);
+
+      const savedHidden = Array.isArray(parsed.hidden)
+        ? parsed.hidden.filter(isPersistedColumnKey)
+        : [];
+      const newlyHidden = newBuiltins.filter((k) => DEFAULT_HIDDEN.has(k));
+      setHiddenColumns([...new Set([...savedHidden, ...newlyHidden])]);
     } catch {
       // ignore malformed/unavailable storage — fall back to defaults
     }
   }, [eventId]);
+
+  // Materialize form-answer columns once their definitions load: append any
+  // not yet in the order and default the newly-discovered ones to hidden. A
+  // form column the admin previously revealed stays in the saved order, so
+  // it isn't re-hidden. State only — persisted on the next user action.
+  useEffect(() => {
+    if (formColumns.length === 0) return;
+    const formKeys = formColumns.map((f) => formColumnKey(f.name));
+    const known = new Set(columnOrder);
+    const missing = formKeys.filter((k) => !known.has(k));
+    if (missing.length === 0) return;
+    setColumnOrder((prev) => [...prev, ...missing]);
+    setHiddenColumns((prev) => {
+      const toHide = missing.filter((k) => !prev.includes(k));
+      return toHide.length ? [...prev, ...toHide] : prev;
+    });
+  }, [formColumns, columnOrder]);
 
   const persistColumns = useCallback(
     (order: string[], hidden: string[]) => {
@@ -371,6 +407,32 @@ export default function AttendeesPage() {
     [eventId]
   );
 
+  // All manageable columns = built-ins + this event's form-answer columns.
+  const allManageable = useMemo<ManageableColumn[]>(
+    () => [
+      ...MANAGEABLE_COLUMNS,
+      ...formColumns.map((f) => ({ key: formColumnKey(f.name), label: f.label })),
+    ],
+    [formColumns]
+  );
+  const allColumnKeys = useMemo(
+    () => new Set(allManageable.map((c) => c.key)),
+    [allManageable]
+  );
+  const labelByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of allManageable) m[c.key] = c.label;
+    return m;
+  }, [allManageable]);
+  // Persisted order limited to columns that still exist, with any built-in
+  // not yet present appended (form columns enter via the reconcile effect).
+  const effectiveOrder = useMemo(() => {
+    const valid = columnOrder.filter((k) => allColumnKeys.has(k));
+    const missingBuiltins = DEFAULT_COLUMN_ORDER.filter((k) => !columnOrder.includes(k));
+    return [...valid, ...missingBuiltins];
+  }, [columnOrder, allColumnKeys]);
+  const hiddenSet = useMemo(() => new Set(hiddenColumns), [hiddenColumns]);
+
   const handleColumnReorder = useCallback(
     (newSubsetOrder: string[]) => {
       // The menu may show only a subset (e.g. Category is hidden when the
@@ -379,11 +441,11 @@ export default function AttendeesPage() {
       // they aren't dropped from the saved layout.
       const subset = new Set(newSubsetOrder);
       let i = 0;
-      const merged = columnOrder.map((k) => (subset.has(k) ? newSubsetOrder[i++] : k));
+      const merged = effectiveOrder.map((k) => (subset.has(k) ? newSubsetOrder[i++] : k));
       setColumnOrder(merged);
       persistColumns(merged, hiddenColumns);
     },
-    [columnOrder, hiddenColumns, persistColumns]
+    [effectiveOrder, hiddenColumns, persistColumns]
   );
 
   const handleColumnToggle = useCallback(
@@ -400,10 +462,14 @@ export default function AttendeesPage() {
   );
 
   const handleColumnReset = useCallback(() => {
-    setColumnOrder(DEFAULT_COLUMN_ORDER);
-    setHiddenColumns([]);
-    persistColumns(DEFAULT_COLUMN_ORDER, []);
-  }, [persistColumns]);
+    // Restore built-ins to default and return form columns to appended+hidden.
+    const formKeys = formColumns.map((f) => formColumnKey(f.name));
+    const order = [...DEFAULT_COLUMN_ORDER, ...formKeys];
+    const hidden = [...DEFAULT_HIDDEN, ...formKeys];
+    setColumnOrder(order);
+    setHiddenColumns(hidden);
+    persistColumns(order, hidden);
+  }, [formColumns, persistColumns]);
 
   // Dialogs
   const [addOpen, setAddOpen] = useState(false);
@@ -569,6 +635,7 @@ export default function AttendeesPage() {
         setEvent(data.event);
         setTemplates(data.templates || []);
         setPostRegPhases(data.postRegPhases || []);
+        setFormColumns(data.formColumns || []);
         metaLoadedRef.current = true;
       }
     } catch {
@@ -1030,10 +1097,20 @@ export default function AttendeesPage() {
       tdClassName: "px-4 py-3 text-muted-foreground hidden md:table-cell",
       cell: (c) => (isSyntheticEmail(c.email) ? "—" : c.email),
     },
+    phone: {
+      header: "Phone",
+      tdClassName: "px-4 py-3 text-muted-foreground whitespace-nowrap",
+      cell: (c) => c.phone || "-",
+    },
     organization: {
       header: "Organization",
       tdClassName: "px-4 py-3 text-muted-foreground",
       cell: (c) => c.organization || "-",
+    },
+    designation: {
+      header: "Designation",
+      tdClassName: "px-4 py-3 text-muted-foreground",
+      cell: (c) => c.designation || "-",
     },
     category: {
       header: "Category",
@@ -1109,6 +1186,11 @@ export default function AttendeesPage() {
           ? new Date(c.registration.registeredAt).toLocaleDateString()
           : "-",
     },
+    confirmationCode: {
+      header: "Code",
+      tdClassName: "px-4 py-3 text-xs text-muted-foreground whitespace-nowrap",
+      cell: (c) => c.registration?.confirmationCode || "-",
+    },
     badge: {
       header: "Badge",
       tdClassName: "px-4 py-3",
@@ -1127,16 +1209,46 @@ export default function AttendeesPage() {
   const thBaseClass =
     "text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground";
 
+  // Resolve a column key to its header + cell renderer. Built-ins come from
+  // the static map above; form-answer columns render the pre-formatted
+  // `formValues[name]`, truncated with a tooltip for long answers.
+  const getColumnDef = (
+    key: string
+  ): { header: ReactNode; cell: (c: Contact) => ReactNode; tdClassName: string } => {
+    if (key.startsWith(FORM_COLUMN_PREFIX)) {
+      const name = key.slice(FORM_COLUMN_PREFIX.length);
+      const label = labelByKey[key] ?? name;
+      return {
+        header: (
+          <span className="block max-w-[12rem] truncate" title={label}>
+            {label}
+          </span>
+        ),
+        tdClassName: "px-4 py-3 text-muted-foreground",
+        cell: (c) => {
+          const v = c.formValues?.[name];
+          return v ? (
+            <span className="block max-w-[14rem] truncate" title={v}>
+              {v}
+            </span>
+          ) : (
+            "-"
+          );
+        },
+      };
+    }
+    return columnDefs[key];
+  };
+
   // Category is suppressed when the list is already scoped to one category.
   const columnApplies = (key: string) => key !== "category" || !isSingleCategory;
   // Menu: all applicable columns in display order (hidden ones included so
   // they can be reordered / re-shown). Table: applicable + visible only.
-  const menuColumns: ManageableColumn[] = columnOrder
-    .filter((k) => MANAGEABLE_KEYS.has(k) && columnApplies(k))
-    .map((k) => ({ key: k, label: COLUMN_LABELS[k] }));
-  const hiddenSet = new Set(hiddenColumns);
-  const visibleColumns = columnOrder.filter(
-    (k) => MANAGEABLE_KEYS.has(k) && columnApplies(k) && !hiddenSet.has(k)
+  const menuColumns: ManageableColumn[] = effectiveOrder
+    .filter(columnApplies)
+    .map((k) => ({ key: k, label: labelByKey[k] ?? k }));
+  const visibleColumns = effectiveOrder.filter(
+    (k) => columnApplies(k) && !hiddenSet.has(k)
   );
 
   return (
@@ -1845,7 +1957,7 @@ export default function AttendeesPage() {
                   <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Name</th>
                   {visibleColumns.map((key) => (
                     <th key={key} className={thBaseClass}>
-                      {columnDefs[key].header}
+                      {getColumnDef(key).header}
                     </th>
                   ))}
                   <th className="w-20 px-4 py-3"></th>
@@ -1872,11 +1984,14 @@ export default function AttendeesPage() {
                         {isSyntheticEmail(contact.email) ? "—" : contact.email}
                       </p>
                     </td>
-                    {visibleColumns.map((key) => (
-                      <td key={key} className={columnDefs[key].tdClassName}>
-                        {columnDefs[key].cell(contact)}
-                      </td>
-                    ))}
+                    {visibleColumns.map((key) => {
+                      const def = getColumnDef(key);
+                      return (
+                        <td key={key} className={def.tdClassName}>
+                          {def.cell(contact)}
+                        </td>
+                      );
+                    })}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 opacity-0 [tr:hover_&]:opacity-100 transition-opacity">
                         {userCanEdit && (

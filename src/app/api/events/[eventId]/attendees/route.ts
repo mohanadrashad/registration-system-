@@ -7,6 +7,10 @@ import {
   readAttendeeFilterParams,
   buildContactWhere,
 } from "@/lib/attendees/attendee-filters";
+import {
+  formatFormFieldValue,
+  isDynamicFormField,
+} from "@/lib/form-builder/format-form-value";
 
 function toStatusCounts(
   groups: Array<{
@@ -102,7 +106,7 @@ export async function GET(
             { createdAt: "desc" },
           ];
 
-    const [contacts, total, filteredGroups, overallGroups] =
+    const [contacts, total, filteredGroups, overallGroups, regFormFields] =
       await prisma.$transaction([
         prisma.contact.findMany({
           where,
@@ -113,6 +117,9 @@ export async function GET(
                 registeredAt: true,
                 confirmationCode: true,
                 badgeEmailSent: true,
+                // Raw answers — formatted into display strings below and
+                // NOT forwarded to the client (kept off the wire).
+                formData: true,
               },
             },
             emailLogs: {
@@ -138,13 +145,57 @@ export async function GET(
           orderBy: { status: "asc" },
           _count: { _all: true },
         }),
+        // REGISTRATION-phase form fields — the source of optional answer
+        // columns. Ordered by form position so the column order in the
+        // picker matches the form's layout. Fetched every request (cheap)
+        // because answers are formatted per row below.
+        prisma.formField.findMany({
+          where: {
+            eventId,
+            isActive: true,
+            step: { phase: { type: "REGISTRATION" } },
+          },
+          orderBy: { order: "asc" },
+          select: { name: true, label: true, type: true, options: true },
+        }),
       ]);
+
+    // Fields that warrant an answer column (skip layout-only types and
+    // fields already shown as their own Contact column).
+    const formColumnFields = regFormFields.filter((f) => isDynamicFormField(f));
+
+    // Replace each contact's raw registration (incl. formData) with a lean
+    // shape plus pre-formatted `formValues` keyed by field name. Only
+    // non-empty answers are emitted to keep the payload small.
+    const contactsOut = contacts.map((c) => {
+      const reg = c.registration;
+      const formValues: Record<string, string> = {};
+      if (reg?.formData && formColumnFields.length > 0) {
+        const fd = reg.formData as Record<string, unknown>;
+        for (const f of formColumnFields) {
+          const display = formatFormFieldValue(f, fd[f.name]);
+          if (display) formValues[f.name] = display;
+        }
+      }
+      return {
+        ...c,
+        registration: reg
+          ? {
+              status: reg.status,
+              registeredAt: reg.registeredAt,
+              confirmationCode: reg.confirmationCode,
+              badgeEmailSent: reg.badgeEmailSent,
+            }
+          : null,
+        formValues,
+      };
+    });
 
     const overallCounts = toStatusCounts(overallGroups);
     const overallTotal = Object.values(overallCounts).reduce((s, n) => s + n, 0);
 
     const response: Record<string, unknown> = {
-      contacts,
+      contacts: contactsOut,
       total,
       page,
       pageSize,
@@ -185,6 +236,13 @@ export async function GET(
       response.event = event;
       response.templates = templates;
       response.postRegPhases = postRegPhases;
+      // Optional answer columns for the column picker (name + display label,
+      // in form order). Sent once with meta; values ride on each contact's
+      // `formValues`.
+      response.formColumns = formColumnFields.map((f) => ({
+        name: f.name,
+        label: f.label,
+      }));
     }
 
     return NextResponse.json(response);
