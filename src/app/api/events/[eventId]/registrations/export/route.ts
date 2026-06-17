@@ -6,32 +6,18 @@ import * as XLSX from "xlsx";
 import { FieldType, FieldMapping } from "@prisma/client";
 import {
   parseFormFieldOptions,
-  resolveOtherLabel,
-  OTHER_VALUE,
   OTHER_SUFFIX,
 } from "@/lib/form-builder/options-parse";
 import { isSyntheticEmail } from "@/lib/contact/synthetic-email";
-import { COUNTRIES } from "@/lib/form-builder/countries";
+import {
+  formatFormFieldValue,
+  isDynamicFormField,
+} from "@/lib/form-builder/format-form-value";
 import {
   getFilterableFields,
   readAttendeeFilterParams,
   buildContactWhere,
 } from "@/lib/attendees/attendee-filters";
-
-// FormField names that are also Contact columns — already emitted in the
-// fixed columns above the dynamic block, so we don't duplicate them.
-const CONTACT_COLUMN_NAMES = new Set([
-  "firstName",
-  "lastName",
-  "email",
-  "phone",
-  "organization",
-  "designation",
-  "category",
-]);
-
-// Field types that produce no usable value in a CSV row.
-const SKIP_TYPES = new Set<string>(["HEADING", "DIVIDER", "PARAGRAPH", "HIDDEN"]);
 
 // Optional contact-column base columns and the FieldMapping role that
 // populates each. A column appears only when the form DEFINES it (a field
@@ -58,57 +44,6 @@ function isFileRefWithId(
     typeof (v as { fileId?: unknown }).fileId === "string" &&
     typeof (v as { filename?: unknown }).filename === "string"
   );
-}
-
-function formatCell(
-  field: { type: FieldType; options: unknown },
-  value: unknown,
-  formData: Record<string, unknown>
-): string {
-  if (value === undefined || value === null || value === "") return "";
-  const parsed = parseFormFieldOptions(field.options);
-  const otherLabel = parsed.other ? resolveOtherLabel(parsed.other, "en") : "Other";
-  // The CSV emits a SEPARATE _other column for the custom text, so the
-  // value cell shows just the literal label "Other" — no concatenation.
-  const renderOther = () => otherLabel;
-
-  if (Array.isArray(value)) {
-    return value
-      .map((v) => {
-        if (v === OTHER_VALUE) return renderOther();
-        const opt = parsed.options.find((o) => o.value === v);
-        return opt?.label ?? String(v);
-      })
-      .join(", ");
-  }
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  // FILE field stub (Stage 2). The cell emits just the original
-  // filename; Stage 3 adds size/mime columns if anyone needs them.
-  // Without this branch a FILE column would serialize as
-  // "[object Object]" in the downloaded CSV.
-  if (
-    field.type === FieldType.FILE &&
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    typeof (value as { filename?: unknown }).filename === "string"
-  ) {
-    return (value as { filename: string }).filename;
-  }
-  // COUNTRY fields store the ISO 2-letter code (e.g. "SA"); the full name
-  // lives only in the COUNTRIES list, not in formData. Resolve to the name
-  // so the export matches what the dashboard shows (field-display.ts) —
-  // otherwise the cell dumps the raw code "SA".
-  if (field.type === FieldType.COUNTRY) {
-    const country = COUNTRIES.find((c) => c.code === value);
-    return country ? country.name : String(value);
-  }
-  if (value === OTHER_VALUE) return renderOther();
-  if (parsed.options.length > 0) {
-    const opt = parsed.options.find((o) => o.value === value);
-    if (opt) return opt.label;
-  }
-  return String(value);
 }
 
 export async function GET(
@@ -172,9 +107,7 @@ export async function GET(
   // FormFields that warrant a CSV column — exclude layout-only types
   // and Contact-column duplicates that already appear in the fixed
   // header block.
-  const dynamicFields = formFields.filter(
-    (f) => !SKIP_TYPES.has(f.type) && !CONTACT_COLUMN_NAMES.has(f.name)
-  );
+  const dynamicFields = formFields.filter((f) => isDynamicFormField(f));
 
   // A gated base column is "defined" when the form has an active field
   // tagged with its mapping role OR a legacy field literally named the
@@ -222,7 +155,7 @@ export async function GET(
     for (const col of baseColumns) row[col.header] = col.value(r);
 
     for (const field of dynamicFields) {
-      row[field.label] = formatCell(field, formData[field.name], formData);
+      row[field.label] = formatFormFieldValue(field, formData[field.name]);
 
       // Other-enabled fields get a sibling column with the custom text.
       const parsed = parseFormFieldOptions(field.options);
