@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, type ReactNode } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
@@ -38,6 +38,7 @@ import {
 import { toast } from "sonner";
 import { isSyntheticEmail, fallbackName } from "@/components/attendee/field-display";
 import { FilterMultiSelect } from "@/components/attendee/filter-multi-select";
+import { ColumnsMenu, type ManageableColumn } from "@/components/attendee/columns-menu";
 import { COUNTRIES } from "@/lib/form-builder/countries";
 import {
   Upload,
@@ -52,6 +53,8 @@ import {
   Trash2,
   BarChart3,
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Award,
   Filter,
   X,
@@ -176,6 +179,29 @@ const statusConfig: Record<ContactStatus, { label: string; variant: "default" | 
   CANCELLED: { label: "Cancelled", variant: "destructive" },
 };
 
+// User-manageable table columns (show/hide + reorder), in default order.
+// The select checkbox, Name, and the row-actions column are structural and
+// not part of this list — Name is always shown first. Persisted per-event in
+// localStorage; see the column state in AttendeesPage. The "Category" column
+// is additionally suppressed when the list is already filtered to a single
+// category (isSingleCategory), matching the long-standing behavior.
+const MANAGEABLE_COLUMNS: ManageableColumn[] = [
+  { key: "email", label: "Email" },
+  { key: "organization", label: "Organization" },
+  { key: "category", label: "Category" },
+  { key: "status", label: "Status" },
+  { key: "emailed", label: "Emailed" },
+  { key: "invited", label: "Invited" },
+  { key: "registered", label: "Registered" },
+  { key: "badge", label: "Badge" },
+];
+const DEFAULT_COLUMN_ORDER = MANAGEABLE_COLUMNS.map((c) => c.key);
+const MANAGEABLE_KEYS = new Set(DEFAULT_COLUMN_ORDER);
+const COLUMN_LABELS: Record<string, string> = Object.fromEntries(
+  MANAGEABLE_COLUMNS.map((c) => [c.key, c.label])
+);
+const columnStorageKey = (eventId: string) => `attendees:columns:${eventId}`;
+
 export default function AttendeesPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -281,10 +307,103 @@ export default function AttendeesPage() {
     const v = parseInt(searchParams.get("pageSize") || "", 10);
     return [10, 25, 50, 100].includes(v) ? v : 10;
   });
-  const [emailedSort, setEmailedSort] = useState<"none" | "yes" | "no">(() => {
+  // Single active sort across the table. The server takes one `sort`
+  // param, so the Registered and Emailed column headers are mutually
+  // exclusive sorters. "registered_desc" is the default (newest first)
+  // and maps to no `sort` param — see the API route's orderBy.
+  const [sort, setSort] = useState<
+    "registered_desc" | "registered_asc" | "emailed_yes" | "emailed_no"
+  >(() => {
     const s = searchParams.get("sort");
-    return s === "emailed_yes" ? "yes" : s === "emailed_no" ? "no" : "none";
+    return s === "registered_asc"
+      ? "registered_asc"
+      : s === "emailed_yes"
+      ? "emailed_yes"
+      : s === "emailed_no"
+      ? "emailed_no"
+      : "registered_desc";
   });
+
+  // Column show/hide + order. Defaults render on first paint (matches the
+  // server HTML, so no hydration mismatch); the user's saved layout loads
+  // from localStorage on mount and is persisted only on explicit user
+  // actions (never from the load itself, so the load can't be clobbered).
+  const [columnOrder, setColumnOrder] = useState<string[]>(DEFAULT_COLUMN_ORDER);
+  const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(columnStorageKey(eventId));
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { order?: unknown; hidden?: unknown };
+      if (Array.isArray(parsed.order)) {
+        const known = parsed.order.filter(
+          (k): k is string => typeof k === "string" && MANAGEABLE_KEYS.has(k)
+        );
+        // Append any columns added since the layout was saved so new
+        // features don't stay invisible after a code update.
+        const missing = DEFAULT_COLUMN_ORDER.filter((k) => !known.includes(k));
+        setColumnOrder([...known, ...missing]);
+      }
+      if (Array.isArray(parsed.hidden)) {
+        setHiddenColumns(
+          parsed.hidden.filter(
+            (k): k is string => typeof k === "string" && MANAGEABLE_KEYS.has(k)
+          )
+        );
+      }
+    } catch {
+      // ignore malformed/unavailable storage — fall back to defaults
+    }
+  }, [eventId]);
+
+  const persistColumns = useCallback(
+    (order: string[], hidden: string[]) => {
+      try {
+        localStorage.setItem(
+          columnStorageKey(eventId),
+          JSON.stringify({ order, hidden })
+        );
+      } catch {
+        // ignore — storage may be unavailable (private mode, quota)
+      }
+    },
+    [eventId]
+  );
+
+  const handleColumnReorder = useCallback(
+    (newSubsetOrder: string[]) => {
+      // The menu may show only a subset (e.g. Category is hidden when the
+      // list is filtered to one category). Splice the reordered subset back
+      // into the full order, leaving any excluded keys in their slots so
+      // they aren't dropped from the saved layout.
+      const subset = new Set(newSubsetOrder);
+      let i = 0;
+      const merged = columnOrder.map((k) => (subset.has(k) ? newSubsetOrder[i++] : k));
+      setColumnOrder(merged);
+      persistColumns(merged, hiddenColumns);
+    },
+    [columnOrder, hiddenColumns, persistColumns]
+  );
+
+  const handleColumnToggle = useCallback(
+    (key: string) => {
+      setHiddenColumns((prev) => {
+        const next = prev.includes(key)
+          ? prev.filter((k) => k !== key)
+          : [...prev, key];
+        persistColumns(columnOrder, next);
+        return next;
+      });
+    },
+    [columnOrder, persistColumns]
+  );
+
+  const handleColumnReset = useCallback(() => {
+    setColumnOrder(DEFAULT_COLUMN_ORDER);
+    setHiddenColumns([]);
+    persistColumns(DEFAULT_COLUMN_ORDER, []);
+  }, [persistColumns]);
 
   // Dialogs
   const [addOpen, setAddOpen] = useState(false);
@@ -323,7 +442,7 @@ export default function AttendeesPage() {
     optionFilterOptionId,
     debouncedSearch,
     fieldFilters,
-    emailedSort,
+    sort,
   ]);
 
   // Debounce search
@@ -358,9 +477,7 @@ export default function AttendeesPage() {
     }
     if (page > 1) p.set("page", String(page));
     if (pageSize !== 10) p.set("pageSize", String(pageSize));
-    if (emailedSort !== "none") {
-      p.set("sort", emailedSort === "yes" ? "emailed_yes" : "emailed_no");
-    }
+    if (sort !== "registered_desc") p.set("sort", sort);
     const qs = p.toString();
     window.history.replaceState(
       null,
@@ -378,7 +495,7 @@ export default function AttendeesPage() {
     fieldFilters,
     page,
     pageSize,
-    emailedSort,
+    sort,
   ]);
 
   // Single source for the filter query string — used by the list fetch
@@ -435,9 +552,7 @@ export default function AttendeesPage() {
       const p = buildFilterParams();
       p.set("page", String(page));
       p.set("pageSize", String(pageSize));
-      if (emailedSort !== "none") {
-        p.set("sort", emailedSort === "yes" ? "emailed_yes" : "emailed_no");
-      }
+      if (sort !== "registered_desc") p.set("sort", sort);
       if (!metaLoadedRef.current) p.set("includeMeta", "1");
       const res = await fetch(`/api/events/${eventId}/attendees?${p}`);
       if (!res.ok) throw new Error("Failed");
@@ -466,7 +581,7 @@ export default function AttendeesPage() {
         setListLoading(false);
       }
     }
-  }, [eventId, buildFilterParams, page, pageSize, emailedSort]);
+  }, [eventId, buildFilterParams, page, pageSize, sort]);
 
   useEffect(() => {
     fetchData();
@@ -900,6 +1015,129 @@ export default function AttendeesPage() {
   const pageContactIds = paginatedContacts.map((c) => c.id);
   const allPageSelected = pageContactIds.length > 0 && pageContactIds.every((id) => selectedIds.has(id));
   const allSelected = total > 0 && selectedIds.size >= total;
+
+  // Per-column header + cell renderers. The select checkbox, Name, and the
+  // row-actions column are rendered structurally outside this map (Name is
+  // always first); everything here is show/hide-able and reorderable. NOTE:
+  // the "Invited" column shows the date the last email was sent
+  // (emailLogs[0].sentAt) — preserved as-is from the original table.
+  const columnDefs: Record<
+    string,
+    { header: ReactNode; cell: (c: Contact) => ReactNode; tdClassName: string }
+  > = {
+    email: {
+      header: "Email",
+      tdClassName: "px-4 py-3 text-muted-foreground hidden md:table-cell",
+      cell: (c) => (isSyntheticEmail(c.email) ? "—" : c.email),
+    },
+    organization: {
+      header: "Organization",
+      tdClassName: "px-4 py-3 text-muted-foreground",
+      cell: (c) => c.organization || "-",
+    },
+    category: {
+      header: "Category",
+      tdClassName: "px-4 py-3",
+      cell: (c) => (
+        <Badge variant="outline" className="text-xs">
+          {c.category || "Uncategorized"}
+        </Badge>
+      ),
+    },
+    status: {
+      header: "Status",
+      tdClassName: "px-4 py-3",
+      cell: (c) => (
+        <Badge variant={statusConfig[c.status]?.variant || "secondary"} className="text-xs">
+          {statusConfig[c.status]?.label || c.status}
+        </Badge>
+      ),
+    },
+    emailed: {
+      header: (
+        <button
+          onClick={() => setSort(sort === "emailed_yes" ? "emailed_no" : sort === "emailed_no" ? "registered_desc" : "emailed_yes")}
+          className="inline-flex items-center gap-1 hover:text-foreground transition-colors uppercase tracking-wider"
+          title={sort === "emailed_yes" ? "Emailed first → Not emailed first" : sort === "emailed_no" ? "Clear sort" : "Sort by emailed"}
+        >
+          Emailed
+          <ArrowUpDown className={`h-3 w-3 ${sort === "emailed_yes" || sort === "emailed_no" ? "text-primary" : "text-muted-foreground/50"}`} />
+        </button>
+      ),
+      tdClassName: "px-4 py-3",
+      cell: (c) =>
+        c.emailLogs && c.emailLogs.length > 0 ? (
+          <span className="inline-flex items-center gap-1.5 text-green-600">
+            <span className="h-2 w-2 rounded-full bg-green-500"></span>
+            <span className="text-xs font-medium">Sent</span>
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+            <span className="h-2 w-2 rounded-full bg-muted-foreground/30"></span>
+            <span className="text-xs">No</span>
+          </span>
+        ),
+    },
+    invited: {
+      header: "Invited",
+      tdClassName: "px-4 py-3 text-xs text-muted-foreground whitespace-nowrap",
+      cell: (c) =>
+        c.emailLogs && c.emailLogs.length > 0 && c.emailLogs[0].sentAt
+          ? new Date(c.emailLogs[0].sentAt).toLocaleDateString()
+          : "-",
+    },
+    registered: {
+      header: (
+        <button
+          onClick={() => setSort(sort === "registered_asc" ? "registered_desc" : "registered_asc")}
+          className="inline-flex items-center gap-1 hover:text-foreground transition-colors uppercase tracking-wider"
+          title={sort === "registered_asc" ? "Oldest first → Newest first" : "Newest first → Oldest first"}
+        >
+          Registered
+          {sort === "registered_asc" ? (
+            <ArrowUp className="h-3 w-3 text-primary" />
+          ) : sort === "registered_desc" ? (
+            <ArrowDown className="h-3 w-3 text-primary" />
+          ) : (
+            <ArrowUpDown className="h-3 w-3 text-muted-foreground/50" />
+          )}
+        </button>
+      ),
+      tdClassName: "px-4 py-3 text-xs text-muted-foreground whitespace-nowrap",
+      cell: (c) =>
+        c.registration?.registeredAt
+          ? new Date(c.registration.registeredAt).toLocaleDateString()
+          : "-",
+    },
+    badge: {
+      header: "Badge",
+      tdClassName: "px-4 py-3",
+      cell: (c) =>
+        c.registration?.badgeEmailSent ? (
+          <span className="inline-flex items-center gap-1.5 text-green-600">
+            <Award className="h-3.5 w-3.5" />
+            <span className="text-xs font-medium">Sent</span>
+          </span>
+        ) : c.registration ? (
+          <span className="text-xs text-muted-foreground">—</span>
+        ) : null,
+    },
+  };
+
+  const thBaseClass =
+    "text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground";
+
+  // Category is suppressed when the list is already scoped to one category.
+  const columnApplies = (key: string) => key !== "category" || !isSingleCategory;
+  // Menu: all applicable columns in display order (hidden ones included so
+  // they can be reordered / re-shown). Table: applicable + visible only.
+  const menuColumns: ManageableColumn[] = columnOrder
+    .filter((k) => MANAGEABLE_KEYS.has(k) && columnApplies(k))
+    .map((k) => ({ key: k, label: COLUMN_LABELS[k] }));
+  const hiddenSet = new Set(hiddenColumns);
+  const visibleColumns = columnOrder.filter(
+    (k) => MANAGEABLE_KEYS.has(k) && columnApplies(k) && !hiddenSet.has(k)
+  );
 
   return (
     <div className="space-y-6">
@@ -1584,6 +1822,15 @@ export default function AttendeesPage() {
         </Card>
       ) : (
         <Card className="overflow-hidden">
+          <div className="flex items-center justify-end border-b px-4 py-2">
+            <ColumnsMenu
+              columns={menuColumns}
+              hidden={hiddenColumns}
+              onReorder={handleColumnReorder}
+              onToggle={handleColumnToggle}
+              onReset={handleColumnReset}
+            />
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -1596,23 +1843,11 @@ export default function AttendeesPage() {
                     />
                   </th>
                   <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Name</th>
-                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Email</th>
-                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Organization</th>
-                  {!isSingleCategory && <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Category</th>}
-                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Status</th>
-                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                    <button
-                      onClick={() => setEmailedSort(emailedSort === "none" ? "yes" : emailedSort === "yes" ? "no" : "none")}
-                      className="inline-flex items-center gap-1 hover:text-foreground transition-colors uppercase tracking-wider"
-                      title={emailedSort === "none" ? "Sort by emailed" : emailedSort === "yes" ? "Emailed first → Not emailed first" : "Clear sort"}
-                    >
-                      Emailed
-                      <ArrowUpDown className={`h-3 w-3 ${emailedSort !== "none" ? "text-primary" : "text-muted-foreground/50"}`} />
-                    </button>
-                  </th>
-                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Invited</th>
-                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Registered</th>
-                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Badge</th>
+                  {visibleColumns.map((key) => (
+                    <th key={key} className={thBaseClass}>
+                      {columnDefs[key].header}
+                    </th>
+                  ))}
                   <th className="w-20 px-4 py-3"></th>
                 </tr>
               </thead>
@@ -1637,53 +1872,11 @@ export default function AttendeesPage() {
                         {isSyntheticEmail(contact.email) ? "—" : contact.email}
                       </p>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">
-                      {isSyntheticEmail(contact.email) ? "—" : contact.email}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">{contact.organization || "-"}</td>
-                    {!isSingleCategory && (
-                      <td className="px-4 py-3">
-                        <Badge variant="outline" className="text-xs">{contact.category || "Uncategorized"}</Badge>
+                    {visibleColumns.map((key) => (
+                      <td key={key} className={columnDefs[key].tdClassName}>
+                        {columnDefs[key].cell(contact)}
                       </td>
-                    )}
-                    <td className="px-4 py-3">
-                      <Badge variant={statusConfig[contact.status]?.variant || "secondary"} className="text-xs">
-                        {statusConfig[contact.status]?.label || contact.status}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      {contact.emailLogs && contact.emailLogs.length > 0 ? (
-                        <span className="inline-flex items-center gap-1.5 text-green-600">
-                          <span className="h-2 w-2 rounded-full bg-green-500"></span>
-                          <span className="text-xs font-medium">Sent</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                          <span className="h-2 w-2 rounded-full bg-muted-foreground/30"></span>
-                          <span className="text-xs">No</span>
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                      {contact.emailLogs && contact.emailLogs.length > 0 && contact.emailLogs[0].sentAt
-                        ? new Date(contact.emailLogs[0].sentAt).toLocaleDateString()
-                        : "-"}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                      {contact.registration?.registeredAt
-                        ? new Date(contact.registration.registeredAt).toLocaleDateString()
-                        : "-"}
-                    </td>
-                    <td className="px-4 py-3">
-                      {contact.registration?.badgeEmailSent ? (
-                        <span className="inline-flex items-center gap-1.5 text-green-600">
-                          <Award className="h-3.5 w-3.5" />
-                          <span className="text-xs font-medium">Sent</span>
-                        </span>
-                      ) : contact.registration ? (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      ) : null}
-                    </td>
+                    ))}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 opacity-0 [tr:hover_&]:opacity-100 transition-opacity">
                         {userCanEdit && (

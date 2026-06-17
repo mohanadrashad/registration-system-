@@ -81,7 +81,8 @@ export async function GET(
 
     // "Emailed" column sort is approximated by email-log count: any log
     // means "sent". Default orders by registration date descending so the
-    // newest sign-ups stay on top. We sort by the same `registeredAt` the
+    // newest sign-ups stay on top; the "Registered" header toggles to
+    // "registered_asc" (oldest first). We sort by the same `registeredAt` the
     // "Registered" column renders (not Contact.createdAt), so imported/
     // invited contacts who register later never appear out of order, and
     // the dates stay monotonic across every page; createdAt breaks ties.
@@ -91,6 +92,11 @@ export async function GET(
         ? [{ emailLogs: { _count: "desc" } }, { createdAt: "desc" }]
         : sort === "emailed_no"
         ? [{ emailLogs: { _count: "asc" } }, { createdAt: "desc" }]
+        : sort === "registered_asc"
+        ? [
+            { registration: { registeredAt: { sort: "asc", nulls: "last" } } },
+            { createdAt: "asc" },
+          ]
         : [
             { registration: { registeredAt: { sort: "desc", nulls: "last" } } },
             { createdAt: "desc" },
