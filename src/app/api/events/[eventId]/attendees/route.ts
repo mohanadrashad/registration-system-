@@ -80,14 +80,21 @@ export async function GET(
     }
 
     // "Emailed" column sort is approximated by email-log count: any log
-    // means "sent". Default keeps the long-standing category → newest
-    // ordering so pages show contiguous category blocks.
+    // means "sent". Default orders by registration date descending so the
+    // newest sign-ups stay on top. We sort by the same `registeredAt` the
+    // "Registered" column renders (not Contact.createdAt), so imported/
+    // invited contacts who register later never appear out of order, and
+    // the dates stay monotonic across every page; createdAt breaks ties.
+    // Contacts that never registered (null registeredAt) sort last.
     const orderBy: Prisma.ContactOrderByWithRelationInput[] =
       sort === "emailed_yes"
         ? [{ emailLogs: { _count: "desc" } }, { createdAt: "desc" }]
         : sort === "emailed_no"
         ? [{ emailLogs: { _count: "asc" } }, { createdAt: "desc" }]
-        : [{ category: "asc" }, { createdAt: "desc" }];
+        : [
+            { registration: { registeredAt: { sort: "desc", nulls: "last" } } },
+            { createdAt: "desc" },
+          ];
 
     const [contacts, total, filteredGroups, overallGroups] =
       await prisma.$transaction([
