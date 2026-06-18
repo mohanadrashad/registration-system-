@@ -10,6 +10,7 @@ import {
 import {
   formatFormFieldValue,
   isDynamicFormField,
+  FORM_COLUMN_SKIP_TYPES,
 } from "@/lib/form-builder/format-form-value";
 
 function toStatusCounts(
@@ -106,7 +107,15 @@ export async function GET(
             { createdAt: "desc" },
           ];
 
-    const [contacts, total, filteredGroups, overallGroups, regFormFields, eventGroups] =
+    const [
+      contacts,
+      total,
+      filteredGroups,
+      overallGroups,
+      regFormFields,
+      eventGroups,
+      postRegFields,
+    ] =
       await prisma.$transaction([
         prisma.contact.findMany({
           where,
@@ -120,6 +129,11 @@ export async function GET(
                 // Raw answers — formatted into display strings below and
                 // NOT forwarded to the client (kept off the wire).
                 formData: true,
+                // Post-registration phase answers (one row per phase),
+                // also folded into display strings below.
+                phaseSubmissions: {
+                  select: { phaseId: true, data: true },
+                },
               },
             },
             emailLogs: {
@@ -170,11 +184,53 @@ export async function GET(
           orderBy: [{ order: "asc" }, { createdAt: "asc" }],
           select: { id: true, name: true },
         }),
+        // POST_REGISTRATION-phase form fields — optional answer columns,
+        // sourced from PhaseSubmission.data. Carry phase + step + field
+        // order so the picker order follows the phases' layout.
+        prisma.formField.findMany({
+          where: {
+            eventId,
+            isActive: true,
+            step: { phase: { type: "POST_REGISTRATION", isActive: true } },
+          },
+          orderBy: { order: "asc" },
+          select: {
+            name: true,
+            label: true,
+            type: true,
+            options: true,
+            order: true,
+            step: {
+              select: {
+                order: true,
+                phase: { select: { id: true, title: true, order: true } },
+              },
+            },
+          },
+        }),
       ]);
 
     // Fields that warrant an answer column (skip layout-only types and
     // fields already shown as their own Contact column).
     const formColumnFields = regFormFields.filter((f) => isDynamicFormField(f));
+
+    // Post-registration answer columns: non-layout fields across all active
+    // POST_REGISTRATION phases, ordered by phase → step → field so the picker
+    // follows the portal layout. The column key carries the phase id so the
+    // right PhaseSubmission is read; labels are prefixed with the phase title
+    // when more than one phase contributes columns (to disambiguate).
+    const postRegCols = postRegFields
+      .filter((f) => !FORM_COLUMN_SKIP_TYPES.has(f.type))
+      .sort(
+        (a, b) =>
+          a.step.phase.order - b.step.phase.order ||
+          a.step.order - b.step.order ||
+          a.order - b.order
+      );
+    const multiPhase =
+      new Set(postRegCols.map((f) => f.step.phase.id)).size > 1;
+    const phaseColumnKey = (phaseId: string, name: string) =>
+      `phase:${phaseId}:${name}`;
 
     // Replace each contact's raw registration (incl. formData) with a lean
     // shape plus pre-formatted `formValues` keyed by field name. Only
@@ -206,6 +262,23 @@ export async function GET(
         }
       }
 
+      // Post-registration answers, keyed by the full column key so the
+      // client reads them directly (no parsing). Looks each field up in the
+      // submission for its own phase.
+      const phaseValues: Record<string, string> = {};
+      if (reg?.phaseSubmissions?.length && postRegCols.length > 0) {
+        const dataByPhase = new Map<string, Record<string, unknown>>();
+        for (const s of reg.phaseSubmissions) {
+          dataByPhase.set(s.phaseId, (s.data as Record<string, unknown>) ?? {});
+        }
+        for (const f of postRegCols) {
+          const d = dataByPhase.get(f.step.phase.id);
+          if (!d) continue;
+          const display = formatFormFieldValue(f, d[f.name]);
+          if (display) phaseValues[phaseColumnKey(f.step.phase.id, f.name)] = display;
+        }
+      }
+
       return {
         ...rest,
         registration: reg
@@ -218,6 +291,7 @@ export async function GET(
           : null,
         formValues,
         groupValues,
+        phaseValues,
       };
     });
 
@@ -278,6 +352,12 @@ export async function GET(
       response.groupColumns = eventGroups.map((g) => ({
         id: g.id,
         name: g.name,
+      }));
+      // Post-registration answer columns (pre-built key + label); values
+      // ride on each contact's `phaseValues` under the same key.
+      response.phaseColumns = postRegCols.map((f) => ({
+        key: phaseColumnKey(f.step.phase.id, f.name),
+        label: multiPhase ? `${f.step.phase.title}: ${f.label}` : f.label,
       }));
     }
 
