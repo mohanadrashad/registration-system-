@@ -81,6 +81,9 @@ interface Contact {
   formValues?: Record<string, string>;
   // Attendee Group value label(s), keyed by group id (joined per group).
   groupValues?: Record<string, string>;
+  // Post-registration phase answers, keyed by the full `phase:<id>:<name>`
+  // column key the server emits (read directly, no parsing).
+  phaseValues?: Record<string, string>;
 }
 
 interface StatusCounts {
@@ -215,10 +218,15 @@ const columnStorageKey = (eventId: string) => `attendees:columns:${eventId}`;
 // always opt-in (hidden until the admin ticks them).
 const FORM_COLUMN_PREFIX = "form:";
 const GROUP_COLUMN_PREFIX = "group:";
+// Post-registration answer columns carry the full key from the server
+// (`phase:<phaseId>:<fieldName>`); the client never constructs or parses it.
+const PHASE_COLUMN_PREFIX = "phase:";
 const formColumnKey = (name: string) => `${FORM_COLUMN_PREFIX}${name}`;
 const groupColumnKey = (id: string) => `${GROUP_COLUMN_PREFIX}${id}`;
 const isDynamicColumnKey = (k: string) =>
-  k.startsWith(FORM_COLUMN_PREFIX) || k.startsWith(GROUP_COLUMN_PREFIX);
+  k.startsWith(FORM_COLUMN_PREFIX) ||
+  k.startsWith(GROUP_COLUMN_PREFIX) ||
+  k.startsWith(PHASE_COLUMN_PREFIX);
 // A persisted layout may reference a built-in key or a dynamic (form / group)
 // key; dynamic keys are validated against the event's actual fields/groups
 // later (at render).
@@ -352,6 +360,9 @@ export default function AttendeesPage() {
   const [formColumns, setFormColumns] = useState<{ name: string; label: string }[]>([]);
   // Custom Attendee Group columns (id + name); values ride on `groupValues`.
   const [groupColumns, setGroupColumns] = useState<{ id: string; name: string }[]>([]);
+  // Post-registration answer columns (server-built key + label); values ride
+  // on each contact's `phaseValues` under the same key.
+  const [phaseColumns, setPhaseColumns] = useState<{ key: string; label: string }[]>([]);
 
   // Column show/hide + order. Defaults render on first paint (matches the
   // server HTML, so no hydration mismatch); the user's saved layout loads
@@ -393,6 +404,7 @@ export default function AttendeesPage() {
     const dynamicKeys = [
       ...formColumns.map((f) => formColumnKey(f.name)),
       ...groupColumns.map((g) => groupColumnKey(g.id)),
+      ...phaseColumns.map((p) => p.key),
     ];
     if (dynamicKeys.length === 0) return;
     const known = new Set(columnOrder);
@@ -403,7 +415,7 @@ export default function AttendeesPage() {
       const toHide = missing.filter((k) => !prev.includes(k));
       return toHide.length ? [...prev, ...toHide] : prev;
     });
-  }, [formColumns, groupColumns, columnOrder]);
+  }, [formColumns, groupColumns, phaseColumns, columnOrder]);
 
   const persistColumns = useCallback(
     (order: string[], hidden: string[]) => {
@@ -419,14 +431,16 @@ export default function AttendeesPage() {
     [eventId]
   );
 
-  // All manageable columns = built-ins + form-answer columns + group columns.
+  // All manageable columns = built-ins + form-answer + group + post-reg
+  // phase-answer columns.
   const allManageable = useMemo<ManageableColumn[]>(
     () => [
       ...MANAGEABLE_COLUMNS,
       ...formColumns.map((f) => ({ key: formColumnKey(f.name), label: f.label })),
       ...groupColumns.map((g) => ({ key: groupColumnKey(g.id), label: g.name })),
+      ...phaseColumns.map((p) => ({ key: p.key, label: p.label })),
     ],
-    [formColumns, groupColumns]
+    [formColumns, groupColumns, phaseColumns]
   );
   const allColumnKeys = useMemo(
     () => new Set(allManageable.map((c) => c.key)),
@@ -480,13 +494,14 @@ export default function AttendeesPage() {
     const dynamicKeys = [
       ...formColumns.map((f) => formColumnKey(f.name)),
       ...groupColumns.map((g) => groupColumnKey(g.id)),
+      ...phaseColumns.map((p) => p.key),
     ];
     const order = [...DEFAULT_COLUMN_ORDER, ...dynamicKeys];
     const hidden = [...DEFAULT_HIDDEN, ...dynamicKeys];
     setColumnOrder(order);
     setHiddenColumns(hidden);
     persistColumns(order, hidden);
-  }, [formColumns, groupColumns, persistColumns]);
+  }, [formColumns, groupColumns, phaseColumns, persistColumns]);
 
   // Dialogs
   const [addOpen, setAddOpen] = useState(false);
@@ -654,6 +669,7 @@ export default function AttendeesPage() {
         setPostRegPhases(data.postRegPhases || []);
         setFormColumns(data.formColumns || []);
         setGroupColumns(data.groupColumns || []);
+        setPhaseColumns(data.phaseColumns || []);
         metaLoadedRef.current = true;
       }
     } catch {
@@ -1265,6 +1281,10 @@ export default function AttendeesPage() {
     if (key.startsWith(GROUP_COLUMN_PREFIX)) {
       const id = key.slice(GROUP_COLUMN_PREFIX.length);
       return dynamicColumnDef(labelByKey[key] ?? "Group", (c) => c.groupValues?.[id]);
+    }
+    if (key.startsWith(PHASE_COLUMN_PREFIX)) {
+      // Value is keyed by the full column key (no parsing needed).
+      return dynamicColumnDef(labelByKey[key] ?? "Answer", (c) => c.phaseValues?.[key]);
     }
     return columnDefs[key];
   };
