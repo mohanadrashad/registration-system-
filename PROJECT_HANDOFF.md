@@ -1,13 +1,13 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-06-15 (Attendee Groups feature COMPLETE + live — custom admin-named classification dimensions, all 3 stages (PRs #55 model+UI, #56 assignment, #57 filter+export). Plus multi-select filters: every attendee filter — form answers, groups, AND categories — now accepts multiple values, and the Filters popover became a side-panel with inline checkbox multi-selects, fixing a clipped-dropdown bug (PR #58). Prior window (2026-06-13): attendees-page arc — dynamic filters + server pagination + bulk delete (#53), view persistence (#54); review hardening (#52); image compression (#50); orphan-blob script (#51); COUNTRY export fix (#49))
+**Last updated:** 2026-06-22 (Attendees **column manager** COMPLETE + live + verified — the attendees table is now fully user-configurable: show/hide + drag-reorder columns, remembered per event, across built-in fields, registration form answers, custom Attendee Groups, AND post-registration phase answers; plus the default sort fixed to newest-registration-first. 5 PRs #59–#63, verified end-to-end (real auth API + browser UI) against the merged code. Prior window (2026-06-15): Attendee Groups feature COMPLETE — custom admin-named classification dimensions, all 3 stages (PRs #55–#57) + multi-select filters / filter side-panel (#58). Earlier (2026-06-13): attendees-page arc — dynamic filters + server pagination + bulk delete (#53), view persistence (#54); review hardening (#52); image compression (#50); COUNTRY export fix (#49))
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
 **Storage — TWO Vercel Blob stores:** (1) **private** store (id `Q7RjwvBaaLwKE6eR`, env `BLOB_READ_WRITE_TOKEN`) — visitor FILE uploads + phase receipts, served via stream-through. (2) **`branding-public`** store (PUBLIC, id `store_O0LBuk4rM0qMcAYL`, env `BLOB_PUBLIC_READ_WRITE_TOKEN` — set in **Preview + Production**) — admin-uploaded logos/favicons, served as direct CDN URLs on the public registration page. A logo isn't secret; the private store rejects `access:"public"` (store-level), which forced the second store.
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
-**Branch in progress:** none — between projects (Attendee Groups feature fully shipped + multi-select filters live; no queued substantive feature)
-**Production branch:** `main`, HEAD at `db706c7` (multi-select filters, PR #58)
+**Branch in progress:** none — between projects (attendees column manager fully shipped + verified; no queued substantive feature)
+**Production branch:** `main`, HEAD at `0b902f0` (post-registration phase columns, PR #63)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
@@ -30,6 +30,20 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-22 — Attendees column manager — show/hide + reorder every kind of column — COMPLETE, live on prod
+
+The attendees table is now fully user-configurable. A **Columns** popover (top-right of the table) lets an admin show/hide and **drag-reorder** columns; the layout is **remembered per event** in localStorage (`attendees:columns:<eventId>`). Five PRs, all squash-merged to `main` and live. **Verified end-to-end this session** — drove the real authenticated attendees API (NextAuth login, temp SUPER_ADMIN) AND a real browser click-through (Edge via playwright-core) against the merged code on the dev DB; enabling a post-reg phase column showed each attendee's real submitted answer. Memory `[[attendees-column-manager]]`.
+
+- **PR #59 (`6c01da4`) — default sort fixed.** The list was ordered `[{category:asc},{createdAt:desc}]` (category blocks, then by *record-created* time) while the visible "Registered" column shows `Registration.registeredAt` — so dates looked out of order and category boundaries reset them. Now default orders by `registration.registeredAt desc` (nulls last) — newest sign-ups on top, sorted by the **same date the column renders**; never-registered contacts sort last. The single server `sort` param means the Registered and Emailed headers are **mutually exclusive sorters**.
+- **PR #60 (`f8bab3e`) — sortable Registered header + the column picker.** Registered header toggles newest⇄oldest (`registered_asc` orderBy branch). New `src/components/attendee/columns-menu.tsx` (drag-reorder via **dnd-kit**, checkbox show/hide, Reset). The table now renders columns from a config map (`columnDefs` + `visibleColumns`) instead of hardcoded `th`/`td`. **Name is pinned first**; select-checkbox + hover-actions are structural. **Export is deliberately unaffected** — hiding a column never drops it from CSV/Excel (user-chosen).
+- **PR #61 (`62d436d`) — more built-ins + form-answer columns.** Phone / Designation / Confirmation-code added as built-ins (off by default — already on the rows, no backend change). **Registration form answers** (`form:<FormField.name>`) become opt-in columns. New shared `src/lib/form-builder/format-form-value.ts` renders an answer to a display string (option→label, country code→name, bool→Yes/No, multi-select joined, FILE→filename); the **registrations export route now reuses it** instead of its private `formatCell`, so a form column **on screen == in the export** by construction. Answers are formatted **server-side**; the client gets compact `formValues` per contact + a `formColumns` list with meta (raw `formData` and the country/option tables stay off the wire).
+- **PR #62 (`043d234`) — Attendee Group columns.** Each custom group (`group:<AttendeeGroup.id>`) becomes an opt-in column showing the attendee's value label(s) joined — matching the export's group columns. (Closes the "group column in the attendees table" follow-up.)
+- **PR #63 (`0b902f0`) — post-registration phase answers.** Answers from `PhaseSubmission.data` (one row per POST_REGISTRATION phase per registration) become columns keyed `phase:<phaseId>:<FormField.name>` — the phaseId is in the key so each field reads from **its own phase's** submission (no collisions across phases or with registration fields). Labels are prefixed with the phase title when >1 phase contributes columns.
+
+**Dynamic-column machinery (shared by form/group/phase keys):** opt-in / **default-hidden**, materialized into the saved order by a reconcile effect once `formColumns`/`groupColumns`/`phaseColumns` arrive with meta; a column the admin previously revealed stays revealed; persisted only on explicit user action (the localStorage load can't clobber it). The only per-type code is the cell accessor (`formValues`/`groupValues`/`phaseValues`).
+
+**Verification finding (logged):** DATE/TIME answer columns render the raw stored ISO string (e.g. `2026-05-09`), not a localized date — `format-form-value.ts` has no DATE case (falls to `String`). This is **consistent with the CSV/Excel export** (same formatter → screen==export holds) but differs from the built-in "Registered" column which localizes. Not a regression; a one-line addition to the shared formatter (applied to both surfaces) if localized answer-dates are wanted later.
 
 ### 2026-06-15 — Multi-select filters + filter side-panel — live on prod
 
@@ -621,6 +635,7 @@ _Queue is empty — no queued substantive feature. The broader per-event templat
 
 ### DONE
 
+- ✅ **Attendees column manager** (incl. the "group column in the attendees table" follow-up) — shipped 2026-06-22, PRs #59–#63. Show/hide + drag-reorder across built-in / registration-form-answer / Attendee-Group / post-reg-phase columns; per-event localStorage; default sort fixed to newest-registration-first. Table cell display shares one formatter (`format-form-value.ts`) with the export. Verified end-to-end (real auth API + browser UI). `[[attendees-column-manager]]`.
 - ✅ **Stage 3 UI retry — Replace/Remove buttons + provenance** (was queue #1) — shipped 2026-06-07, PR #44 (`76527aa`). The reusable PR #39 stable-DOM template applied cleanly; UI rebuild was mechanical as predicted. `[[file-stage3-ui-complete]]`.
 - ✅ **Admin-upload-from-empty** (was queue #2) — shipped 2026-06-07, PR #45 (`9275958`). New upload-into-empty endpoint + empty-field guard + `admin-new:` provenance sentinel + the Upload/Replace read-back poll race fix. `[[admin-upload-empty-complete]]`.
 
@@ -716,6 +731,7 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 - `full-codebase-review-2026-06.md` — review-pass close-out: lockEventRow contract, rejected false-positive findings (don't re-fix), the deferred-items list with triggers
 - `attendee-field-filters.md` — shared where-builder contract, fieldFilters param validation (now string[] — multi-select), Prisma groupBy quirks, URL-state + scroll-memory patterns, Sheet-vs-Select clipping fix, the reset-hard-discards-edits footgun
 - `attendee-groups-feature.md` — custom admin-managed classification (Ranking/Region): 3-model design, locked spec, all-3-stages-complete status, the shared-where-builder reuse for group filters
+- `attendees-column-manager.md` — per-event column picker (built-in + `form:` + `group:` + `phase:` columns, opt-in/drag, localStorage `attendees:columns:<eventId>`); the load-bearing invariant that table cell display == export (both via `formatFormFieldValue` in `format-form-value.ts`); PRs #59–#63; `form:` reads `Registration.formData`, `phase:` reads `PhaseSubmission.data`
 
 ---
 
@@ -743,8 +759,9 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 
 1. Open the Registration System Project on Claude.ai
 2. Click "New chat"
-3. State what you want to work on. The queue is empty — recent arcs (registration customization, FILE admin file-ops, the attendees-page rebuild, the Attendee Groups feature) are all shipped. Possible next directions:
-   - **Attendee Groups follow-ups** → group-value colors (the `color` column exists, unused in UI yet); a group column in the attendees table; the export-header collision prefix (see Stage 3 known-minor). All optional.
+3. State what you want to work on. The queue is empty — recent arcs (registration customization, FILE admin file-ops, the attendees-page rebuild, the Attendee Groups feature, the attendees column manager) are all shipped. Possible next directions:
+   - **Attendee Groups follow-ups** → group-value colors (the `color` column exists, unused in UI yet); the export-header collision prefix (see Stage 3 known-minor). All optional. *(A group column in the attendees table — previously listed here — shipped in PR #62.)*
+   - **Column-manager follow-up** → localized DATE/TIME answer columns (one-line addition to `format-form-value.ts`, applied to both table + export so screen==export holds). Optional polish; flagged during PR #63 verification.
    - **Deferred review items** → see the trigger table under "Deferred from the 2026-06-12 review" — pick one up only when its trigger fires (Viewer-role members added; reminder volume grows).
    - **Friendlier admin file-op error surfacing** → small follow-up ticket (see "Open follow-up tickets"); make the empty-field-guard / auth reasons reach the admin instead of the generic SDK token message.
    - **The per-event template / layout system** → the larger deferred project; needs its own spec.
@@ -753,6 +770,8 @@ Launched 2026-06-03 on the redesigned page with field-mapping live. As of 2026-0
 Whatever you pick, Claude will read this handoff + the specs + memory and pick up from here without re-asking.
 
 ---
+
+*Updated 2026-06-22. **Attendees column manager complete + verified.** Five PRs made the attendees table fully user-configurable: default sort fixed to newest-registration-first sorted by the same `registeredAt` the column shows (#59, `6c01da4`); a sortable Registered header + a drag-reorder/show-hide **Columns** picker (dnd-kit, `columns-menu.tsx`), per-event localStorage, table now config-driven (#60, `f8bab3e`); Phone/Designation/Code built-ins + opt-in **registration form-answer** columns, formatted by a new shared `format-form-value.ts` the **export now reuses** so screen==export by construction (#61, `62d436d`); opt-in **Attendee Group** columns (#62, `043d234`); opt-in **post-registration phase-answer** columns from `PhaseSubmission.data`, keyed `phase:<phaseId>:<field>` so each reads its own phase (#63, `0b902f0`). All dynamic columns (`form:`/`group:`/`phase:`) are opt-in/default-hidden, materialized on meta-load, persisted only on user action. Verified end-to-end against the merged code (real NextAuth-authenticated API + a real Edge browser click-through; a post-reg column showed real submitted answers). One logged finding: DATE/TIME answers render as raw ISO strings (consistent with export; localize via a one-line formatter change if wanted). `[[attendees-column-manager]]`.*
 
 *Updated 2026-06-15. **Attendee Groups feature complete + multi-select filters.** The "categories but I can name it anything" request shipped as a 3-stage feature: define custom named grouping dimensions with their value lists (PR #55, `4c0350e`), assign attendees individually or in bulk (PR #56, `34f5c20`), and filter + export by them (PR #57, `cdc0fe5`). 3 new additive tables (AttendeeGroup / AttendeeGroupValue / ContactGroupAssignment), kept fully separate from the load-bearing built-in Category. Group filters reuse the shared `buildContactWhere` so they appear in the same Filters panel + chips + export with near-zero new client code. Then PR #58 (`db706c7`) made **every** attendee filter multi-value (form answers, groups, AND categories — OR within a filter, AND across) and replaced the Filters popover with a right-side **Sheet** of inline checkbox multi-selects, fixing a bug where a nested Select's last option was clipped by the popover's scroll container. Back-compat preserved (old single-value links coerce to one-element lists). Two process footguns logged in `[[attendee-field-filters]]` / `[[attendee-groups-feature]]`: `git reset --hard` after `checkout -b` discards uncommitted tracked-file edits; and a stale node process can hold the Prisma engine DLL on Windows (find by loaded-module path, Stop-Process, regenerate).*
 
