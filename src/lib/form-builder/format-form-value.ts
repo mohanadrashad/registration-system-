@@ -15,7 +15,9 @@ export const FORM_COLUMN_SKIP_TYPES = new Set<string>([
 ]);
 
 // FormField names that are already surfaced as their own Contact columns —
-// excluded from the dynamic form-answer set so they aren't duplicated.
+// excluded from the dynamic form-answer set so they aren't duplicated. This
+// is the LEGACY path: it only catches fields literally named like the column.
+// Field-mapped fields are caught by `mapsTo` instead (see isDynamicFormField).
 export const CONTACT_COLUMN_NAMES = new Set([
   "firstName",
   "lastName",
@@ -29,8 +31,26 @@ export const CONTACT_COLUMN_NAMES = new Set([
 // True for form fields that should be offered as an answer column / export
 // column (not a layout element, not a field already shown as a contact
 // column).
-export function isDynamicFormField(f: { type: string; name: string }): boolean {
-  return !FORM_COLUMN_SKIP_TYPES.has(f.type) && !CONTACT_COLUMN_NAMES.has(f.name);
+//
+// A field is "already a contact column" two ways:
+//   1. Legacy: its machine name is one of CONTACT_COLUMN_NAMES.
+//   2. Field-mapping: it carries a `mapsTo` role. EVERY FieldMapping role
+//      (FIRST_NAME / LAST_NAME / FULL_NAME / EMAIL / PHONE / ORGANIZATION /
+//      DESIGNATION) feeds a base contact column, so a mapped field's value
+//      already shows in that column — emitting it again as a dynamic answer
+//      column duplicated it (e.g. a "First Name" field mapped to FIRST_NAME
+//      appearing alongside the pinned First Name column). Callers that don't
+//      select `mapsTo` pass undefined and keep the legacy-only behavior.
+export function isDynamicFormField(f: {
+  type: string;
+  name: string;
+  mapsTo?: string | null;
+}): boolean {
+  return (
+    !FORM_COLUMN_SKIP_TYPES.has(f.type) &&
+    !CONTACT_COLUMN_NAMES.has(f.name) &&
+    f.mapsTo == null
+  );
 }
 
 /**
