@@ -175,7 +175,9 @@ export async function GET(
             step: { phase: { type: "REGISTRATION" } },
           },
           orderBy: { order: "asc" },
-          select: { name: true, label: true, type: true, options: true },
+          // `mapsTo` is required for isDynamicFormField to drop fields that
+          // already feed a base contact column (else they duplicate it).
+          select: { name: true, label: true, type: true, options: true, mapsTo: true },
         }),
         // Custom Attendee Groups — one optional column each, ordered like
         // the management screen (matches the export's group columns).
