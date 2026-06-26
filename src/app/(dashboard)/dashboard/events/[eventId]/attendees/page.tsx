@@ -2070,7 +2070,7 @@ export default function AttendeesPage() {
                     />
                   </th>
                   <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">ID</th>
-                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Name</th>
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground min-w-[220px]">Name</th>
                   {visibleColumns.map((key) => (
                     <th key={key} className={thBaseClass}>
                       {getColumnDef(key).header}
@@ -2091,7 +2091,7 @@ export default function AttendeesPage() {
                     <td className="px-4 py-3 text-sm font-medium text-muted-foreground tabular-nums whitespace-nowrap">
                       {contact.serialNumber ?? "—"}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 min-w-[220px]">
                       <Link
                         href={`/dashboard/events/${eventId}/attendees/${contact.id}`}
                         className="hover:underline text-primary font-medium"
