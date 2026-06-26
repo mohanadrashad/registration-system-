@@ -8,6 +8,7 @@ import {
 } from "@/lib/validations/contact";
 import { randomBytes } from "crypto";
 import { contactService } from "@/lib/services/contact.service";
+import { allocateContactSerial } from "@/lib/attendees/serial";
 
 export async function GET(
   req: NextRequest,
@@ -162,20 +163,25 @@ export async function POST(
   // (raw `eventId` column rather than a nested event relation), so the
   // audit stamp also has to use the raw `updatedBy` column — Prisma's
   // create-input XORs the two variants and won't accept a mix.
-  const contact = await prisma.contact.create({
-    data: {
-      ...rest,
-      category: categoryCheck.value ?? null,
-      eventId,
-      inviteToken: randomBytes(16).toString("hex"),
-      updatedBy: ctx.session.user.id,
-      ...(metadata === null
-        ? { metadata: Prisma.DbNull }
-        : metadata !== undefined
-        ? { metadata: metadata as Prisma.InputJsonValue }
-        : {}),
-    },
-  });
+  // Wrapped in a transaction so the per-event serialNumber is allocated under
+  // the event-row lock (race-safe against concurrent adds / registrations).
+  const contact = await prisma.$transaction(async (tx) =>
+    tx.contact.create({
+      data: {
+        ...rest,
+        category: categoryCheck.value ?? null,
+        eventId,
+        inviteToken: randomBytes(16).toString("hex"),
+        updatedBy: ctx.session.user.id,
+        serialNumber: await allocateContactSerial(tx, eventId),
+        ...(metadata === null
+          ? { metadata: Prisma.DbNull }
+          : metadata !== undefined
+          ? { metadata: metadata as Prisma.InputJsonValue }
+          : {}),
+      },
+    })
+  );
 
   return NextResponse.json(contact, { status: 201 });
 }

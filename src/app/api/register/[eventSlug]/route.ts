@@ -19,6 +19,7 @@ import { getRegistrationFileById } from "@/lib/services/registration-file.servic
 import { generateSyntheticEmail } from "@/lib/contact/synthetic-email";
 import { resolveContactColumns } from "@/lib/services/field-mapping.service";
 import { FIELD_MAPPING_LEGACY_KEYS } from "@/lib/form-builder/field-mapping-labels";
+import { allocateContactSerial } from "@/lib/attendees/serial";
 
 // GET: Look up contact by invite token to pre-fill the registration form
 // Also returns event details and branding for the registration page
@@ -551,6 +552,11 @@ export async function POST(
               designation: resolved.designation,
               metadata: metadata as Prisma.InputJsonValue,
               inviteToken: randomBytes(16).toString("hex"),
+              // Per-event attendee number. We already hold the event-row lock
+              // (lockEventRow above), so this allocation is race-safe. Only
+              // NEW contacts get a number here; the update branch keeps the
+              // existing contact's number (stable across re-registration).
+              serialNumber: await allocateContactSerial(tx, event.id),
             },
           });
 

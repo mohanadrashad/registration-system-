@@ -423,6 +423,13 @@ model Contact {
   designation  String?
   category     String?
   status       ContactStatus @default(IMPORTED)
+  // Per-event sequential attendee number (1, 2, 3, … within an event).
+  // Assigned at contact creation under the event-row lock so two contacts
+  // never collide; nullable for rows created before the column existed (a
+  // one-off backfill assigns those by createdAt order). Surfaced as the
+  // "ID" column in the attendees list/export so admins can track where they
+  // left off reviewing.
+  serialNumber Int?
   inviteToken  String?       @unique
   metadata     Json?
   importBatch  String?
@@ -438,6 +445,7 @@ model Contact {
   groupAssignments ContactGroupAssignment[]
 
   @@unique([eventId, email])
+  @@unique([eventId, serialNumber])
   @@index([eventId])
   @@index([eventId, status])
   @@index([email])

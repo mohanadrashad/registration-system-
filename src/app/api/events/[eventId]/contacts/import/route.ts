@@ -6,6 +6,7 @@ import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { nanoid } from "nanoid";
 import { randomBytes } from "crypto";
+import { allocateContactSerial } from "@/lib/attendees/serial";
 
 export async function POST(
   req: Request,
@@ -109,21 +110,29 @@ export async function POST(
     }
 
     try {
-      await prisma.contact.create({
-        data: {
-          eventId,
-          firstName: firstName.trim(),
-          lastName: lastName.trim(),
-          email: email.trim().toLowerCase(),
-          phone: phone?.trim() || null,
-          organization: organization?.trim() || null,
-          designation: designation?.trim() || null,
-          category: normalizedCategories[i],
-          inviteToken: randomBytes(16).toString("hex"),
-          importBatch,
-          metadata: row,
-        },
-      });
+      // Per-row transaction so the serialNumber allocation runs under the
+      // event-row lock without coupling rows: a single bad row still skips
+      // and the rest commit (unchanged soft-skip behaviour). The lock makes
+      // serial collisions impossible, so a P2002 below can only mean a
+      // duplicate email — not a serial clash.
+      await prisma.$transaction(async (tx) =>
+        tx.contact.create({
+          data: {
+            eventId,
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            email: email.trim().toLowerCase(),
+            phone: phone?.trim() || null,
+            organization: organization?.trim() || null,
+            designation: designation?.trim() || null,
+            category: normalizedCategories[i],
+            inviteToken: randomBytes(16).toString("hex"),
+            importBatch,
+            metadata: row,
+            serialNumber: await allocateContactSerial(tx, eventId),
+          },
+        })
+      );
       created++;
     } catch (error: unknown) {
       const err = error as { code?: string };
