@@ -13,6 +13,20 @@ import {
   FORM_COLUMN_SKIP_TYPES,
 } from "@/lib/form-builder/format-form-value";
 
+// A denormalized FILE answer in formData carries at least fileId + filename.
+// Mirrors the same guard in the registrations export route.
+function isFileRefWithId(
+  v: unknown
+): v is { fileId: string; filename: string } {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    typeof (v as { fileId?: unknown }).fileId === "string" &&
+    typeof (v as { filename?: unknown }).filename === "string"
+  );
+}
+
 function toStatusCounts(
   groups: Array<{
     status: ContactStatus;
@@ -241,11 +255,19 @@ export async function GET(
       const { registration: reg, groupAssignments, ...rest } = c;
 
       const formValues: Record<string, string> = {};
+      // FILE-field answers also carry their fileId so the table can render a
+      // clickable link to the admin-auth-gated stream route (the filename text
+      // stays in formValues; only the id is needed to build the href).
+      const fileValues: Record<string, string> = {};
       if (reg?.formData && formColumnFields.length > 0) {
         const fd = reg.formData as Record<string, unknown>;
         for (const f of formColumnFields) {
-          const display = formatFormFieldValue(f, fd[f.name]);
+          const raw = fd[f.name];
+          const display = formatFormFieldValue(f, raw);
           if (display) formValues[f.name] = display;
+          if (f.type === "FILE" && isFileRefWithId(raw)) {
+            fileValues[f.name] = raw.fileId;
+          }
         }
       }
 
@@ -292,6 +314,7 @@ export async function GET(
             }
           : null,
         formValues,
+        fileValues,
         groupValues,
         phaseValues,
       };
@@ -348,6 +371,9 @@ export async function GET(
       response.formColumns = formColumnFields.map((f) => ({
         name: f.name,
         label: f.label,
+        // `type` lets the table render FILE answers as clickable file links
+        // (via each contact's `fileValues`) and leave the rest as text.
+        type: f.type,
       }));
       // Custom Attendee Group columns (id + name) for the picker; values
       // ride on each contact's `groupValues`.
