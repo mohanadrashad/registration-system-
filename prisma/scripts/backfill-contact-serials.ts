@@ -6,12 +6,14 @@
  * have NULL. This script numbers them per event in createdAt order (oldest =
  * #1), continuing past any contacts that already have a number.
  *
- * Idempotent: a second run finds zero NULL rows and reports 0 assigned. Safe
- * to re-run. Reads DATABASE_URL from the environment, so point it at the
- * target DB (load the appropriate .env / set DATABASE_URL) before running.
- * Best run during low write traffic so a concurrent registration doesn't grab
- * a number mid-backfill (the @@unique([eventId, serialNumber]) constraint is
- * the backstop — a clash would throw rather than silently double-assign).
+ * Done as a SINGLE bulk UPDATE (window function) so it finishes in seconds
+ * even on large events — not one round-trip per contact.
+ *
+ * Idempotent: only touches rows where serialNumber IS NULL, and continues
+ * from each event's current max, so a second run (or a re-run after an
+ * interrupted earlier attempt) numbers exactly the remaining rows with no
+ * gaps or collisions. Reads DATABASE_URL from the environment, so point it at
+ * the target DB before running.
  *
  * Run with: npx tsx prisma/scripts/backfill-contact-serials.ts
  */
@@ -21,49 +23,36 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log("Backfilling Contact.serialNumber per event...\n");
+  console.log("Backfilling Contact.serialNumber (bulk, per event)...\n");
 
-  const events = await prisma.event.findMany({
-    select: { id: true, name: true },
-    orderBy: { createdAt: "asc" },
-  });
+  // One statement: for every contact missing a number, assign
+  // (per-event createdAt rank) + (that event's current max number). Events
+  // already fully numbered have no NULL rows and are untouched.
+  const numbered = await prisma.$executeRaw`
+    WITH offsets AS (
+      SELECT "eventId", COALESCE(MAX("serialNumber"), 0) AS base
+      FROM "Contact"
+      GROUP BY "eventId"
+    ),
+    ranked AS (
+      SELECT
+        c.id,
+        ROW_NUMBER() OVER (
+          PARTITION BY c."eventId"
+          ORDER BY c."createdAt" ASC, c.id ASC
+        ) + o.base AS rn
+      FROM "Contact" c
+      JOIN offsets o ON o."eventId" = c."eventId"
+      WHERE c."serialNumber" IS NULL
+    )
+    UPDATE "Contact"
+    SET "serialNumber" = ranked.rn
+    FROM ranked
+    WHERE "Contact".id = ranked.id
+  `;
 
-  let totalAssigned = 0;
-
-  for (const ev of events) {
-    // Continue past any contacts that already carry a number (new rows
-    // created after the column shipped, or a prior partial run).
-    const agg = await prisma.contact.aggregate({
-      where: { eventId: ev.id },
-      _max: { serialNumber: true },
-    });
-    let next = (agg._max.serialNumber ?? 0) + 1;
-
-    const nulls = await prisma.contact.findMany({
-      where: { eventId: ev.id, serialNumber: null },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      select: { id: true },
-    });
-
-    for (const c of nulls) {
-      await prisma.contact.update({
-        where: { id: c.id },
-        data: { serialNumber: next },
-      });
-      next++;
-    }
-
-    if (nulls.length > 0) {
-      totalAssigned += nulls.length;
-      console.log(
-        `  ${ev.name}: assigned ${nulls.length} (now numbered up to #${next - 1})`
-      );
-    }
-  }
-
-  console.log(`\n--- Backfill Complete ---`);
-  console.log(`  Events scanned: ${events.length}`);
-  console.log(`  Contacts numbered this run: ${totalAssigned}`);
+  console.log(`--- Backfill Complete ---`);
+  console.log(`  Contacts numbered this run: ${numbered}`);
 
   const remaining = await prisma.contact.count({ where: { serialNumber: null } });
   console.log(`  Contacts still without a number: ${remaining}`);
