@@ -40,6 +40,7 @@ import { isSyntheticEmail, fallbackName } from "@/components/attendee/field-disp
 import { FilterMultiSelect } from "@/components/attendee/filter-multi-select";
 import { ColumnsMenu, type ManageableColumn } from "@/components/attendee/columns-menu";
 import { COUNTRIES } from "@/lib/form-builder/countries";
+import { FILTER_NONE_VALUE } from "@/lib/attendees/filter-constants";
 import {
   Upload,
   Plus,
@@ -147,20 +148,24 @@ interface BulkGroup {
 // COUNTRY and CHECKBOX fields arrive with empty options — their choices
 // are universal, so they're resolved locally instead of shipped per event.
 function fieldFilterOptions(field: FilterableField): FilterableFieldOption[] {
-  if (field.type === "COUNTRY") {
-    return COUNTRIES.map((c) => ({
-      value: c.code,
-      label: c.name,
-      labelAr: c.nameAr,
-    }));
-  }
+  // CHECKBOX is always answered (true/false), so a "no answer" option is
+  // meaningless — return Yes/No as-is.
   if (field.type === "CHECKBOX") {
     return [
       { value: "true", label: "Yes", labelAr: null },
       { value: "false", label: "No", labelAr: null },
     ];
   }
-  return field.options;
+  const base: FilterableFieldOption[] =
+    field.type === "COUNTRY"
+      ? COUNTRIES.map((c) => ({ value: c.code, label: c.name, labelAr: c.nameAr }))
+      : field.options;
+  // Append a "no value" option: ungrouped for a group, blank for a form field.
+  const noneLabel = field.type === "GROUP" ? "(None)" : "(No answer)";
+  return [
+    ...base,
+    { value: FILTER_NONE_VALUE, label: noneLabel, labelAr: noneLabel },
+  ];
 }
 
 // Numbered-pager model: first, last, and a window around the current
@@ -1072,7 +1077,11 @@ export default function AttendeesPage() {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
 
-    if (!formData.get("category") && categoryFilters.length === 1) {
+    if (
+      !formData.get("category") &&
+      categoryFilters.length === 1 &&
+      categoryFilters[0] !== FILTER_NONE_VALUE
+    ) {
       formData.set("category", categoryFilters[0]);
     }
 
@@ -1132,7 +1141,12 @@ export default function AttendeesPage() {
   // the Category column is hidden. A single selected category also pre-fills
   // the add/import dialogs.
   const isSingleCategory = categoryFilters.length === 1;
-  const singleSelectedCategory = isSingleCategory ? categoryFilters[0] : undefined;
+  // Only a REAL single category pre-fills the add/import dialogs — the
+  // Uncategorized sentinel must never be treated as a category value.
+  const singleSelectedCategory =
+    isSingleCategory && categoryFilters[0] !== FILTER_NONE_VALUE
+      ? categoryFilters[0]
+      : undefined;
 
   // Server-side pagination: `contacts` is already the sorted page slice,
   // `total`/`totalPages` come from the DB aggregate.
@@ -1613,6 +1627,18 @@ export default function AttendeesPage() {
               {cat}
             </button>
           ))}
+          {/* Uncategorized — contacts with no category set. */}
+          <button
+            key="UNCATEGORIZED"
+            onClick={() => toggleCategory(FILTER_NONE_VALUE)}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
+              categoryFilters.includes(FILTER_NONE_VALUE)
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Uncategorized
+          </button>
         </div>
       )}
 
