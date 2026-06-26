@@ -5,6 +5,9 @@ import {
   resolveOtherLabel,
   OTHER_VALUE,
 } from "@/lib/form-builder/options-parse";
+import { FILTER_NONE_VALUE } from "@/lib/attendees/filter-constants";
+
+export { FILTER_NONE_VALUE };
 
 /**
  * Dynamic attendee filtering on registration form answers.
@@ -239,10 +242,17 @@ export function buildContactWhere(
     });
   }
 
-  if (p.categories.length === 1) {
-    where.category = p.categories[0];
-  } else if (p.categories.length > 1) {
-    where.category = { in: p.categories };
+  // Category: any selected real category, OR "Uncategorized" (the
+  // FILTER_NONE_VALUE sentinel → category is null or empty string).
+  if (p.categories.length > 0) {
+    const wantsUncat = p.categories.includes(FILTER_NONE_VALUE);
+    const realCats = p.categories.filter((c) => c !== FILTER_NONE_VALUE);
+    const catOr: Record<string, unknown>[] = [];
+    if (realCats.length > 0) catOr.push({ category: { in: realCats } });
+    if (wantsUncat) catOr.push({ category: null }, { category: "" });
+    if (catOr.length > 0) {
+      andConditions.push(catOr.length === 1 ? catOr[0] : { OR: catOr });
+    }
   }
 
   if (p.status) {
@@ -302,39 +312,60 @@ export function buildContactWhere(
   for (const [name, values] of Object.entries(p.fieldFilters)) {
     const field = byName.get(name);
     if (!field || values.length === 0) continue;
+
+    // Split off the "no value" sentinel from the real selected values; each
+    // filter ORs its real values with the absence case when both are picked.
+    const wantsNone = values.includes(FILTER_NONE_VALUE);
+    const realVals = values.filter((v) => v !== FILTER_NONE_VALUE);
+
     if (field.source === "group") {
       const groupId = name.slice(GROUP_FILTER_PREFIX.length);
-      andConditions.push({
-        groupAssignments: { some: { groupId, valueId: { in: values } } },
+      const groupOr: Record<string, unknown>[] = [];
+      if (realVals.length > 0) {
+        groupOr.push({
+          groupAssignments: { some: { groupId, valueId: { in: realVals } } },
+        });
+      }
+      // "Not in this group" — no assignment row for this group at all.
+      if (wantsNone) {
+        groupOr.push({ groupAssignments: { none: { groupId } } });
+      }
+      if (groupOr.length > 0) {
+        andConditions.push(groupOr.length === 1 ? groupOr[0] : { OR: groupOr });
+      }
+      continue;
+    }
+
+    // Form-answer field (SELECT / RADIO / COUNTRY / MULTISELECT / CHECKBOX).
+    const fieldOr: Record<string, unknown>[] = [];
+    if (realVals.length > 0) {
+      let valueConds: Record<string, unknown>[];
+      if (field.type === FieldType.MULTISELECT) {
+        valueConds = realVals.map((v) => ({
+          formData: { path: [name], array_contains: v },
+        }));
+      } else if (field.type === FieldType.CHECKBOX) {
+        valueConds = realVals.map((v) => ({
+          formData: { path: [name], equals: v === "true" },
+        }));
+      } else {
+        valueConds = realVals.map((v) => ({
+          formData: { path: [name], equals: v },
+        }));
+      }
+      fieldOr.push({ registration: { is: { OR: valueConds } } });
+    }
+    // "No answer" — never registered, or the field was left blank. Forms
+    // submit "" for empty scalars and [] for empty multi-selects.
+    if (wantsNone) {
+      const emptyVal = field.type === FieldType.MULTISELECT ? [] : "";
+      fieldOr.push({ registration: null });
+      fieldOr.push({
+        registration: { is: { formData: { path: [name], equals: emptyVal } } },
       });
-    } else if (field.type === FieldType.MULTISELECT) {
-      andConditions.push({
-        registration: {
-          is: {
-            OR: values.map((v) => ({
-              formData: { path: [name], array_contains: v },
-            })),
-          },
-        },
-      });
-    } else if (field.type === FieldType.CHECKBOX) {
-      andConditions.push({
-        registration: {
-          is: {
-            OR: values.map((v) => ({
-              formData: { path: [name], equals: v === "true" },
-            })),
-          },
-        },
-      });
-    } else {
-      andConditions.push({
-        registration: {
-          is: {
-            OR: values.map((v) => ({ formData: { path: [name], equals: v } })),
-          },
-        },
-      });
+    }
+    if (fieldOr.length > 0) {
+      andConditions.push(fieldOr.length === 1 ? fieldOr[0] : { OR: fieldOr });
     }
   }
 
