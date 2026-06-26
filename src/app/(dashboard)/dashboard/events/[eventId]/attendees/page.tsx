@@ -66,6 +66,9 @@ type ContactStatus = "IMPORTED" | "INVITED" | "REGISTERED" | "CANCELLED";
 
 interface Contact {
   id: string;
+  // Per-event sequential attendee number (null only for legacy rows not yet
+  // backfilled). Shown as the leftmost "ID" column.
+  serialNumber: number | null;
   firstName: string;
   lastName: string;
   email: string;
@@ -2066,6 +2069,7 @@ export default function AttendeesPage() {
                       title="Select this page"
                     />
                   </th>
+                  <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">ID</th>
                   <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Name</th>
                   {visibleColumns.map((key) => (
                     <th key={key} className={thBaseClass}>
@@ -2083,6 +2087,9 @@ export default function AttendeesPage() {
                         checked={selectedIds.has(contact.id)}
                         onCheckedChange={() => toggleContact(contact.id)}
                       />
+                    </td>
+                    <td className="px-4 py-3 text-sm font-medium text-muted-foreground tabular-nums whitespace-nowrap">
+                      {contact.serialNumber ?? "—"}
                     </td>
                     <td className="px-4 py-3">
                       <Link

@@ -124,6 +124,12 @@ export async function GET(
   // Email/Phone/Organization/Designation gated on form definition.
   const baseColumns = (
     [
+      {
+        header: "ID",
+        include: true,
+        value: (r: Reg) =>
+          r.contact.serialNumber != null ? String(r.contact.serialNumber) : "",
+      },
       { header: "First Name", include: true, value: (r: Reg) => r.contact.firstName },
       { header: "Last Name", include: true, value: (r: Reg) => r.contact.lastName },
       {
