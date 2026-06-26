@@ -79,6 +79,9 @@ interface Contact {
   // Pre-formatted registration form answers, keyed by FormField.name. Only
   // non-empty answers are present; the server formats them to match export.
   formValues?: Record<string, string>;
+  // FILE-field answers: FormField.name → fileId. Lets the table link the
+  // filename (from formValues) straight to the admin-auth file stream route.
+  fileValues?: Record<string, string>;
   // Attendee Group value label(s), keyed by group id (joined per group).
   groupValues?: Record<string, string>;
   // Post-registration phase answers, keyed by the full `phase:<id>:<name>`
@@ -178,6 +181,18 @@ function pageNumbers(current: number, totalPages: number): (number | "ellipsis")
     prev = n;
   }
   return out;
+}
+
+// If a cell value is a single URL, return a hyperlinkable href (prepending
+// https:// for bare www. values); otherwise null. Used to make Website /
+// Social Media answers clickable in the list. Only matches when the WHOLE
+// trimmed value is one URL — non-URL text (handles, Arabic, numbers) and
+// comma-joined multi-values stay plain.
+function looksLikeUrl(value: string): string | null {
+  const s = value.trim();
+  if (/^https?:\/\/\S+$/i.test(s)) return s;
+  if (/^www\.\S+$/i.test(s)) return `https://${s}`;
+  return null;
 }
 
 const statusConfig: Record<ContactStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; }> = {
@@ -355,9 +370,10 @@ export default function AttendeesPage() {
       : "registered_desc";
   });
 
-  // The event's registration form-answer columns (name + display label),
-  // loaded once with meta. Values ride on each contact's `formValues`.
-  const [formColumns, setFormColumns] = useState<{ name: string; label: string }[]>([]);
+  // The event's registration form-answer columns (name + display label +
+  // field type), loaded once with meta. Values ride on each contact's
+  // `formValues`; FILE columns also read `fileValues` for the link href.
+  const [formColumns, setFormColumns] = useState<{ name: string; label: string; type: string }[]>([]);
   // Custom Attendee Group columns (id + name); values ride on `groupValues`.
   const [groupColumns, setGroupColumns] = useState<{ id: string; name: string }[]>([]);
   // Post-registration answer columns (server-built key + label); values ride
@@ -451,6 +467,13 @@ export default function AttendeesPage() {
     for (const c of allManageable) m[c.key] = c.label;
     return m;
   }, [allManageable]);
+  // FormField.name → field type, so the table can render FILE answers as
+  // links (others as text/URL). Built from the form-column meta.
+  const formColumnType = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const f of formColumns) m[f.name] = f.type;
+    return m;
+  }, [formColumns]);
   // Persisted order limited to columns that still exist, with any built-in
   // not yet present appended (form columns enter via the reconcile effect).
   const effectiveOrder = useMemo(() => {
@@ -1243,11 +1266,17 @@ export default function AttendeesPage() {
   const thBaseClass =
     "text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground";
 
-  // A dynamic (form-answer or group) column: a truncated header + a cell that
-  // shows a pre-formatted display string with a tooltip for the full value.
+  // A dynamic (form-answer / group / phase) column: a truncated header + a
+  // cell that shows the pre-formatted display string with a tooltip for the
+  // full value. When `getFileId` yields an id, the value is rendered as a
+  // link to the admin-auth file stream (opens inline in a new tab); otherwise
+  // a value that is a bare URL becomes an external link. Everything else stays
+  // plain text. This brings the file/website links to the list so admins don't
+  // have to open each profile.
   const dynamicColumnDef = (
     label: string,
-    getValue: (c: Contact) => string | undefined
+    getValue: (c: Contact) => string | undefined,
+    getFileId?: (c: Contact) => string | undefined
   ): { header: ReactNode; cell: (c: Contact) => ReactNode; tdClassName: string } => ({
     header: (
       <span className="block max-w-[12rem] truncate" title={label}>
@@ -1257,12 +1286,41 @@ export default function AttendeesPage() {
     tdClassName: "px-4 py-3 text-muted-foreground",
     cell: (c) => {
       const v = getValue(c);
-      return v ? (
+      if (!v) return "-";
+      const linkClass =
+        "block max-w-[14rem] truncate text-primary hover:underline";
+      const fileId = getFileId?.(c);
+      if (fileId) {
+        return (
+          <a
+            href={`/api/events/${eventId}/files/${fileId}/stream`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={linkClass}
+            title={v}
+          >
+            {v}
+          </a>
+        );
+      }
+      const url = looksLikeUrl(v);
+      if (url) {
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={linkClass}
+            title={v}
+          >
+            {v}
+          </a>
+        );
+      }
+      return (
         <span className="block max-w-[14rem] truncate" title={v}>
           {v}
         </span>
-      ) : (
-        "-"
       );
     },
   });
@@ -1276,7 +1334,12 @@ export default function AttendeesPage() {
   ): { header: ReactNode; cell: (c: Contact) => ReactNode; tdClassName: string } => {
     if (key.startsWith(FORM_COLUMN_PREFIX)) {
       const name = key.slice(FORM_COLUMN_PREFIX.length);
-      return dynamicColumnDef(labelByKey[key] ?? name, (c) => c.formValues?.[name]);
+      const isFile = formColumnType[name] === "FILE";
+      return dynamicColumnDef(
+        labelByKey[key] ?? name,
+        (c) => c.formValues?.[name],
+        isFile ? (c) => c.fileValues?.[name] : undefined
+      );
     }
     if (key.startsWith(GROUP_COLUMN_PREFIX)) {
       const id = key.slice(GROUP_COLUMN_PREFIX.length);
