@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SectionHeading } from "@/components/public/section-heading";
+import { parseHeadingColor } from "@/lib/form-builder/heading-meta";
 import {
   ArrowLeft,
   ArrowRight,
@@ -175,6 +176,8 @@ interface FormField {
   options?: { value: string; label: string; labelAr?: string }[];
   order: number;
   width: string;
+  // HEADING fields carry { color } here for the section-label color.
+  metadata?: unknown;
   conditional?: Record<string, unknown>;
   isSystem: boolean;
   defaultValue?: string;
@@ -754,6 +757,7 @@ export default function PortalPhaseFillPage() {
           <SectionHeading
             key={field.id}
             label={label}
+            color={parseHeadingColor(field.metadata)}
             className="col-span-2 mt-6 first:mt-0"
           />
         );

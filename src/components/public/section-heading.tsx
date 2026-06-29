@@ -7,14 +7,21 @@
 // uppercase transform is a no-op on Arabic text.
 export function SectionHeading({
   label,
+  color,
   className,
 }: {
   label: string;
+  // Admin-picked label color (FormField.metadata.color). null → muted gray
+  // default. Only the label takes the color; the rule stays a subtle gray.
+  color?: string | null;
   className?: string;
 }) {
   return (
     <div className={className}>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+      <h3
+        className="text-xs font-semibold uppercase tracking-wider text-gray-500"
+        style={color ? { color } : undefined}
+      >
         {label}
       </h3>
       <div className="mt-2 h-px w-full bg-gray-200" />
