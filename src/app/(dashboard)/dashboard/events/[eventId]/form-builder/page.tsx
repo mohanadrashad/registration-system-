@@ -1357,6 +1357,17 @@ export default function FormBuilderPage() {
             </a>
           </Button>
         )}
+        <Button
+          variant="outline"
+          disabled={!selectedStepId}
+          onClick={() => {
+            setNewField((f) => ({ ...f, type: "HEADING" }));
+            setIsAddDialogOpen(true);
+          }}
+        >
+          <Heading className="mr-2 h-4 w-4" />
+          Add section heading
+        </Button>
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
           <DialogTrigger asChild>
             <Button disabled={!selectedStepId}>
@@ -1828,7 +1839,9 @@ export default function FormBuilderPage() {
             {fields.map((field, index) => (
               <div
                 key={field.id}
-                className="flex items-center gap-2 rounded-lg border p-3"
+                className={`flex items-center gap-2 rounded-lg border p-3 ${
+                  field.type === "HEADING" ? "border-dashed bg-muted/40" : ""
+                }`}
               >
                 <GripVertical className="h-4 w-4 text-muted-foreground" />
                 <div className="flex h-8 w-8 items-center justify-center rounded bg-muted">
@@ -1846,8 +1859,20 @@ export default function FormBuilderPage() {
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    {FIELD_TYPE_LABELS[field.type]} &middot; {field.name}
+                  <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <span>
+                      {FIELD_TYPE_LABELS[field.type]} &middot; {field.name}
+                    </span>
+                    {field.type === "HEADING" && (
+                      <span
+                        className="inline-block h-2.5 w-2.5 rounded-full border border-black/10"
+                        style={{
+                          backgroundColor:
+                            parseHeadingColor(field.metadata) ?? "#6b7280",
+                        }}
+                        title="Section label color"
+                      />
+                    )}
                   </div>
                 </div>
                 {/* Maps-to chip (Stage 1 of FIELD_MAPPING_SPEC). The
