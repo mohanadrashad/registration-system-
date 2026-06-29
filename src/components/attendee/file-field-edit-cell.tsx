@@ -180,6 +180,35 @@ export function FileFieldEditCell({
     return null;
   }
 
+  // Pre-flight before upload(): @vercel/blob's upload() throws a generic
+  // "Failed to retrieve the client token" when the server's
+  // onBeforeGenerateToken rejects (its 400 body is swallowed), hiding the
+  // real reason. The read-back endpoint runs the same auth (authorizeEvent)
+  // and exposes the field's current file, so a cheap GET surfaces the two
+  // hidden reasons up front: an expired session and the empty-field guard.
+  // Returns a user-facing message to show (and abort), or null to proceed.
+  async function preflightFileOp(expectEmpty: boolean): Promise<string | null> {
+    try {
+      const res = await fetch(
+        `/api/events/${eventId}/contacts/${contactId}/fields/${field.id}/file`
+      );
+      if (res.status === 401 || res.status === 403) {
+        return "Your session has expired. Refresh the page and sign in again.";
+      }
+      if (!res.ok) return null; // unknown — let upload() run and surface its own error
+      const body = (await res.json().catch(() => null)) as {
+        file: FileRef | null;
+      } | null;
+      if (expectEmpty && body?.file) {
+        // Matches the server's empty-field guard (another admin uploaded first).
+        return "This field already has a file — use Replace instead.";
+      }
+      return null;
+    } catch {
+      return null; // network blip — don't block; upload() will report if it fails
+    }
+  }
+
   async function handleReplaceFilePicked(
     e: React.ChangeEvent<HTMLInputElement>
   ) {
@@ -193,6 +222,13 @@ export function FileFieldEditCell({
     setTimedOut(false);
     setPending("replace");
     try {
+      // Surface a hidden onBeforeGenerateToken reason (e.g. expired session)
+      // before the SDK masks it as a generic token error.
+      const pre = await preflightFileOp(false);
+      if (pre) {
+        toast.error(pre);
+        return;
+      }
       await upload(picked.name, picked, {
         // Project-level store is Private; the SDK literal is "private".
         access: "private",
@@ -238,6 +274,14 @@ export function FileFieldEditCell({
     setTimedOut(false);
     setPending("upload");
     try {
+      // Surface a hidden onBeforeGenerateToken reason — an expired session, or
+      // the empty-field guard if another admin uploaded first — before the SDK
+      // masks it as a generic token error.
+      const pre = await preflightFileOp(true);
+      if (pre) {
+        toast.error(pre);
+        return;
+      }
       await upload(picked.name, picked, {
         access: "private",
         handleUploadUrl: `/api/events/${eventId}/contacts/${contactId}/fields/${field.id}/upload`,
