@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/tooltip";
 import { FileUploadControl } from "@/components/public/file-upload-control";
 import { parseFileFieldMetadata } from "@/lib/validations/file-field-metadata";
+import { SectionHeading } from "@/components/public/section-heading";
 
 interface FormField {
   id: string;
@@ -620,11 +621,11 @@ export default function RegisterPage() {
     if (["HEADING", "DIVIDER", "PARAGRAPH"].includes(field.type)) {
       if (field.type === "HEADING") {
         return (
-          <div key={field.id} className="col-span-2 pt-4">
-            <h3 className="text-lg font-semibold" style={{ color: textColor }}>
-              {label}
-            </h3>
-          </div>
+          <SectionHeading
+            key={field.id}
+            label={label}
+            className="col-span-2 mt-6 first:mt-0"
+          />
         );
       }
       if (field.type === "DIVIDER") {
