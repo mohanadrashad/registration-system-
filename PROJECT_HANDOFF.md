@@ -1,13 +1,13 @@
 # Registration System — Project Handoff
 
-**Last updated:** 2026-06-28 (Attendee-list **quality-of-life arc** — 6 PRs #65–#70, all live + prod-verified: La Gloire favicon + Open Graph link-preview (#65); export field-mapping dedup that also closed the long-logged company→ORGANIZATION double-column (#66); clickable Website/Social + file links in the attendees list (#67); **per-event sequential attendee ID** — `Contact.serialNumber`, additive schema + race-safe allocation + idempotent bulk backfill (#68); wider Name column (#69); **filter-by-absence** — Uncategorized / ungrouped / no-answer via one shared sentinel in the shared where-builder so screen==export (#70). Prior window (2026-06-22): Attendees **column manager** COMPLETE — show/hide + drag-reorder every column kind (built-in / form answers / Attendee Groups / post-reg phase answers), remembered per event, default sort newest-first (PRs #59–#63). Earlier: Attendee Groups (#55–#58); attendees dynamic filters + server pagination (#53), view persistence (#54); review hardening (#52))
+**Last updated:** 2026-06-29 (Bug fix — **attendee-edit 400**: the Edit-attendee save re-sends the contact's STORED email + category, so any contact whose stored value no longer passes current validation (a category since removed from the event's list, or a legacy-format email) was **un-editable** — every save 400'd, even fixing a name. The PUT now grandfathers an UNCHANGED value (validates only a changed email/category); PR #72, live. Prior window (2026-06-28): Attendee-list **quality-of-life arc** — 6 PRs #65–#70, all live + prod-verified: La Gloire favicon + Open Graph link-preview (#65); export field-mapping dedup that also closed the long-logged company→ORGANIZATION double-column (#66); clickable Website/Social + file links in the attendees list (#67); **per-event sequential attendee ID** — `Contact.serialNumber`, additive schema + race-safe allocation + idempotent bulk backfill (#68); wider Name column (#69); **filter-by-absence** — Uncategorized / ungrouped / no-answer via one shared sentinel in the shared where-builder so screen==export (#70). Earlier (2026-06-22): Attendees **column manager** COMPLETE (PRs #59–#63); Attendee Groups (#55–#58); attendees dynamic filters + server pagination (#53))
 **Owner:** Mohanad
 **Repo:** github.com/mohanadrashad/registration-system-
 **Stack:** Next.js 16, Prisma 6, PostgreSQL on Neon, deployed on Vercel
 **Storage — TWO Vercel Blob stores:** (1) **private** store (id `Q7RjwvBaaLwKE6eR`, env `BLOB_READ_WRITE_TOKEN`) — visitor FILE uploads + phase receipts, served via stream-through. (2) **`branding-public`** store (PUBLIC, id `store_O0LBuk4rM0qMcAYL`, env `BLOB_PUBLIC_READ_WRITE_TOKEN` — set in **Preview + Production**) — admin-uploaded logos/favicons, served as direct CDN URLs on the public registration page. A logo isn't secret; the private store rejects `access:"public"` (store-level), which forced the second store.
 **Translation:** MyMemory API (free tier, 50k chars/day with email param)
-**Branch in progress:** none — between projects (attendee-list QoL arc #65–#70 fully shipped + prod-verified; one offered-but-not-started follow-up: FILE-field has-file/no-file filtering)
-**Production branch:** `main`, HEAD at `f70bd6a` (filter-by-absence, PR #70)
+**Branch in progress:** none — between projects (attendee-list QoL arc #65–#70 + the #72 edit-save fix all shipped + prod-verified; offered-but-not-started follow-up: FILE-field has-file/no-file filtering)
+**Production branch:** `main`, HEAD at `e4250cd` (attendee-edit grandfather fix, PR #72)
 **Working directory:** Git worktree at `C:\Users\mohan\AppData\Roaming\warp\Warp\data\worktrees\registration-system\arch-pass`
 
 ---
@@ -30,6 +30,24 @@ Internal registration platform for La Gloire (Riyadh events/hospitality company)
 ---
 
 ## What's shipped (recent activity, newest first)
+
+### 2026-06-29 — Bug fix: attendee-edit save 400 — grandfather unchanged email/category — live on prod
+
+Reported from another admin's session: editing an attendee and clicking **Save** returned **400 (Bad Request)** for some contacts. **Not caused by recent work** — the edit/save path was untouched; a pre-existing validation rigidity that surfaces on "dirty" stored data.
+
+**Root cause.** The Edit dialog re-sends the contact's **stored** email + category on *every* save (not just changed fields). The `PUT /api/events/[eventId]/contacts/[contactId]` has exactly two 400 paths (a duplicate email is 409; anything else is 500): the Zod parse and `validateCategoryForEvent`. So a contact whose **stored** value no longer passes current validation was **completely un-editable** — even fixing a name 400'd:
+- **category** not in the event's *current* `categories` list (a category removed since the contact was tagged, or an import-time mismatch — `validateCategoryForEvent` rejects it), or
+- **email** in a format `z.string().email()` rejects but that older data carries (legacy import; the import-time regex `…@…\.…` is looser than Zod, e.g. a 1-char TLD).
+
+**Fix — `e4250cd` (PR #72, squash merge).** Validate only a **changed** value:
+- `updateContactSchema.email` no longer enforces format inline (overrides `createContactSchema`'s `.email()`); new `isValidEmail()` helper in `validations/contact.ts`. The handler now reads the contact's stored `email`/`category` and validates email **only when it differs** from stored.
+- An **unchanged** out-of-list category is grandfathered (`resolvedCategory = existing.category`); only a newly-**set** invalid category is rejected. The update writes `resolvedCategory` instead of `categoryCheck.value`.
+- New/changed invalid values are **still** rejected — validation integrity preserved for genuine edits.
+- Verified: `tsc` clean + an 8-case decision test replicating the handler's exact logic against the real validation modules (stale category + legacy email **unchanged → OK**; clear/fix → OK; **new** invalid email or category → 400; normal + uncategorized edits → OK).
+
+**Couldn't confirm the exact culprit** (no access to the other admin's response body), so **both** 400 paths were hardened — whichever it was, it's covered. If it recurs, the deciding signal is the 400 **Response** body / in-app toast text.
+
+**Minor, not fixed (logged):** for a contact with a *stale* category, the Edit dialog's category `Select` shows blank (the value isn't among the event's options), though Save now works (grandfathered). A future polish could surface the current value as a one-off option.
 
 ### 2026-06-28 — Attendee-list quality-of-life arc (favicon/OG, export dedup, clickable links, per-event ID, name spacing, filter-by-absence) — all live on prod
 
