@@ -89,6 +89,7 @@ import {
   parseFileFieldMetadata,
   type FileFieldMetadata,
 } from "@/lib/validations/file-field-metadata";
+import { parseHeadingColor } from "@/lib/form-builder/heading-meta";
 import {
   parseFormFieldOptions,
   serializeFormFieldOptions,
@@ -714,6 +715,45 @@ function PhaseSettingsCard({
   );
 }
 
+// Section-label color picker, shown in the Add/Edit dialogs only for HEADING
+// fields. value "" = the default muted gray; a hex sets FormField.metadata.color.
+function HeadingColorField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-2 border rounded-lg p-3 bg-muted/30">
+      <Label className="text-sm font-medium">Section label color</Label>
+      <div className="flex items-center gap-3">
+        <input
+          type="color"
+          aria-label="Section label color"
+          value={value || "#6b7280"}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-9 w-12 cursor-pointer rounded border border-input bg-background p-1"
+        />
+        <span className="text-sm text-muted-foreground">
+          {value || "Default (muted gray)"}
+        </span>
+        {value && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
+            onClick={() => onChange("")}
+          >
+            Reset
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function FormBuilderPage() {
   const params = useParams();
   const eventId = params.eventId as string;
@@ -751,6 +791,9 @@ export default function FormBuilderPage() {
     // Only consumed when type === "FILE". Kept on every newField for
     // simplicity; ignored by other field types on the wire.
     fileMetadata: defaultFileFieldMetadata() as FileFieldMetadata,
+    // Only consumed when type === "HEADING": the section-label color
+    // ("" = default muted gray). Stored into FormField.metadata.color.
+    headingColor: "" as string,
   });
 
   // Backfill dialog open state — Stage 3c of FIELD_MAPPING_SPEC. The
@@ -963,9 +1006,13 @@ export default function FormBuilderPage() {
     // FILE fields persist the upload settings into FormField.metadata.
     // Other types send metadata undefined so the column stays null
     // (existing behavior — Chunk 2 will Zod-validate this for FILE).
-    const { fileMetadata, ...rest } = newField;
+    const { fileMetadata, headingColor, ...rest } = newField;
     const metadataPayload =
-      newField.type === "FILE" ? fileMetadata : undefined;
+      newField.type === "FILE"
+        ? fileMetadata
+        : newField.type === "HEADING" && headingColor
+        ? { color: headingColor }
+        : undefined;
 
     const res = await fetch(`/api/events/${eventId}/form-fields`, {
       method: "POST",
@@ -997,6 +1044,7 @@ export default function FormBuilderPage() {
         showSelectionCounter: undefined,
         conditional: null,
         fileMetadata: defaultFileFieldMetadata(),
+        headingColor: "",
       });
       toast.success("Field added");
       fetchEverything();
@@ -1026,7 +1074,9 @@ export default function FormBuilderPage() {
     // (FILE → TEXT) clears the stale FILE keys from the column rather
     // than leaving them dormant.
     const metadataPayload =
-      field.type === "FILE" ? field.metadata ?? null : null;
+      field.type === "FILE" || field.type === "HEADING"
+        ? field.metadata ?? null
+        : null;
 
     // Email-required lock: when the self-service portal module is on, the
     // email field's `required` is non-negotiable. The Edit dialog shows
@@ -1440,6 +1490,13 @@ export default function FormBuilderPage() {
                   onChange={(next) =>
                     setNewField({ ...newField, fileMetadata: next })
                   }
+                />
+              )}
+
+              {newField.type === "HEADING" && (
+                <HeadingColorField
+                  value={newField.headingColor}
+                  onChange={(v) => setNewField({ ...newField, headingColor: v })}
                 />
               )}
 
@@ -2036,6 +2093,18 @@ export default function FormBuilderPage() {
                   value={parseFileFieldMetadata(editingField.metadata)}
                   onChange={(next) =>
                     setEditingField({ ...editingField, metadata: next })
+                  }
+                />
+              )}
+
+              {editingField.type === "HEADING" && (
+                <HeadingColorField
+                  value={parseHeadingColor(editingField.metadata) ?? ""}
+                  onChange={(v) =>
+                    setEditingField({
+                      ...editingField,
+                      metadata: v ? { color: v } : null,
+                    })
                   }
                 />
               )}

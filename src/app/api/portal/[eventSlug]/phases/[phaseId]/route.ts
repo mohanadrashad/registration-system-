@@ -290,6 +290,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           conditional: f.conditional,
           isSystem: f.isSystem,
           defaultValue: f.defaultValue,
+          // Carries the HEADING label color (FormField.metadata.color).
+          metadata: f.metadata,
         })),
       })),
     },

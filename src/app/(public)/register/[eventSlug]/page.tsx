@@ -44,6 +44,7 @@ import {
 import { FileUploadControl } from "@/components/public/file-upload-control";
 import { parseFileFieldMetadata } from "@/lib/validations/file-field-metadata";
 import { SectionHeading } from "@/components/public/section-heading";
+import { parseHeadingColor } from "@/lib/form-builder/heading-meta";
 
 interface FormField {
   id: string;
@@ -624,6 +625,7 @@ export default function RegisterPage() {
           <SectionHeading
             key={field.id}
             label={label}
+            color={parseHeadingColor(field.metadata)}
             className="col-span-2 mt-6 first:mt-0"
           />
         );
