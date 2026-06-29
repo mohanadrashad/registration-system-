@@ -17,6 +17,13 @@ export const createContactSchema = z.object({
 });
 
 export const updateContactSchema = createContactSchema.partial().extend({
+  // Email format is intentionally NOT enforced here (this overrides
+  // createContactSchema's `.email()`). The PUT handler validates it only when
+  // the email actually CHANGES — so a contact whose STORED email predates
+  // current validation (a legacy import, an older registration) can still
+  // have its other fields edited without being blocked on an email the admin
+  // never touched. A new/changed email is still required to be valid.
+  email: z.string().optional(),
   // Stage 1 admin-edit fix. The admin save flow sends non-Contact-column
   // form-field answers under this key. The handler merges them into
   // BOTH Contact.metadata (so existing reads keep working) AND
@@ -28,6 +35,13 @@ export const updateContactSchema = createContactSchema.partial().extend({
 });
 
 export type CreateContactInput = z.infer<typeof createContactSchema>;
+
+// Standalone email-format check. The PUT handler uses it to validate a
+// CHANGED email (updateContactSchema no longer enforces format inline — it
+// grandfathers an unchanged legacy email so the contact stays editable).
+export function isValidEmail(email: string): boolean {
+  return z.string().email().safeParse(email).success;
+}
 
 /**
  * Enforces that a contact's category is either absent, NULL, or one of

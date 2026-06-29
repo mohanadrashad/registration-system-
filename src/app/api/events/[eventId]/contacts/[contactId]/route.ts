@@ -5,6 +5,7 @@ import { authorizeEvent } from "@/lib/api-auth";
 import {
   updateContactSchema,
   validateCategoryForEvent,
+  isValidEmail,
 } from "@/lib/validations/contact";
 import { isJsonEqual } from "@/lib/json-equal";
 
@@ -103,7 +104,9 @@ export async function PUT(
   // contact exists elsewhere.
   const existing = await prisma.contact.findUnique({
     where: { id: contactId },
-    select: { eventId: true },
+    // email + category are read so unchanged legacy values can be
+    // grandfathered past validation (see below).
+    select: { eventId: true, email: true, category: true },
   });
   if (!existing || existing.eventId !== eventId) {
     return NextResponse.json({ error: "Contact not found" }, { status: 404 });
@@ -116,14 +119,41 @@ export async function PUT(
     return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
   }
 
+  // Email format is enforced only when the email actually CHANGES. The Edit
+  // dialog re-sends the stored email on every save, so a contact whose stored
+  // email predates current validation (a legacy import / older registration)
+  // would otherwise be un-editable — every save would 400 on an email the
+  // admin never touched. A genuinely new/changed email must still be valid.
+  if (
+    result.data.email !== undefined &&
+    result.data.email !== existing.email &&
+    !isValidEmail(result.data.email)
+  ) {
+    return NextResponse.json(
+      { error: { fieldErrors: { email: ["Invalid email address"] } } },
+      { status: 400 }
+    );
+  }
+
   // ctx.event is loaded by authorizeEvent — reuse it for the category
   // check rather than re-fetching. Saves a round trip on every PUT.
   const categoryCheck = validateCategoryForEvent(
     result.data.category,
     ctx.event.categories
   );
+  // Same grandfathering for category: an UNCHANGED out-of-list value (a
+  // category removed from the event since this contact was tagged, or an
+  // import-time mismatch) is allowed through so the contact stays editable;
+  // only a newly-SET invalid category is rejected.
+  let resolvedCategory: string | null | undefined = categoryCheck.ok
+    ? categoryCheck.value
+    : undefined;
   if (!categoryCheck.ok) {
-    return NextResponse.json({ error: categoryCheck.error }, { status: 400 });
+    if (result.data.category === existing.category) {
+      resolvedCategory = existing.category;
+    } else {
+      return NextResponse.json({ error: categoryCheck.error }, { status: 400 });
+    }
   }
 
   const { metadata, formData, category, ...rest } = result.data;
@@ -145,7 +175,7 @@ export async function PUT(
       // Only write category when the field was present in the payload;
       // an omitted field must not clear an existing category.
       if (category !== undefined) {
-        data.category = categoryCheck.value ?? null;
+        data.category = resolvedCategory ?? null;
       }
       // metadata + formData precedence:
       //   - Only metadata sent (legacy clients)  → write as-is.
