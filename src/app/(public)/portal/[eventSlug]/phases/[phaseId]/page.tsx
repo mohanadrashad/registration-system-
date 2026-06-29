@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SectionHeading } from "@/components/public/section-heading";
 import {
   ArrowLeft,
   ArrowRight,
@@ -750,9 +751,11 @@ export default function PortalPhaseFillPage() {
     if (["HEADING", "DIVIDER", "PARAGRAPH"].includes(field.type)) {
       if (field.type === "HEADING") {
         return (
-          <div key={field.id} className="col-span-2 pt-4">
-            <h3 className="text-lg font-semibold">{label}</h3>
-          </div>
+          <SectionHeading
+            key={field.id}
+            label={label}
+            className="col-span-2 mt-6 first:mt-0"
+          />
         );
       }
       if (field.type === "DIVIDER") {
