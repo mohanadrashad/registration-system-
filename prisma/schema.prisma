@@ -90,6 +90,12 @@ model Event {
   capacity    Int? // Max registrations (null = unlimited)
   settings    Json?
   categories  String[] @default([])
+  // Which public-registration TEMPLATE renders this event (Per-Event Template
+  // System). Lives on Event (not EventBranding) because EventBranding is
+  // nullable/not-auto-created, and the field deciding which renderer runs must
+  // always resolve. Default CLASSIC = today's renderer, so every existing
+  // event is unchanged with no backfill.
+  template    RegistrationTemplate @default(CLASSIC)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -808,6 +814,13 @@ enum OptionColumns {
   AUTO // 1 col on mobile, 2 on desktop (today's responsive default)
   ONE // 1 col on all screens
   TWO // 2 cols on all screens, including mobile (the long-list fix)
+}
+
+// Per-Event Template System: which curated public-registration renderer an
+// event uses. CLASSIC is the extracted current redesign (the only template in
+// Stage 1). New event identities add a value here + a registered component.
+enum RegistrationTemplate {
+  CLASSIC
 }
 
 // ─── Phase → Step → FormField (multi-page forms + post-reg phases) ───
