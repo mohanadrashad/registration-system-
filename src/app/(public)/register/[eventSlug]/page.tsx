@@ -612,12 +612,18 @@ export default function RegisterPage() {
     const label = getFieldLabel(field);
     const placeholder = getFieldPlaceholder(field);
     const value = formValues[field.name] ?? "";
+    // The form grid is 6 columns (LCM of 2 and 3) so widths compose:
+    // FULL = 6/6, HALF = 3/6 (2-across, unchanged 50%), THIRD = 2/6 (3-across,
+    // 33%). The old 2-col grid could only do col-span-1, which made THIRD
+    // render at 50% — identical to HALF. Static literals so Tailwind's JIT
+    // emits them. HALF/FULL proportions are preserved exactly; only THIRD
+    // changes (from broken to correct).
     const widthClass =
       field.width === "HALF"
-        ? "col-span-1"
+        ? "col-span-3"
         : field.width === "THIRD"
-        ? "col-span-1"
-        : "col-span-2";
+        ? "col-span-2"
+        : "col-span-6";
 
     if (["HEADING", "DIVIDER", "PARAGRAPH"].includes(field.type)) {
       if (field.type === "HEADING") {
@@ -626,18 +632,18 @@ export default function RegisterPage() {
             key={field.id}
             label={label}
             color={parseHeadingColor(field.metadata)}
-            className="col-span-2 mt-6 first:mt-0"
+            className="col-span-6 mt-6 first:mt-0"
           />
         );
       }
       if (field.type === "DIVIDER") {
         return (
-          <hr key={field.id} className="col-span-2 my-4 border-gray-200" />
+          <hr key={field.id} className="col-span-6 my-4 border-gray-200" />
         );
       }
       if (field.type === "PARAGRAPH") {
         return (
-          <p key={field.id} className="col-span-2 text-sm text-gray-500">
+          <p key={field.id} className="col-span-6 text-sm text-gray-500">
             {label}
           </p>
         );
@@ -1317,7 +1323,7 @@ export default function RegisterPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-6 gap-4">
           {visibleFields.map((field) => renderField(field))}
         </div>
 
