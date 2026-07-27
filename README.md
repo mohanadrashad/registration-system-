@@ -71,6 +71,8 @@ A modular event registration platform built for La Gloire.
 
 ## Project Structure
 
+> **New to this codebase?** Read [ARCHITECTURE.md](./ARCHITECTURE.md) — it explains how the app is organized, how requests flow through the layers, and includes a "want to change X → edit Y" lookup table.
+
 ```
 src/
 ├── app/                    # Next.js App Router
