@@ -1,24 +1,15 @@
 "use client";
 
+// Portal phase fill page — container. Owns the phase data, form values,
+// step navigation, and the whole submit/conflict flow (option capacity
+// races, selection concurrency); field rendering lives in phase-field.tsx
+// and the bilingual strings in page-strings.ts.
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { SectionHeading } from "@/components/public/section-heading";
-import { parseHeadingColor } from "@/lib/form-builder/heading-meta";
 import {
   ArrowLeft,
   ArrowRight,
@@ -26,225 +17,24 @@ import {
   Loader2,
   Lock as LockIcon,
 } from "lucide-react";
-import { COUNTRIES } from "@/lib/form-builder/countries";
 import { isFieldVisible } from "@/lib/form-conditional";
-import {
-  parseFormFieldOptions,
-  resolveOtherLabel,
-  resolveOtherPlaceholder,
-  OTHER_VALUE,
-  OTHER_SUFFIX,
-} from "@/lib/form-builder/options-parse";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import type { PhaseSelectionMode } from "@prisma/client";
+import { OTHER_VALUE, OTHER_SUFFIX } from "@/lib/form-builder/options-parse";
 import {
   PhaseOptionsCard,
-  type PortalPhaseOption,
   type PortalPhaseSelection,
 } from "./phase-options-card";
 import { pickText, type PortalLang } from "@/lib/portal/i18n";
 
-// ─── Page-local bilingual strings ─────────────────────────────────────
-//
-// Kept inline rather than in a shared i18n module — the portal post-
-// login flow doesn't have a translation infrastructure yet, and the
-// surface area is small. If a third language ever lands, lift this
-// out to src/lib/i18n/.
-const PAGE_STRINGS = {
-  en: {
-    backToPortal: "Back to portal",
-    logout: "Log out",
-    locked: "Locked",
-    closed: "View only",
-    closes: (when: string) => `Closes ${when}`,
-    submittedAt: (when: string) => `Submitted ${when}`,
-    lastEdited: (when: string) => `last edited ${when}`,
-    stepLabel: (n: number, total: number) => `Step ${n} of ${total}`,
-    requiredFields:
-      "Please complete the required fields before continuing.",
-    submissionFailed: "Submission failed",
-    networkFailed:
-      "Submission failed. Check your connection and try again.",
-    optionFullFallback:
-      "An option you picked just filled up. Please pick another and resubmit.",
-    selectionsConcurrency:
-      "Your selection was updated elsewhere. Reloading the latest…",
-    saving: "Saving…",
-    submit: "Submit",
-    update: "Update",
-    next: "Next",
-    back: "Back",
-    saved: "Saved",
-    savedBody: (title: string) =>
-      `Your response to "${title}" has been submitted. You can come back and edit it anytime until the phase closes.`,
-    pleaseSpecify: "Please specify",
-    pleaseSpecifyError: "Please specify your answer",
-    counterBelow: (n: number, max: number) => `${n} of ${max} selected`,
-    counterAtLimit: (max: number) => `Maximum reached — ${max} of ${max}`,
-    maxReachedTooltip: (max: number) =>
-      `Maximum ${max} selections reached. Uncheck one to choose a different option.`,
-    languageToggle: "العربية",
-  },
-  ar: {
-    backToPortal: "العودة إلى البوابة",
-    logout: "تسجيل الخروج",
-    locked: "مقفل",
-    closed: "عرض فقط",
-    closes: (when: string) => `تُغلق في ${when}`,
-    submittedAt: (when: string) => `أُرسل في ${when}`,
-    lastEdited: (when: string) => `آخر تعديل ${when}`,
-    stepLabel: (n: number, total: number) => `الخطوة ${n} من ${total}`,
-    requiredFields:
-      "يُرجى إكمال الحقول المطلوبة قبل المتابعة.",
-    submissionFailed: "فشل الإرسال",
-    networkFailed: "فشل الإرسال. تحقق من اتصالك وحاول مرة أخرى.",
-    optionFullFallback:
-      "أحد الخيارات التي اخترتها أصبح ممتلئًا. يُرجى اختيار خيار آخر وإعادة الإرسال.",
-    selectionsConcurrency:
-      "تم تحديث اختيارك من مكان آخر. جارٍ إعادة تحميل أحدث نسخة…",
-    saving: "جارٍ الحفظ…",
-    submit: "إرسال",
-    update: "تحديث",
-    next: "التالي",
-    back: "رجوع",
-    saved: "تم الحفظ",
-    savedBody: (title: string) =>
-      `تم إرسال إجابتك على "${title}". يمكنك الرجوع وتعديلها في أي وقت قبل إغلاق المرحلة.`,
-    pleaseSpecify: "يرجى التحديد",
-    pleaseSpecifyError: "يرجى تحديد إجابتك",
-    counterBelow: (n: number, max: number) => `${n} من ${max} محدد`,
-    counterAtLimit: (max: number) =>
-      `تم بلوغ الحد الأقصى — ${max} من ${max}`,
-    maxReachedTooltip: (max: number) =>
-      `تم بلوغ الحد الأقصى ${max}. ألغِ خيارًا لاختيار آخر.`,
-    languageToggle: "English",
-  },
-} as const;
-
-interface PortalOtherTextInputProps {
-  fieldName: string;
-  value: string;
-  onChange: (next: string) => void;
-  label: string;
-  placeholder: string;
-  required: boolean;
-}
-
-function PortalOtherTextInput({
-  fieldName,
-  value,
-  onChange,
-  label,
-  placeholder,
-  required,
-}: PortalOtherTextInputProps) {
-  return (
-    <div className="mt-2 space-y-1">
-      <Label
-        htmlFor={`${fieldName}${OTHER_SUFFIX}`}
-        className="text-xs font-medium text-muted-foreground"
-      >
-        {label} {required && <span className="text-destructive">*</span>}
-      </Label>
-      <Input
-        id={`${fieldName}${OTHER_SUFFIX}`}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-      />
-    </div>
-  );
-}
-
-interface FormField {
-  id: string;
-  name: string;
-  label: string;
-  labelAr?: string;
-  type: string;
-  placeholder?: string;
-  placeholderAr?: string;
-  helpText?: string;
-  helpTextAr?: string;
-  required: boolean;
-  validation?: Record<string, unknown>;
-  options?: { value: string; label: string; labelAr?: string }[];
-  order: number;
-  width: string;
-  // HEADING fields carry { color } here for the section-label color.
-  metadata?: unknown;
-  conditional?: Record<string, unknown>;
-  isSystem: boolean;
-  defaultValue?: string;
-}
-
-interface FormStep {
-  id: string;
-  title: string;
-  titleAr?: string | null;
-  description?: string | null;
-  descriptionAr?: string | null;
-  order: number;
-  fields: FormField[];
-}
-
-type PhaseStatus = "LOCKED" | "NOT_OPEN" | "OPEN" | "CLOSED";
-
-interface Branding {
-  primaryColor?: string | null;
-  secondaryColor?: string | null;
-  backgroundColor?: string | null;
-  textColor?: string | null;
-  logoUrl?: string | null;
-  customCss?: string | null;
-}
-
-interface EventLite {
-  name: string;
-  slug: string;
-  branding?: Branding | null;
-  multiLanguage?: boolean;
-}
-
-type PhaseCompletionStatus =
-  | "NOT_STARTED"
-  | "PARTIALLY_COMPLETE"
-  | "COMPLETE"
-  | "PENDING_ASSIGNMENT";
-
-interface PhaseData {
-  id: string;
-  title: string;
-  titleAr?: string | null;
-  description?: string | null;
-  descriptionAr?: string | null;
-  opensAt?: string | null;
-  closesAt?: string | null;
-  isRequired: boolean;
-  status: PhaseStatus;
-  steps: FormStep[];
-  // Stage 3: selection-related fields. Always present on the wire even
-  // when the phase has no options panel — defaults to NONE/1/false/false
-  // server-side, so legacy phases keep working unchanged.
-  selectionMode: PhaseSelectionMode;
-  maxSelections: number;
-  allowChangeAfterSubmit: boolean;
-  requiresReceiptUpload: boolean;
-  options: PortalPhaseOption[];
-}
-
-interface SubmissionData {
-  data: Record<string, unknown>;
-  submittedAt: string;
-  updatedAt: string;
-}
-
-type FormValueMap = Record<string, string | boolean | string[]>;
+import type {
+  FormValueMap,
+  PhaseCompletionStatus,
+  PhaseData,
+  EventLite,
+  SubmissionData,
+} from "./types";
+import { PAGE_STRINGS } from "./page-strings";
+import { PhaseField } from "./phase-field";
+import { StepIndicator } from "./step-indicator";
 
 export default function PortalPhaseFillPage() {
   const params = useParams();
@@ -456,30 +246,6 @@ export default function PortalPhaseFillPage() {
     } catch {
       // localStorage unavailable; keep in-memory choice.
     }
-  }
-
-  // Bilingual field helpers — pick Arabic variant when available, fall
-  // back to English. Used by renderField and the stepper UI.
-  function fieldLabel(field: FormField): string {
-    return pickText(lang, field.label, field.labelAr);
-  }
-  function fieldPlaceholder(field: FormField): string {
-    return pickText(lang, field.placeholder, field.placeholderAr);
-  }
-  function fieldHelpText(field: FormField): string {
-    return pickText(lang, field.helpText, field.helpTextAr);
-  }
-  function fieldOptionLabel(o: {
-    label: string;
-    labelAr?: string | null;
-  }): string {
-    return pickText(lang, o.label, o.labelAr ?? undefined);
-  }
-  function stepTitle(s: FormStep): string {
-    return pickText(lang, s.title, s.titleAr);
-  }
-  function stepDescription(s: FormStep): string {
-    return pickText(lang, s.description, s.descriptionAr);
   }
 
   function validateCurrentStep(): boolean {
@@ -741,375 +507,6 @@ export default function PortalPhaseFillPage() {
     router.replace(`/portal/${eventSlug}`);
   }
 
-  function renderField(field: FormField) {
-    const label = fieldLabel(field);
-    const placeholder = fieldPlaceholder(field);
-    const helpText = fieldHelpText(field);
-    const value = formValues[field.name] ?? "";
-    const widthClass =
-      field.width === "HALF" || field.width === "THIRD"
-        ? "col-span-1"
-        : "col-span-2";
-
-    if (["HEADING", "DIVIDER", "PARAGRAPH"].includes(field.type)) {
-      if (field.type === "HEADING") {
-        return (
-          <SectionHeading
-            key={field.id}
-            label={label}
-            color={parseHeadingColor(field.metadata)}
-            className="col-span-2 mt-6 first:mt-0"
-          />
-        );
-      }
-      if (field.type === "DIVIDER") {
-        return (
-          <hr key={field.id} className="col-span-2 my-4 border-gray-200" />
-        );
-      }
-      return (
-        <p key={field.id} className="col-span-2 text-sm text-gray-500">
-          {label}
-        </p>
-      );
-    }
-
-    if (field.type === "HIDDEN") {
-      return (
-        <input
-          key={field.id}
-          type="hidden"
-          name={field.name}
-          value={value as string}
-        />
-      );
-    }
-
-    return (
-      <div key={field.id} className={`space-y-1.5 ${widthClass}`}>
-        <Label htmlFor={field.name} className="text-xs font-medium text-gray-500">
-          {label} {field.required && <span className="text-red-400">*</span>}
-        </Label>
-        {helpText && (
-          <p className="text-xs text-muted-foreground">{helpText}</p>
-        )}
-        {["TEXT", "EMAIL", "PHONE", "NUMBER", "PHONE_COUNTRY"].includes(
-          field.type
-        ) && (
-          <Input
-            id={field.name}
-            name={field.name}
-            type={
-              field.type === "EMAIL"
-                ? "email"
-                : field.type === "NUMBER"
-                ? "number"
-                : "text"
-            }
-            value={value as string}
-            onChange={(e) => handleFieldChange(field.name, e.target.value)}
-            placeholder={placeholder}
-            required={field.required}
-            disabled={readOnly}
-          />
-        )}
-        {field.type === "TEXTAREA" && (
-          <Textarea
-            id={field.name}
-            name={field.name}
-            value={value as string}
-            onChange={(e) => handleFieldChange(field.name, e.target.value)}
-            placeholder={placeholder}
-            required={field.required}
-            rows={3}
-            disabled={readOnly}
-          />
-        )}
-        {field.type === "SELECT" && (() => {
-          const parsed = parseFormFieldOptions(field.options);
-          const otherSelected = (value as string) === OTHER_VALUE;
-          return (
-            <>
-              <Select
-                value={value as string}
-                onValueChange={(v) => {
-                  handleFieldChange(field.name, v);
-                  if (v !== OTHER_VALUE) {
-                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, "");
-                  }
-                }}
-                disabled={readOnly}
-              >
-                <SelectTrigger>
-                  <SelectValue
-                    placeholder={
-                      placeholder || (lang === "ar" ? "اختر..." : "Select...")
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {parsed.options.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {fieldOptionLabel(option)}
-                    </SelectItem>
-                  ))}
-                  {parsed.other && (
-                    <SelectItem value={OTHER_VALUE}>
-                      {resolveOtherLabel(parsed.other, lang)}
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-              {parsed.other && otherSelected && !readOnly && (
-                <PortalOtherTextInput
-                  fieldName={field.name}
-                  value={
-                    (formValues[`${field.name}${OTHER_SUFFIX}`] as string) ?? ""
-                  }
-                  onChange={(v) =>
-                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, v)
-                  }
-                  label={t.pleaseSpecify}
-                  placeholder={resolveOtherPlaceholder(parsed.other, lang)}
-                  required={field.required}
-                />
-              )}
-            </>
-          );
-        })()}
-        {field.type === "COUNTRY" && (
-          <Select
-            value={value as string}
-            onValueChange={(v) => handleFieldChange(field.name, v)}
-            disabled={readOnly}
-          >
-            <SelectTrigger>
-              <SelectValue
-                placeholder={
-                  placeholder ||
-                  (lang === "ar" ? "اختر الدولة..." : "Select country...")
-                }
-              />
-            </SelectTrigger>
-            <SelectContent>
-              {COUNTRIES.map((country) => (
-                <SelectItem key={country.code} value={country.code}>
-                  {lang === "ar" ? country.nameAr : country.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        {field.type === "RADIO" && (() => {
-          const parsed = parseFormFieldOptions(field.options);
-          const otherSelected = (value as string) === OTHER_VALUE;
-          return (
-            <>
-              <RadioGroup
-                value={value as string}
-                onValueChange={(v) => {
-                  handleFieldChange(field.name, v);
-                  if (v !== OTHER_VALUE) {
-                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, "");
-                  }
-                }}
-                className="flex flex-wrap gap-4"
-                disabled={readOnly}
-              >
-                {parsed.options.map((option) => (
-                  <div
-                    key={option.value}
-                    className="flex items-center space-x-2"
-                  >
-                    <RadioGroupItem
-                      value={option.value}
-                      id={`${field.name}-${option.value}`}
-                    />
-                    <Label
-                      htmlFor={`${field.name}-${option.value}`}
-                      className="text-sm"
-                    >
-                      {fieldOptionLabel(option)}
-                    </Label>
-                  </div>
-                ))}
-                {parsed.other && (
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem
-                      value={OTHER_VALUE}
-                      id={`${field.name}-${OTHER_VALUE}`}
-                    />
-                    <Label
-                      htmlFor={`${field.name}-${OTHER_VALUE}`}
-                      className="text-sm"
-                    >
-                      {resolveOtherLabel(parsed.other, lang)}
-                    </Label>
-                  </div>
-                )}
-              </RadioGroup>
-              {parsed.other && otherSelected && !readOnly && (
-                <PortalOtherTextInput
-                  fieldName={field.name}
-                  value={
-                    (formValues[`${field.name}${OTHER_SUFFIX}`] as string) ?? ""
-                  }
-                  onChange={(v) =>
-                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, v)
-                  }
-                  label={t.pleaseSpecify}
-                  placeholder={resolveOtherPlaceholder(parsed.other, lang)}
-                  required={field.required}
-                />
-              )}
-            </>
-          );
-        })()}
-        {field.type === "CHECKBOX" && (
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id={field.name}
-              checked={value as boolean}
-              onCheckedChange={(checked) =>
-                handleFieldChange(field.name, !!checked)
-              }
-              disabled={readOnly}
-            />
-            <Label htmlFor={field.name} className="text-sm">
-              {placeholder || label}
-            </Label>
-          </div>
-        )}
-        {field.type === "MULTISELECT" && (() => {
-          const parsed = parseFormFieldOptions(field.options);
-          const arr = Array.isArray(value) ? (value as string[]) : [];
-          const max = parsed.maxSelections;
-          const atLimit =
-            typeof max === "number" && max > 0 && arr.length >= max;
-          const showCounter =
-            typeof max === "number" &&
-            max > 0 &&
-            parsed.showSelectionCounter !== false;
-          const otherSelected = arr.includes(OTHER_VALUE);
-
-          const renderPill = (optionValue: string, labelText: string) => {
-            const selected = arr.includes(optionValue);
-            const disabled = !selected && atLimit;
-            const onClick = () => {
-              if (readOnly || disabled) return;
-              const next = selected
-                ? arr.filter((v) => v !== optionValue)
-                : [...arr, optionValue];
-              handleFieldChange(field.name, next);
-              if (selected && optionValue === OTHER_VALUE) {
-                handleFieldChange(`${field.name}${OTHER_SUFFIX}`, "");
-              }
-            };
-            const btn = (
-              <button
-                type="button"
-                key={optionValue}
-                aria-disabled={readOnly || disabled}
-                onClick={onClick}
-                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                  selected
-                    ? "border-transparent bg-primary text-primary-foreground"
-                    : disabled
-                    ? "border-gray-200 bg-gray-50/50 text-gray-400 cursor-not-allowed opacity-60"
-                    : "border-gray-200 bg-gray-50/50 text-gray-600 hover:bg-gray-100"
-                }`}
-              >
-                {labelText}
-              </button>
-            );
-            if (!disabled || typeof max !== "number") return btn;
-            return (
-              <Tooltip key={optionValue}>
-                <TooltipTrigger asChild>
-                  <span>{btn}</span>
-                </TooltipTrigger>
-                <TooltipContent>{t.maxReachedTooltip(max)}</TooltipContent>
-              </Tooltip>
-            );
-          };
-
-          return (
-            <TooltipProvider delayDuration={150}>
-              <div className="flex flex-wrap gap-2">
-                {parsed.options.map((option) =>
-                  renderPill(option.value, fieldOptionLabel(option))
-                )}
-                {parsed.other &&
-                  renderPill(
-                    OTHER_VALUE,
-                    resolveOtherLabel(parsed.other, lang)
-                  )}
-              </div>
-              {showCounter && (
-                <p
-                  className={`mt-2 text-xs ${
-                    atLimit ? "text-foreground" : "text-muted-foreground"
-                  }`}
-                >
-                  {atLimit
-                    ? t.counterAtLimit(max!)
-                    : t.counterBelow(arr.length, max!)}
-                </p>
-              )}
-              {parsed.other && otherSelected && !readOnly && (
-                <PortalOtherTextInput
-                  fieldName={field.name}
-                  value={
-                    (formValues[`${field.name}${OTHER_SUFFIX}`] as string) ?? ""
-                  }
-                  onChange={(v) =>
-                    handleFieldChange(`${field.name}${OTHER_SUFFIX}`, v)
-                  }
-                  label={t.pleaseSpecify}
-                  placeholder={resolveOtherPlaceholder(parsed.other, lang)}
-                  required={field.required}
-                />
-              )}
-            </TooltipProvider>
-          );
-        })()}
-        {field.type === "DATE" && (
-          <Input
-            id={field.name}
-            name={field.name}
-            type="date"
-            value={value as string}
-            onChange={(e) => handleFieldChange(field.name, e.target.value)}
-            required={field.required}
-            disabled={readOnly}
-          />
-        )}
-        {field.type === "TIME" && (
-          <Input
-            id={field.name}
-            name={field.name}
-            type="time"
-            value={value as string}
-            onChange={(e) => handleFieldChange(field.name, e.target.value)}
-            required={field.required}
-            disabled={readOnly}
-          />
-        )}
-        {field.type === "DATETIME" && (
-          <Input
-            id={field.name}
-            name={field.name}
-            type="datetime-local"
-            value={value as string}
-            onChange={(e) => handleFieldChange(field.name, e.target.value)}
-            required={field.required}
-            disabled={readOnly}
-          />
-        )}
-      </div>
-    );
-  }
-
   const branding = event?.branding ?? null;
   const primaryColor = branding?.primaryColor || "#7dc242";
   const backgroundColor = branding?.backgroundColor || "#ffffff";
@@ -1327,52 +724,13 @@ export default function PortalPhaseFillPage() {
           )}
 
           {isMultiStep && (
-            <div className="pt-2">
-              <div className="flex items-center gap-2">
-                {phase.steps.map((step, idx) => {
-                  const isActive = idx === currentStep;
-                  const isComplete = idx < currentStep;
-                  return (
-                    <div
-                      key={step.id}
-                      className="flex-1 flex items-center gap-2"
-                    >
-                      <div
-                        className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold border transition-colors ${
-                          isActive || isComplete
-                            ? "bg-primary border-primary text-primary-foreground"
-                            : "bg-transparent border-gray-300 text-gray-500"
-                        }`}
-                      >
-                        {isComplete ? (
-                          <CheckCircle className="h-4 w-4" />
-                        ) : (
-                          idx + 1
-                        )}
-                      </div>
-                      {idx < phase.steps.length - 1 && (
-                        <div
-                          className={`flex-1 h-px ${
-                            isComplete ? "bg-primary" : "bg-gray-200"
-                          }`}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-gray-500 mt-2">
-                {t.stepLabel(currentStep + 1, totalSteps)} ·{" "}
-                <span className="font-medium">
-                  {activeStep ? stepTitle(activeStep) : ""}
-                </span>
-              </p>
-              {activeStep && stepDescription(activeStep) && (
-                <p className="text-xs text-gray-500 mt-1">
-                  {stepDescription(activeStep)}
-                </p>
-              )}
-            </div>
+            <StepIndicator
+              steps={phase.steps}
+              currentStep={currentStep}
+              totalSteps={totalSteps}
+              lang={lang}
+              t={t}
+            />
           )}
 
           <form
@@ -1400,7 +758,17 @@ export default function PortalPhaseFillPage() {
             )}
 
             <div className="grid grid-cols-2 gap-4">
-              {visibleFields.map((field) => renderField(field))}
+              {visibleFields.map((field) => (
+                <PhaseField
+                  key={field.id}
+                  field={field}
+                  formValues={formValues}
+                  onFieldChange={handleFieldChange}
+                  readOnly={readOnly}
+                  lang={lang}
+                  t={t}
+                />
+              ))}
             </div>
 
             {!readOnly && (
