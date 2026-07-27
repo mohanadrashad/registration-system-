@@ -168,16 +168,16 @@ Portal login: `(public)/portal/[eventSlug]/page.tsx` → OTP request/verify unde
 
 | I want to change… | Edit |
 |---|---|
-| How the public registration form looks/behaves | `src/components/register-templates/classic-template.tsx` (+ `src/components/public/` for the file-upload control) |
+| How the public registration form looks/behaves | `src/components/register-templates/classic-template.tsx` (shell, stepper, submit) and `classic-field.tsx` (how each field type renders) + `src/components/public/` for the file-upload control |
 | What happens when a registration is submitted | `src/app/api/register/[eventSlug]/route.ts` + `src/lib/services/registration.service.ts` |
-| Add a new form field **type** | `FieldType` enum in `prisma/schema.prisma` → metadata in `src/lib/form-builder/field-types.ts` → renderer in `classic-template.tsx` → display/export formatting in `src/lib/form-builder/format-form-value.ts` |
+| Add a new form field **type** | `FieldType` enum in `prisma/schema.prisma` → metadata in `src/lib/form-builder/field-types.ts` → renderer in `classic-field.tsx` → display/export formatting in `src/lib/form-builder/format-form-value.ts` |
 | The form builder (admin drag/drop, field settings) | `(dashboard)/…/[eventId]/form-builder/page.tsx` + dialogs in `src/components/admin/` + API under `api/events/[eventId]/form-fields/` and `…/phases/` |
 | Attendees **list** (table, filters, columns, pagination) | `(dashboard)/…/[eventId]/attendees/page.tsx` + `src/lib/attendees/` + list API `api/events/[eventId]/attendees/route.ts` |
 | Attendee **detail** page | `(dashboard)/…/[eventId]/attendees/[contactId]/page.tsx` + cards in `src/components/attendee/` |
 | CSV / Excel export | `api/events/[eventId]/registrations/export/route.ts` (shares column formatting with the table via `format-form-value.ts`) |
 | Email templates / campaigns UI | `(dashboard)/…/[eventId]/emails/` pages |
 | How emails are rendered & sent | `src/lib/email-renderer.ts` (variables) → `src/lib/services/email.service.ts` (orchestration, EmailLog) → `src/lib/services/email-provider.service.ts` (actual send, per-event sender) |
-| Registration page branding (colors, logo, text) | `(dashboard)/…/[eventId]/settings/branding/page.tsx` + `api/events/[eventId]/branding/` |
+| Registration page branding (colors, logo, text) | `(dashboard)/…/[eventId]/settings/branding/` (one file per tab) + `api/events/[eventId]/branding/` |
 | Feature toggles (enable/disable a module) | UI `settings/modules/page.tsx`; catalog `MODULE_INFO` in `src/lib/guards/module-guard.ts`; enforcement via `authorizeEvent({ module })` |
 | Badges (design, PDF, QR) | `(dashboard)/…/[eventId]/badges/page.tsx` + `src/lib/badge-generator.ts` + `api/events/[eventId]/badges/` |
 | Check-in / scanning | `(dashboard)/…/[eventId]/checkin/` + `src/lib/services/checkin.service.ts` |
@@ -198,5 +198,5 @@ Portal login: `(public)/portal/[eventSlug]/page.tsx` → OTP request/verify unde
 - **Bilingual fields.** Many models have Arabic siblings (`labelAr`, `welcomeTitleAr`, …). New user-facing text on the registration page usually needs one (the `multiLanguage` module toggles the Arabic UI).
 - **`Registration.formData` has no fixed shape** — keys follow the event's form fields. Use `src/lib/form-builder/format-form-value.ts` to display values so screen and export stay consistent.
 - **System fields** (`isSystem: true`) must remain undeletable in the form builder.
-- **Big files are a known issue.** The largest pages (`attendees/page.tsx`, `form-builder/page.tsx`, the portal pages, `classic-template.tsx` — 1,400–2,200 lines each) do everything inline. When editing them, search within the file for UI text you can see on screen; when touching them substantially, prefer extracting components rather than growing them.
+- **Pages are containers; their UI lives in colocated files.** Every large page (attendees, form-builder, the portal pages, the branding tabs, the CLASSIC template) follows the same pattern: `page.tsx` owns the state, data fetching, and API calls, and the visual pieces live in sibling files in the same folder (`*-dialog.tsx`, `*-card.tsx`, `*-tab.tsx`, `types.ts`, …). To find something, look for the file named after what you see on screen; when adding UI, extend or add a sibling rather than growing `page.tsx`. The largest remaining files are two service modules (`selection.service.ts`, `registration-file.service.ts`) — those are deliberate: flat catalogs of named exported functions you navigate by function name.
 - **Two Vercel Blob stores** exist (dev and prod) with separate tokens — be careful which one a script points at before running anything destructive.

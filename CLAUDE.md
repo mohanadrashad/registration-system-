@@ -81,8 +81,7 @@ When adding a new `FieldType`: update the enum in `schema.prisma`, the metadata 
 
 ### Email & notifications
 
-- `src/lib/email.ts` — low-level nodemailer transport using `SMTP_*` env vars (system sender).
-- `src/lib/services/email-provider.service.ts` — per-event sender resolution. If `EventModules.customEmail` is on, use `EventEmailSettings` (which supports `SYSTEM`, `CUSTOM_SMTP`, `RESEND`, `SENDGRID`, `MAILGUN`) instead of the system defaults.
+- `src/lib/services/email-provider.service.ts` — the nodemailer transport AND per-event sender resolution. `SYSTEM` uses the `SMTP_*` env vars; if `EventModules.customEmail` is on, `EventEmailSettings` can switch the event to `CUSTOM_SMTP`, `RESEND`, `SENDGRID`, or `MAILGUN`.
 - `src/lib/email-renderer.ts` + `src/lib/services/email.service.ts` — template rendering (`EmailTemplate.bodyHtml` with `variables`) and campaign send orchestration, writing an `EmailLog` row per recipient.
 - `src/lib/services/phase-reminder.service.ts` — sends the per-phase reminder email (using `Phase.reminderTemplateId`) and toggles `Phase.reminderSent`. Phases without a `reminderTemplateId` are manual-only.
 - Badge PDFs: `src/lib/badge-generator.ts` uses `@react-pdf/renderer` + `qrcode`. Badges are 1:1 with `Registration` and reference the event's single `BadgeTemplate`.
