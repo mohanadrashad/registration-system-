@@ -62,7 +62,7 @@ export function ColorsTab({
             <CardHeader>
               <CardTitle>Brand Colors</CardTitle>
               <CardDescription>
-                Set your event's color scheme for the registration page
+                Set your event&apos;s color scheme for the registration page
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">

@@ -90,6 +90,9 @@ export function PhaseColumn({
   }, [eventId, contactId]);
 
   useEffect(() => {
+    // False positive: every setState inside refetch happens after an
+    // awaited fetch, never synchronously during the effect body.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refetch();
   }, [refetch]);
 

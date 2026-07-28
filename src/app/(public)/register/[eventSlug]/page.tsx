@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { resolveTemplate } from "@/components/register-templates/registry";
 
@@ -37,6 +37,9 @@ export default function RegisterPage() {
 
   // null (still resolving) and CLASSIC both resolve to ClassicTemplate, so the
   // component reference is stable across the resolve → no remount, no flash.
-  const Template = resolveTemplate(template);
+  // The lint rule can't see that resolveTemplate returns stable module-level
+  // components from the registry (it assumes a component created per render).
+  const Template = useMemo(() => resolveTemplate(template), [template]);
+  // eslint-disable-next-line react-hooks/static-components
   return <Template />;
 }

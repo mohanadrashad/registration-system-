@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorizeEvent } from "@/lib/api-auth";
-import { EmailProvider } from "@prisma/client";
+import { EmailProvider, type Prisma } from "@prisma/client";
 import {
   testEmailSettings,
   verifyEmailSettings,
@@ -111,7 +111,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     });
 
     // Prepare data - only update password/apiKey if provided and not masked
-    const data: Record<string, unknown> = {
+    const data: Omit<Prisma.EventEmailSettingsUncheckedCreateInput, "eventId"> = {
       provider: body.provider,
       fromName: body.fromName,
       fromEmail: body.fromEmail,
@@ -142,7 +142,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       create: {
         eventId,
         ...data,
-      } as any,
+      },
     });
 
     return NextResponse.json({
