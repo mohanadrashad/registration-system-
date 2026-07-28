@@ -11,7 +11,16 @@ async function loginToPortal(page: Page) {
   await page.goto(`/portal/${SMOKE_SLUG}`);
   await page.locator("#email").fill(PORTAL_TESTER_EMAIL);
   await page.getByRole("button", { name: "Send me a code" }).click();
-  await expect(page.locator("#otp")).toBeVisible();
+  // The OTP request endpoint throttles per email; a CI retry of this test
+  // can land inside the window ("Please wait N seconds…"). Give it one
+  // more attempt after the window clears.
+  try {
+    await expect(page.locator("#otp")).toBeVisible({ timeout: 10_000 });
+  } catch {
+    await page.waitForTimeout(6_000);
+    await page.getByRole("button", { name: "Send me a code" }).click();
+    await expect(page.locator("#otp")).toBeVisible();
+  }
 
   const res = await page.request.get(
     `/api/portal/${SMOKE_SLUG}/otp/dev-peek?email=${encodeURIComponent(
@@ -49,9 +58,12 @@ test("attendee can log into the portal and submit a phase", async ({
   await page.locator("#airline").fill("Smoke Airlines");
   await page.getByRole("button", { name: /Submit|Update/ }).click();
 
-  // Fullscreen "Saved" confirmation, then back to the portal where the
-  // phase now shows as completed.
+  // Fullscreen "Saved" confirmation, then back on the portal home the
+  // phase shows as completed. Navigate by URL rather than the "Back to
+  // portal" link: the success screen re-renders as it appears and a click
+  // during that re-render can be swallowed (observed on CI's slower dev
+  // server) — a direct load asserts the same end state without the race.
   await expect(page.getByRole("heading", { name: "Saved" })).toBeVisible();
-  await page.getByRole("link", { name: "Back to portal" }).click();
+  await page.goto(`/portal/${SMOKE_SLUG}`);
   await expect(page.getByText("Completed")).toBeVisible();
 });
