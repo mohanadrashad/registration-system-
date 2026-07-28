@@ -156,7 +156,7 @@ export function DomainTab({
                       <div className="space-y-2">
                         <p className="text-sm font-medium">DNS Configuration</p>
                         <p className="text-xs text-muted-foreground">
-                          Add the following TXT record to your domain's DNS settings:
+                          Add the following TXT record to your domain&apos;s DNS settings:
                         </p>
                         <div className="bg-muted rounded p-3 space-y-2">
                           <div>

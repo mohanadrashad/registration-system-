@@ -57,7 +57,6 @@ export default function AttendeesPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [totalPages, setTotalPages] = useState(1);
   const [listLoading, setListLoading] = useState(false);
-  const [statusCounts, setStatusCounts] = useState<StatusCounts>({ IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
   const [total, setTotal] = useState(0);
   const [overallCounts, setOverallCounts] = useState<StatusCounts>({ IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
   const [overallTotal, setOverallTotal] = useState(0);
@@ -325,7 +324,6 @@ export default function AttendeesPage() {
       setContacts(data.contacts || []);
       setTotal(data.total || 0);
       setTotalPages(data.totalPages || 1);
-      setStatusCounts(data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
       setOverallCounts(data.overallCounts || data.statusCounts || { IMPORTED: 0, INVITED: 0, REGISTERED: 0, CANCELLED: 0 });
       setOverallTotal(data.overallTotal || data.total || 0);
       setFilterableFields(data.filterableFields || []);

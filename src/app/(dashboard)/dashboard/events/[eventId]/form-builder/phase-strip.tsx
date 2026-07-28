@@ -183,13 +183,11 @@ export function PhaseStrip({
             </div>
           )}
         </div>
-        {!postRegEnabled && totalPhases === 1 && (
-          <p className="text-xs text-muted-foreground mt-2">
-            Enable the &ldquo;Post-Registration Phases&rdquo; module in
-            Settings to collect data after registration (e.g. flight info,
-            hotel preferences).
-          </p>
-        )}
+        {/* NOTE: an "enable the Post-Registration Phases module" hint used to
+            sit here, but its condition (!postRegEnabled && totalPhases === 1)
+            contradicted the strip's own render guard, so it could never show.
+            Removed as dead code — resurrect it by rendering it OUTSIDE this
+            component if the module upsell is ever wanted. */}
       </CardContent>
     </Card>
   );

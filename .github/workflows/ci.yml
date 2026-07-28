@@ -1,0 +1,31 @@
+name: CI
+
+# Typecheck + lint on every PR and push to main. The production build itself
+# is covered by Vercel; this gate exists so type errors and lint ERRORS
+# (warnings don't fail) can never merge unnoticed.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall runs `prisma generate` (no DATABASE_URL needed), so the
+      # Prisma client types exist before tsc runs.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
