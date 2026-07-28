@@ -62,8 +62,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Create schema
-        run: npx prisma db push --skip-generate
+      # Building the test database purely from the committed migrations also
+      # validates the migration chain on every PR.
+      - name: Create schema from migrations
+        run: npx prisma migrate deploy
 
       - name: Seed smoke event
         run: npm run seed:smoke
