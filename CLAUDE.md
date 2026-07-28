@@ -14,9 +14,12 @@ npm run db:push      # Push schema.prisma to DB without migration (dev/quick ite
 npm run db:migrate   # Create + apply a migration (preferred for schema changes meant to ship)
 npm run db:seed      # Runs prisma/seed.ts via tsx — seeds initial users/data
 npm run db:studio    # Prisma Studio GUI
+
+npm run seed:smoke   # (Re)seed the dedicated smoke-test event (slug: smoke-e2e)
+npm run test:smoke   # Playwright smoke tests: register → portal OTP login → phase submit
 ```
 
-No test runner is configured in this project — there are no unit/integration tests. Do not add mocks or test scaffolding unless the user asks.
+The only tests are the Playwright smoke tests in `tests/smoke/` (they also run in CI against an ephemeral Postgres — see `.github/workflows/ci.yml`). There are no unit tests; do not add unit-test scaffolding or mocks unless the user asks. When changing the registration or portal flows, run `npm run seed:smoke && npm run test:smoke` before pushing.
 
 `postinstall` runs `prisma generate` automatically; `prisma/seed.ts` is excluded from `tsconfig` compilation (it's executed by `tsx`).
 
