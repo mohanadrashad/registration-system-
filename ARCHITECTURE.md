@@ -186,14 +186,14 @@ Portal login: `(public)/portal/[eventSlug]/page.tsx` → OTP request/verify unde
 | Statistics dashboard | `(dashboard)/…/[eventId]/statistics/page.tsx` + `api/events/[eventId]/statistics/` |
 | Attendee portal (login, phase forms) | `(public)/portal/[eventSlug]/` pages + `api/portal/[eventSlug]/` + `src/lib/portal/` |
 | Who can access what (roles, permissions) | `src/lib/permissions.ts` + `src/lib/api-auth.ts`; team UI `settings/team/`; global users `dashboard/users/` |
-| The database schema | `prisma/schema.prisma`, then `npm run db:push` (see §10 — there are no migration files) |
+| The database schema | `prisma/schema.prisma`, then `npm run db:migrate` to generate + apply a migration (see §10) |
 | Sidebar / dashboard layout | `src/components/layout/` (sidebar.tsx shows/hides items per enabled modules) |
 | Uploaded files (storage, replace, receipts) | `src/lib/blob.ts` + `registration-file.service.ts` / `receipt.service.ts` + `files`/`receipts` API routes |
 
 ## 10. Conventions and gotchas
 
 - **Everything is event-scoped.** New per-event features follow the pattern: API at `api/events/[eventId]/<feature>/route.ts`, page at `(dashboard)/dashboard/events/[eventId]/<feature>/page.tsx`, optional `EventModules` boolean + `MODULE_INFO` entry if the feature is toggleable.
-- **No migration files.** Schema changes ship via `prisma db push` against each environment's database, plus one-off backfill scripts in `prisma/scripts/` when data needs transforming. Keep deployed code and deployed schema in sync — never commit a schema change without applying it.
+- **Schema changes ship as Prisma migrations.** Edit `prisma/schema.prisma`, run `npm run db:migrate` (writes SQL into `prisma/migrations/` and applies it locally), and commit the migration with the schema. Deploys run `prisma migrate deploy`; CI builds its test database purely from the committed migrations, so a broken chain fails the PR. `db push` remains for local prototyping only. One-off data transforms still live in `prisma/scripts/`.
 - **Smoke tests cover the attendee flows.** `tests/smoke/` holds Playwright tests for the three critical journeys (public registration, portal OTP login, phase submit) against the dedicated `smoke-e2e` event — `npm run seed:smoke && npm run test:smoke` locally; CI runs them on every PR against an ephemeral Postgres. There are no unit tests; everything else is verified via typecheck, lint, and Vercel preview builds.
 - **Bilingual fields.** Many models have Arabic siblings (`labelAr`, `welcomeTitleAr`, …). New user-facing text on the registration page usually needs one (the `multiLanguage` module toggles the Arabic UI).
 - **`Registration.formData` has no fixed shape** — keys follow the event's form fields. Use `src/lib/form-builder/format-form-value.ts` to display values so screen and export stay consistent.

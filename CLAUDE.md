@@ -10,8 +10,8 @@ npm run build        # Runs `prisma generate` then `next build`
 npm run start        # Production server
 npm run lint         # ESLint (config: eslint.config.mjs extends next)
 
-npm run db:push      # Push schema.prisma to DB without migration (dev/quick iteration)
-npm run db:migrate   # Create + apply a migration (preferred for schema changes meant to ship)
+npm run db:migrate   # Create + apply a migration (THE way to ship schema changes)
+npm run db:push      # Schema push without a migration — local prototyping only; never ship this way
 npm run db:seed      # Runs prisma/seed.ts via tsx — seeds initial users/data
 npm run db:studio    # Prisma Studio GUI
 
@@ -116,6 +116,8 @@ Do not start the next stage until those four are done. The user will explicitly 
 
 Schema changes deserve extra care:
 
-- Always verify the local database state matches the schema in code before committing. If you ran `prisma db push` to apply schema, make sure the schema file is also committed.
+- Schema changes ship as **Prisma migrations**: edit `prisma/schema.prisma`, run `npm run db:migrate` (creates a migration in `prisma/migrations/` and applies it to the local DB), review the generated SQL, and commit the migration folder together with the schema. Deploys run `prisma migrate deploy` (see `vercel-build`); CI builds its test database purely from the committed migrations, so a broken chain fails the PR.
+- `db push` is for local prototyping only. If you used it while iterating, finish by generating the real migration before committing (a pushed dev DB may make `migrate dev` report drift — resolve it deliberately, never by resetting a database that has data).
+- Databases that predate migrations are auto-baselined on deploy by `prisma/scripts/baseline-if-needed.ts` (bookkeeping only — it marks `0_init` as applied, never touches app tables). Don't remove it from `vercel-build`.
 - Never leave the deployed code and the deployed database out of sync.
-- For destructive schema changes (dropping columns, removing tables), do not silently use `--accept-data-loss`. Surface the change to the user first.
+- For destructive schema changes (dropping columns, removing tables), do not write the migration silently. Surface the change to the user first.
