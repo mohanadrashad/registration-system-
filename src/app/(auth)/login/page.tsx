@@ -34,11 +34,15 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-muted/40 px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Registration System</CardTitle>
-          <CardDescription>Sign in to access the admin dashboard</CardDescription>
+          <CardTitle className="text-2xl">La Gloire</CardTitle>
+          <CardDescription>
+            Staff sign-in for La Gloire&apos;s event management system.
+            Attendees don&apos;t need an account; use the registration link
+            you received from us.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">
@@ -53,7 +57,7 @@ export default function LoginPage() {
                 id="email"
                 name="email"
                 type="email"
-                placeholder="admin@example.com"
+                autoComplete="username"
                 required
               />
             </div>
@@ -63,6 +67,7 @@ export default function LoginPage() {
                 id="password"
                 name="password"
                 type="password"
+                autoComplete="current-password"
                 required
               />
             </div>
@@ -72,6 +77,9 @@ export default function LoginPage() {
           </form>
         </CardContent>
       </Card>
+      <p className="text-center text-xs text-muted-foreground">
+        © {new Date().getFullYear()} La Gloire · Riyadh, Saudi Arabia · Staff only
+      </p>
     </div>
   );
 }
