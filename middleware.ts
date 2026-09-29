@@ -16,6 +16,7 @@ const PUBLIC_ONLY_PREFIXES = [
   "/register",
   "/portal",
   "/badge",
+  "/privacy",
   "/api/register",
   "/api/portal",
   "/api/badges",
