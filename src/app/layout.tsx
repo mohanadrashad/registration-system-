@@ -20,11 +20,14 @@ export const metadata: Metadata = {
   metadataBase: new URL(appUrl),
   title: siteTitle,
   description: siteDescription,
-  // Google Search Console ownership proof for registration.itsbader.com
-  // (needed to request a Safe Browsing review). Renders the
-  // <meta name="google-site-verification"> tag on every page.
+  // Google Search Console ownership proof (needed to request Safe Browsing
+  // reviews). One <meta name="google-site-verification"> tag per verified
+  // property; never remove one, or that property loses verification.
   verification: {
-    google: "aRW5dpnnjgJeA9uZkLZ6aEvaFUXvXhfFnNEZ1VJJMGA",
+    google: [
+      "aRW5dpnnjgJeA9uZkLZ6aEvaFUXvXhfFnNEZ1VJJMGA", // registration.itsbader.com
+      "GovInOxVecZLXg4XWBTqaxhc9opbOHT8TaYVeI-ptpk", // registration-system-gray.vercel.app
+    ],
   },
   // favicon.ico / icon.png / apple-icon.png live in src/app and are
   // auto-detected by Next — no manual `icons` entry needed. This replaces
