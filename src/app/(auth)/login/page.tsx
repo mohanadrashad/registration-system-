@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -78,7 +79,10 @@ export default function LoginPage() {
         </CardContent>
       </Card>
       <p className="text-center text-xs text-muted-foreground">
-        © {new Date().getFullYear()} La Gloire · Riyadh, Saudi Arabia · Staff only
+        © {new Date().getFullYear()} La Gloire · Riyadh, Saudi Arabia · Staff only ·{" "}
+        <Link href="/privacy" className="underline underline-offset-2">
+          Privacy
+        </Link>
       </p>
     </div>
   );
