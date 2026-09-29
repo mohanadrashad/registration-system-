@@ -20,6 +20,12 @@ export const metadata: Metadata = {
   metadataBase: new URL(appUrl),
   title: siteTitle,
   description: siteDescription,
+  // Google Search Console ownership proof for registration.itsbader.com
+  // (needed to request a Safe Browsing review). Renders the
+  // <meta name="google-site-verification"> tag on every page.
+  verification: {
+    google: "aRW5dpnnjgJeA9uZkLZ6aEvaFUXvXhfFnNEZ1VJJMGA",
+  },
   // favicon.ico / icon.png / apple-icon.png live in src/app and are
   // auto-detected by Next — no manual `icons` entry needed. This replaces
   // the default create-next-app favicon (the "Vercel-looking" mark) with
